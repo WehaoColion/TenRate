@@ -1,4 +1,4 @@
-v2.23.2.28（Android源码候选）- 优化知识页退出转场、保存反馈和长文计算；versionCode 22297。先提交PR，手机动效验收待完成。详见[本版说明](documents/releases/android/release_notes_v2.23.2.28.md)。
+v2.23.2.28（Android候选APK）- 优化知识页退出转场、保存反馈和长文计算；versionCode 22297。正式签名候选APK已按原流程构建并交付，手机动效验收待完成。详见[本版说明](documents/releases/android/release_notes_v2.23.2.28.md)。
 v2.23.2.27（Android候选APK）- 修复知识页保存期间页面重建后的等待状态，减少同一草稿在途退出重复提交；versionCode 22296。正式签名APK已按原流程构建并交付，用户确认知识页退出保存缓慢的问题已解决。详见[本版说明](documents/releases/android/release_notes_v2.23.2.27.md)。
 v2.23.2.26（Android候选APK）- 修复法律报告打开所属知识页或便签时被旧空态清除选择的问题，保留删除与锁定保护；versionCode 22295。正式签名APK已按原交付流程构建，用户确认本版问题已解决。详见[本版说明](documents/releases/android/release_notes_v2.23.2.26.md)。
 v2.23.2.25（Android候选APK）- 任务 Agent 增加真实执行进度，理顺发送预览、取消与结果保存；versionCode 22294。正式签名验收APK已按原交付流程构建，手机验收待完成。详见[本版说明](documents/releases/android/release_notes_v2.23.2.25.md)。
