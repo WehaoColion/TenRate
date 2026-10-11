@@ -1,3 +1,4 @@
+# v0.0.37 - Check knowledge transition and focused collection work sources.
 # v0.0.36 - Gate retained editor save settlement and pending exit ordering.
 # v0.0.35 - Gate legal report navigation state tests and stale-selection mutation.
 # v0.0.34 - Verify actual Agent progress tests and generated JNI polling.
@@ -57,6 +58,7 @@ function Get-TaskInputs {
     if([version]$taskVersion -ge [version]'2.23.2.23'){$paths += Join-Path $taskRoot 'tools/verify_android_agent_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.26'){$paths += Join-Path $taskRoot 'tools/verify_legal_navigation_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.27'){$paths += Join-Path $taskRoot 'tools/verify_note_exit_save_mutation.ps1';$paths += Join-Path $taskRoot 'tools/verify_note_save_queue_mutation.ps1'}
+    if([version]$taskVersion -ge [version]'2.23.2.28'){$paths += Join-Path $taskRoot 'tools/verify_document_transition_mutation.ps1'}
     # Cargo gates timer_windows_client behind the desktop feature. Its private
     # desktop/ modules are not inputs to the Android library, generator or tests.
     # Shared library modules (including desktop_*.rs) remain in the snapshot.
@@ -162,6 +164,7 @@ try {
     if([version]$taskVersion -ge [version]'2.23.2.23'){$formatPaths += @('src/android_agent_upgrade.rs','src/android_agent_registry.rs','src/sourcegen/android_agent_upgrade.rs') | ForEach-Object {Join-Path $taskCrate $_}}
     if([version]$taskVersion -ge [version]'2.23.2.25'){$formatPaths += @('src/android_agent_progress.rs','src/sourcegen/android_agent_progress_ui.rs') | ForEach-Object {Join-Path $taskCrate $_}}
     if([version]$taskVersion -ge [version]'2.23.2.26'){$formatPaths += Join-Path $taskCrate 'src/sourcegen/android_legal_integration.rs'}
+    if([version]$taskVersion -ge [version]'2.23.2.28'){$formatPaths += @('src/sourcegen/android_document_transition.rs','src/sourcegen/android_document_exit_feedback.rs','src/sourcegen/android_document_collection_work.rs') | ForEach-Object {Join-Path $taskCrate $_}}
     Invoke-TaskCommand $taskRustfmt (@('--check','--edition','2021','--config','skip_children=true') + $formatPaths) 'rust_format.log'
     $cargoBase = @('--manifest-path',(Join-Path $taskCrate 'Cargo.toml'),'--locked','--offline')
     # These suites exercise runtime cancellation and WinHTTP, neither of which
@@ -184,6 +187,11 @@ try {
     $gradleTasks = @(':app:testReleaseUnitTest',':app:lintRelease')
     if($Mode -eq 'build'){$gradleTasks += ':app:assembleRelease'}
     Invoke-TaskCommand 'C:\tools\gradle-8.7\bin\gradle.bat' (@('--offline','--no-daemon',('--max-workers='+$GradleWorkers),$taskJvmArgs) + $gradleTasks) 'android_build.log'
+    if([version]$taskVersion -ge [version]'2.23.2.28'){
+        Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_document_transition_mutation.ps1'),'-Version',$taskVersion) 'document_transition_mutation.log'
+        $transitionReceipt = Get-Content -LiteralPath (Join-Path $taskEvidence 'document_transition_mutation/receipt.json') -Raw | ConvertFrom-Json
+        if(!$transitionReceipt.passed -or !$transitionReceipt.productionUnchanged -or @($transitionReceipt.cases | Where-Object {!$_.passed}).Count -ne 0){throw 'Document transition business mutation evidence failed'}
+    }
     $after = Get-TaskInputs
     if($before.sha256 -ne $after.sha256){throw 'Source inputs changed during verification'}
     $junitPath = Join-Path $taskRoot 'app\build\test-results\testReleaseUnitTest\TEST-com.ofairyo.gridtimer.ui.TenfoldEditingTest.xml'
@@ -211,6 +219,8 @@ try {
         @{name='NoteCollectionRecoveryTest';package='core';source='android_note_collection_recovery.rs'},
         @{name='KnowledgeFilterStateTest';package='ui';source='android_knowledge_filters.rs'},
         @{name='NoteSaveQueueTest';package='ui';source='android_note_save_queue.rs'},
+        @{name='KnowledgeDocumentTransitionTest';package='ui';source='android_document_transition.rs'},
+        @{name='DocumentCollectionWorkTest';package='ui';source='android_document_collection_work.rs'},
         @{name='FinanceMoneyTest';package='data';source='finance_money_source.rs'}
     )){
         $suitePath = Join-Path $taskRoot ("app\build\test-results\testReleaseUnitTest\TEST-com.ofairyo.gridtimer."+$suite.package+"."+$suite.name+".xml")

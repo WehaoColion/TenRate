@@ -28,7 +28,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.27";
+pub const LATEST_VERSION: &str = "2.23.2.28";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -58,6 +58,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.28",
+        updatedAt = "2026-10-12 00:21",
+        summary = "优化知识页退出衔接，减少画面跳变和长文重复计算",
+        sections = listOf(
+            AndroidUpdateSection("退出画面", listOf(
+                "修复返回知识列表时，编辑页在退出动画结束前就被列表替换的问题。退出过程中保留正确的页面内容，以固定页面尺寸完成短暂淡出与淡入，避免两份列表叠在一起和页面尺寸突然变化。",
+                "退出中的旧页面停止接收操作。加密知识页关闭、记录被删除或工作区改变时优先清除页面内容，避免为了动画而保留不应再显示的正文。"
+            )),
+            AndroidUpdateSection("保存等待", listOf(
+                "返回时先完成当前内容的本机保存。等待期间保留正文画面，收起输入焦点，并阻止重复编辑；较快完成的保存不会闪出整片白色等待层，耗时较长时显示小型进度提示。",
+                "保存失败仍留在编辑页并保留草稿，可以重试。保存队列、恢复副本、加密规则和同步数据格式保持兼容。"
+            )),
+            AndroidUpdateSection("减少退出时的计算", listOf(
+                "仅在打开公式与排版预览时生成整篇Markdown预览；保存状态更新不再触发不必要的全文解析，输入法尚未提交的可见文字仍参与预览。",
+                "返回列表时，空搜索不再提取每篇笔记的全文；置顶、全部和未入库筛选直接读取相关属性，任务和图片筛选仅计算各自需要的信息。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.27",
         updatedAt = "2026-10-11 00:04",
@@ -709,7 +728,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.26"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.27"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));
