@@ -3021,6 +3021,50 @@ pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nat
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeKnowledgeContainerActionAppDataJson(
+    mut env: JNIEnv,
+    _class: JClass,
+    app_data_json: JString,
+    action: JString,
+    id: JString,
+    parent_id: JString,
+    title: JString,
+    now: jlong,
+) -> jstring {
+    let app_data_json: String = match env.get_string(&app_data_json) {
+        Ok(value) => value.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let action: String = match env.get_string(&action) {
+        Ok(value) => value.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let id: String = match env.get_string(&id) {
+        Ok(value) => value.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let parent_id: String = match env.get_string(&parent_id) {
+        Ok(value) => value.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let title: String = match env.get_string(&title) {
+        Ok(value) => value.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match app_data::knowledge_container_action_app_data_json(
+        &app_data_json,
+        &action,
+        &id,
+        &parent_id,
+        &title,
+        now,
+    ) {
+        Some(value) => new_java_string(&mut env, &value),
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeCreateNoteFolderAppDataJson(
     mut env: JNIEnv,
     _class: JClass,

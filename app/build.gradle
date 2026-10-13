@@ -1,4 +1,4 @@
-// v2.23.2.28 - Keep knowledge exit content stable and reduce transition work.
+// v2.23.2.29 - Add nested knowledge pages and convertible folders.
 // v2.23.2.25 - Show real Agent progress and explicit result states.
 // v2.23.2.24 - Guard document AI opening and source lifetime.
 // v2.23.2.23 - Add independent Agent review and verified draft saving.
@@ -150,8 +150,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22297
-        versionName '2.23.2.28'
+        versionCode 22298
+        versionName '2.23.2.29'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

@@ -1906,6 +1906,19 @@ pub fn rename_note_folder_app_data_json(
 
 pub fn delete_note_folder_app_data_json(raw: &str, folder_id: &str, now: i64) -> Option<String> {
     let mut data = parse_app_data_for_mutation(raw, now)?;
+    if knowledge_identity_conflict(&data, folder_id) {
+        return None;
+    }
+    knowledge_detach_children_for_delete(&mut data, folder_id, now)?;
+    if let Some(note) = data
+        .notes
+        .iter_mut()
+        .find(|note| note.id == folder_id && knowledge_legacy_folder_origin(note))
+    {
+        note.deleted_at_epoch_millis = Some(now.max(0));
+        note.updated_at_epoch_millis =
+            next_mutation_revision(note_revision_epoch_millis(note), now)?;
+    }
     let record_revision = data
         .note_folders
         .iter()
@@ -2025,6 +2038,11 @@ pub fn restore_note_app_data_json(raw: &str, note_id: &str, now: i64) -> Option<
 
 pub fn delete_note_app_data_json(raw: &str, note_id: &str, now: i64) -> Option<String> {
     let mut data = parse_app_data_for_mutation(raw, now)?;
+    if knowledge_identity_conflict(&data, note_id) {
+        return None;
+    }
+    knowledge_detach_children_for_delete(&mut data, note_id, now)?;
+    knowledge_unlink_legacy_projection(&mut data, note_id, now)?;
     for note in &mut data.notes {
         if note.id == note_id {
             let revision = next_mutation_revision(note_revision_epoch_millis(note), now)?;
@@ -2212,6 +2230,11 @@ pub fn restore_note_revision_app_data_json(
 
 pub fn delete_note_permanently_app_data_json(raw: &str, note_id: &str, now: i64) -> Option<String> {
     let mut data = parse_app_data_for_mutation(raw, now)?;
+    if knowledge_identity_conflict(&data, note_id) {
+        return None;
+    }
+    knowledge_detach_children_for_delete(&mut data, note_id, now)?;
+    knowledge_unlink_legacy_projection(&mut data, note_id, now)?;
     let removed_note = data.notes.iter().find(|note| note.id == note_id).cloned();
     let record_revision = removed_note
         .as_ref()
@@ -2271,6 +2294,18 @@ pub fn delete_note_permanently_app_data_json(raw: &str, note_id: &str, now: i64)
 
 pub fn empty_note_trash_app_data_json(raw: &str, now: i64) -> Option<String> {
     let mut data = parse_app_data_for_mutation(raw, now)?;
+    let deleted_container_ids = data
+        .notes
+        .iter()
+        .filter(|note| note.deleted_at_epoch_millis.is_some())
+        .map(|note| note.id.clone())
+        .collect::<Vec<_>>();
+    for id in deleted_container_ids {
+        if !knowledge_identity_conflict(&data, &id) {
+            knowledge_detach_children_for_delete(&mut data, &id, now)?;
+            knowledge_unlink_legacy_projection(&mut data, &id, now)?;
+        }
+    }
     let removed_notes = data
         .notes
         .iter()
@@ -3508,6 +3543,7 @@ impl ArchivedTask {
 }
 
 include!("knowledge_app_data.rs");
+include!("knowledge_hierarchy_app_data.rs");
 
 impl NoteEntry {
     fn sanitized(mut self, _valid_folder_ids: &HashSet<String>, now: i64) -> Option<Self> {

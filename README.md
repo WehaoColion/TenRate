@@ -1,3 +1,4 @@
+v2.23.2.29（Android源码候选）- 知识模块支持页面与文件夹嵌套、类型转换和安全层级移动；versionCode 22298。详见[本版说明](documents/releases/android/release_notes_v2.23.2.29.md)。
 v2.23.2.28（Android已验收APK）- 优化知识页退出转场、保存反馈和长文计算；versionCode 22297。正式签名APK已按原流程交付，用户于2026-10-13确认本版可用。详见[本版说明](documents/releases/android/release_notes_v2.23.2.28.md)。
 v2.23.2.27（Android候选APK）- 修复知识页保存期间页面重建后的等待状态，减少同一草稿在途退出重复提交；versionCode 22296。正式签名APK已按原流程构建并交付，用户确认知识页退出保存缓慢的问题已解决。详见[本版说明](documents/releases/android/release_notes_v2.23.2.27.md)。
 v2.23.2.26（Android候选APK）- 修复法律报告打开所属知识页或便签时被旧空态清除选择的问题，保留删除与锁定保护；versionCode 22295。正式签名APK已按原交付流程构建，用户确认本版问题已解决。详见[本版说明](documents/releases/android/release_notes_v2.23.2.26.md)。
