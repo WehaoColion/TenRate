@@ -1,3 +1,4 @@
+// v2.23.2.29 - Record nested knowledge pages and reversible folder conversion.
 // v2.23.2.27 - Record retained save settlement and matching exit reuse.
 // v2.23.2.26 - Record legal evidence navigation and selection lifetime repair.
 // v2.23.2.25 - Record real Agent progress and clear outcome handling.
@@ -28,7 +29,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.28";
+pub const LATEST_VERSION: &str = "2.23.2.29";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -58,6 +59,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.29",
+        updatedAt = "2026-10-13 17:04",
+        summary = "知识模块支持页面与文件夹的多层目录",
+        sections = listOf(AndroidUpdateSection("页面与文件夹", listOf(
+            "页面可以转换成文件夹，也可转换回页面。转换沿用原页面编号，保留正文、附件、引用及历史版本。",
+            "页面和文件夹中都可新建子页面及子文件夹。目录按直接子项浏览，支持逐级返回、路径导航与查看完整子项。",
+            "移动前显示当前位置和目标路径，禁止移入自身或下级，以及已删除、锁定或加密的目标。保存失败时保留输入，不跳转到未保存的页面。",
+            "删除父项时保留子内容并提升至可用上级；旧客户端删除或加密父项后，安卓仍会显示可访问的子项。",
+            "沿用现有知识元数据与同步格式。旧版Windows能保留数据，但本次嵌套目录操作界面先在安卓提供。版本2.23.2.29，versionCode 22298；本次为待验收候选。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.28",
         updatedAt = "2026-10-12 00:21",
@@ -728,7 +741,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.27"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.28"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));

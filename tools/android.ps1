@@ -1,3 +1,4 @@
+# v0.0.38 - Verify knowledge hierarchy and hash-bound UI-only native reuse.
 # v0.0.37 - Check knowledge transition and focused collection work sources.
 # v0.0.36 - Gate retained editor save settlement and pending exit ordering.
 # v0.0.35 - Gate legal report navigation state tests and stale-selection mutation.
@@ -34,6 +35,7 @@
 param(
     [ValidateSet('check','build')][string]$Mode = 'build',
     [switch]$ReuseNativeChecksForFixtureRepair,
+    [switch]$ReuseNativeChecksForHierarchyUiRepair,
     [ValidateRange(1024,4096)][int]$GradleHeapMiB = 2560,
     [ValidateRange(1,4)][int]$GradleWorkers = 2
 )
@@ -59,6 +61,7 @@ function Get-TaskInputs {
     if([version]$taskVersion -ge [version]'2.23.2.26'){$paths += Join-Path $taskRoot 'tools/verify_legal_navigation_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.27'){$paths += Join-Path $taskRoot 'tools/verify_note_exit_save_mutation.ps1';$paths += Join-Path $taskRoot 'tools/verify_note_save_queue_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.28'){$paths += Join-Path $taskRoot 'tools/verify_document_transition_mutation.ps1'}
+    if([version]$taskVersion -ge [version]'2.23.2.29'){$paths += Join-Path $taskRoot 'tools/verify_knowledge_hierarchy_mutation.ps1'}
     # Cargo gates timer_windows_client behind the desktop feature. Its private
     # desktop/ modules are not inputs to the Android library, generator or tests.
     # Shared library modules (including desktop_*.rs) remain in the snapshot.
@@ -111,19 +114,21 @@ try {
     $taskJvmArgs = "-Dorg.gradle.jvmargs=-Xmx${GradleHeapMiB}m -Xms256m -XX:MaxMetaspaceSize=512m -XX:TieredStopAtLevel=1 -XX:ActiveProcessorCount=2 -Dfile.encoding=$taskNativeEncoding"
     $before = Get-TaskInputs
     $reusedNativeChecks = $false
-    if($ReuseNativeChecksForFixtureRepair){
+    if($ReuseNativeChecksForFixtureRepair -and $ReuseNativeChecksForHierarchyUiRepair){throw 'Select only one bounded native-check reuse mode'}
+    if($ReuseNativeChecksForFixtureRepair -or $ReuseNativeChecksForHierarchyUiRepair){
         $priorSource = Get-Content -LiteralPath (Join-Path $taskEvidence 'android_source_provenance.json') -Raw | ConvertFrom-Json
-        $allowedRepairs = @('tools/android.ps1','native/gridtimer_native/src/sourcegen/android_jvm_test_sources.rs')
+        if($ReuseNativeChecksForHierarchyUiRepair -and $taskVersion -ne '2.23.2.29'){throw 'Hierarchy UI-only retry is scoped to the current candidate'}
+        $allowedRepairs = if($ReuseNativeChecksForHierarchyUiRepair){@('tools/android.ps1','native/gridtimer_native/src/sourcegen/android_knowledge_hierarchy_ui.rs')}else{@('tools/android.ps1','native/gridtimer_native/src/sourcegen/android_jvm_test_sources.rs')}
         $priorInputs = @{}
         foreach($file in $priorSource.files){if($file.path -notin $allowedRepairs){$priorInputs[$file.path]=$file.sha256}}
         $currentInputs = @($before.files | Where-Object {$_.path -notin $allowedRepairs})
-        if($priorInputs.Count -ne $currentInputs.Count){throw 'Fixture-only retry cannot reuse an altered source input set'}
+        if($priorInputs.Count -ne $currentInputs.Count){throw 'Bounded retry cannot reuse an altered source input set'}
         foreach($file in $currentInputs){
-            if(!$priorInputs.ContainsKey($file.path) -or $priorInputs[$file.path] -cne $file.sha256){throw "Fixture-only retry found changed source: $($file.path)"}
+            if(!$priorInputs.ContainsKey($file.path) -or $priorInputs[$file.path] -cne $file.sha256){throw "Bounded retry found changed source: $($file.path)"}
         }
         $nativeLog = Get-Content -LiteralPath (Join-Path $taskEvidence 'native_tests.log') -Raw
-        if($nativeLog -notmatch 'test result: ok\. \d+ passed; 0 failed;'){throw 'No passed native checks available for fixture-only retry'}
-        Write-TaskJson 'native_checks_reuse.json' ([ordered]@{passed=$true;priorSourceSnapshotSha256=$priorSource.sha256;currentSourceSnapshotSha256=$before.sha256;unchangedApplicationAndNativeInputs=$true;allowedChangedFiles=$allowedRepairs;reason='Repair constructor-bypassing JVM fixture initialization; all native and application source inputs are byte-identical.'})
+        if($nativeLog -notmatch 'test result: ok\. \d+ passed; 0 failed;'){throw 'No passed native checks available for bounded retry'}
+        Write-TaskJson 'native_checks_reuse.json' ([ordered]@{passed=$true;priorSourceSnapshotSha256=$priorSource.sha256;currentSourceSnapshotSha256=$before.sha256;unchangedApplicationAndNativeInputs=(!$ReuseNativeChecksForHierarchyUiRepair);unchangedNativeLibraryInputs=$true;sourcegenTestsRerun=$true;allowedChangedFiles=$allowedRepairs;reason=$(if($ReuseNativeChecksForHierarchyUiRepair){'Repair the Rust-only Android hierarchy UI emitter; every native library source and other input is byte-identical. Sourcegen tests and Android checks rerun.'}else{'Repair constructor-bypassing JVM fixture initialization; all native and application source inputs are byte-identical.'})})
         $reusedNativeChecks = $true
     }
     Write-TaskJson 'android_source_provenance.json' $before
@@ -144,6 +149,7 @@ try {
     $formatPaths += @('src\sourcegen\android_knowledge_compat.rs','src\knowledge.rs','src\knowledge_sync.rs','src\knowledge_references.rs','src\knowledge_app_data.rs','src\knowledge_exchange.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += @('src\android_canvas.rs','src\android_canvas_tests.rs','src\sourcegen\android_canvas_ui.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += Join-Path $taskCrate 'src\sourcegen\android_note_list_performance.rs'
+    $formatPaths += @('src/knowledge_hierarchy_app_data.rs','src/knowledge_hierarchy_persistence_tests.rs','src/sourcegen/android_knowledge_hierarchy.rs','src/sourcegen/android_knowledge_hierarchy_ui.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += @('src\sourcegen\android_knowledge_header.rs','src\sourcegen\android_document_caret.rs') | ForEach-Object {Join-Path $taskCrate $_}
     $formatPaths += Join-Path $taskCrate 'src\sourcegen\android_note_collection_recovery.rs'
     $formatPaths += Join-Path $taskCrate 'src\sourcegen\android_knowledge_filters.rs'
@@ -172,7 +178,7 @@ try {
     $taskNonAndroidSuites = @('sync_core::cancellation_tests::','sync_core::windows_http::')
     $taskNativeTestArgs = @('test') + $cargoBase + @('--lib','--')
     foreach($suite in $taskNonAndroidSuites){$taskNativeTestArgs += @('--skip',$suite)}
-    if($reusedNativeChecks){Write-Output 'native_tests.log reused: application and native inputs are unchanged'}
+    if($reusedNativeChecks){Write-Output 'native_tests.log reused: hash-verified native inputs are unchanged'}
     else {Invoke-TaskCommand $taskCargo $taskNativeTestArgs 'native_tests.log'}
     $taskMathSource = Get-Content -LiteralPath (Join-Path $taskCrate 'src\android_answer_render.rs') -Raw
     $taskMathTests = @(([regex]'(?m)#\[test\]\s*fn\s+(?<name>[A-Za-z0-9_]+)\s*\(').Matches($taskMathSource) | ForEach-Object { $_.Groups['name'].Value })
@@ -191,6 +197,9 @@ try {
         Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_document_transition_mutation.ps1'),'-Version',$taskVersion) 'document_transition_mutation.log'
         $transitionReceipt = Get-Content -LiteralPath (Join-Path $taskEvidence 'document_transition_mutation/receipt.json') -Raw | ConvertFrom-Json
         if(!$transitionReceipt.passed -or !$transitionReceipt.productionUnchanged -or @($transitionReceipt.cases | Where-Object {!$_.passed}).Count -ne 0){throw 'Document transition business mutation evidence failed'}
+    }
+    if([version]$taskVersion -ge [version]'2.23.2.29'){
+        Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_knowledge_hierarchy_mutation.ps1'),'-Version',$taskVersion) 'knowledge_hierarchy_mutation.log'
     }
     $after = Get-TaskInputs
     if($before.sha256 -ne $after.sha256){throw 'Source inputs changed during verification'}
@@ -221,6 +230,7 @@ try {
         @{name='NoteSaveQueueTest';package='ui';source='android_note_save_queue.rs'},
         @{name='KnowledgeDocumentTransitionTest';package='ui';source='android_document_transition.rs'},
         @{name='DocumentCollectionWorkTest';package='ui';source='android_document_collection_work.rs'},
+        @{name='KnowledgeHierarchyTest';package='data';source='android_knowledge_hierarchy.rs'},
         @{name='FinanceMoneyTest';package='data';source='finance_money_source.rs'}
     )){
         $suitePath = Join-Path $taskRoot ("app\build\test-results\testReleaseUnitTest\TEST-com.ofairyo.gridtimer."+$suite.package+"."+$suite.name+".xml")
@@ -565,7 +575,8 @@ try {
 
     $result = [ordered]@{schemaVersion=1;version=$taskVersion;mode=$Mode;passed=$true;noDeviceOperations=$true;sourceSnapshotSha256=$before.sha256;editingTests=$expectedTests;nativeArgumentEncoding=$taskNativeEncoding;completed=(Get-Date).ToUniversalTime().ToString('o');checks=@('rust_format','native_tests','sourcegen_tests','packager_tests','android_source_audit','android_jvm_tests','android_lint')}
     $result['excludedNonAndroidTestSuites'] = $taskNonAndroidSuites
-    $result['nativeChecksReusedForFixtureOnlyRepair'] = $reusedNativeChecks
+    $result['nativeChecksReusedForFixtureOnlyRepair'] = $reusedNativeChecks -and !$ReuseNativeChecksForHierarchyUiRepair
+    $result['nativeChecksReusedForHierarchyUiOnlyRepair'] = $reusedNativeChecks -and $ReuseNativeChecksForHierarchyUiRepair
     $result['gradleHeapMiB'] = $GradleHeapMiB
     $result['gradleWorkers'] = $GradleWorkers
     $result['canvasTests'] = $expectedCanvasTests

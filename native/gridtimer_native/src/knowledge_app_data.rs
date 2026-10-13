@@ -68,12 +68,46 @@ fn knowledge_note_valid(note: &NoteEntry) -> bool {
 
 fn knowledge_save_allowed(data: &AppData, previous: Option<&NoteEntry>, note: &NoteEntry) -> bool {
     if note.encryption.is_some() {
-        return true;
+        // An encrypted document hides its parent metadata. Do not turn a live
+        // container into an opaque record while visible children refer to it.
+        if previous.is_some_and(|old| old.encryption.is_some()) {
+            return true;
+        }
+        // The public envelope has no typed hierarchy fields. A first seal of
+        // a folder or nested page would lose its type/position until unlocked.
+        let nested_or_folder = previous.is_some_and(|old| {
+            knowledge_folder_marker(old)
+                || old
+                    .document
+                    .knowledge
+                    .as_ref()
+                    .and_then(|page| page.parent_id.as_deref())
+                    .is_some_and(|parent| !parent.is_empty())
+        });
+        return !nested_or_folder
+            && !data.note_folders.iter().any(|folder| folder.id == note.id)
+            && !knowledge_has_live_children(data, &note.id);
+    }
+    if knowledge_identity_conflict(data, &note.id)
+        || (data.note_folders.iter().any(|folder| folder.id == note.id)
+            && !knowledge_legacy_folder_origin(note))
+    {
+        return false;
     }
     if !knowledge_note_valid(note) {
         return false;
     }
     if let Some(old) = previous.filter(|old| old.encryption.is_none()) {
+        if knowledge_legacy_folder_origin(old) && !knowledge_legacy_folder_origin(note) {
+            return false;
+        }
+        let parent_changed =
+            knowledge_effective_parent(data, old) != knowledge_effective_parent(data, note);
+        if (parent_changed || knowledge_folder_marker(old) != knowledge_folder_marker(note))
+            && note.updated_at_epoch_millis < old.updated_at_epoch_millis
+        {
+            return false;
+        }
         if old.document.knowledge.is_some() && note.document.knowledge.is_none() {
             return false;
         }
@@ -139,7 +173,9 @@ fn knowledge_save_allowed(data: &AppData, previous: Option<&NoteEntry>, note: &N
                 return false;
             }
             let Some(owner) = data.notes.iter().find(|p| p.id == id) else {
-                return false;
+                // Existing flat folders are valid terminal roots. Their data
+                // remains unchanged for old Windows clients.
+                return data.note_folders.iter().any(|folder| folder.id == id);
             };
             if owner.deleted_at_epoch_millis.is_some() || owner.encryption.is_some() {
                 return false;
@@ -147,11 +183,7 @@ fn knowledge_save_allowed(data: &AppData, previous: Option<&NoteEntry>, note: &N
             if owner.document.knowledge.as_ref().is_some_and(|p| p.locked) {
                 return false;
             }
-            parent = owner
-                .document
-                .knowledge
-                .as_ref()
-                .and_then(|p| p.parent_id.as_deref());
+            parent = knowledge_effective_parent(data, owner);
         }
     }
     true

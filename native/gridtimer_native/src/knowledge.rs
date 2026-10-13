@@ -22,6 +22,9 @@ mod references;
 pub use references::*;
 
 pub const KNOWLEDGE_FORMAT_VERSION: u32 = 1;
+/// Reserved existing typed property; no new fields or format version.
+pub const FOLDER_KIND_PROPERTY: &str = "__tenrate_container_kind";
+pub const LEGACY_FOLDER_PROPERTY: &str = "__tenrate_legacy_folder";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
