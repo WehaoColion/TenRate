@@ -1,3 +1,4 @@
+// v2.23.2.30 - Record unchanged knowledge-page exit and display normalization guards.
 // v2.23.2.29 - Record nested knowledge pages and reversible folder conversion.
 // v2.23.2.27 - Record retained save settlement and matching exit reuse.
 // v2.23.2.26 - Record legal evidence navigation and selection lifetime repair.
@@ -29,7 +30,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.29";
+pub const LATEST_VERSION: &str = "2.23.2.30";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -59,6 +60,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.30",
+        updatedAt = "2026-10-13 22:54",
+        summary = "修复知识页未编辑退出仍进入长时间保存的问题",
+        sections = listOf(
+            AndroidUpdateSection("仅查看后退出", listOf(
+                "打开知识页，只查看正文、移动光标或切换预览后退出，核对编辑内容仍与打开时相同，且本次访问从未提交保存、没有正在恢复的版本或应删除的空白新草稿后，可以直接返回，避免新增保存请求并排在无关操作后等待。此前已提交的后台写入仍由原队列负责完成。",
+                "编辑器为旧格式内容和空页面准备显示用文本块时，不把这些准备步骤当作用户修改。未改变标题、正文及页面属性时，不再因为初次展示归一化触发自动保存。"
+            )),
+            AndroidUpdateSection("实际修改与保存保护", listOf(
+                "实际修改标题、文字、图片及其他内容块、色调、置顶或所在目录后，仍按原流程保存。本会话已经提交保存、存在在途退出保存、正在恢复历史版本或编辑字段已改变时，继续执行原有持久化核对；失败草稿保留并允许重试。",
+                "新建空白草稿的删除规则继续执行；带有知识元数据或子项的页面与文件夹仍受到保护。工作区变化和过期回调继续核对，加密数据沿用既有保存与保护流程。本次仅浏览退出不改变此前后台写入的实际完成状态。"
+            )),
+            AndroidUpdateSection("版本与验证范围", listOf(
+                "本次Android源码候选为2.23.2.30，versionCode为22299。历版更新记录及复制入口保留，更新时间按北京时间精确到分钟，沿用现有应用包名、正式签名配置及同步数据格式。",
+                "本次先提交修复PR，尚未构建或交付本版APK，尚未执行手机交互验收。本机领域测试、源码生成、正式版单元测试和lint结果分别记录，不能把静态检查或编译通过写成手机上的问题已经验证成功。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.29",
         updatedAt = "2026-10-13 17:04",
@@ -741,7 +761,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.28"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.29"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));

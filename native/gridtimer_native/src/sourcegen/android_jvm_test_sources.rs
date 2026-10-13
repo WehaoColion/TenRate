@@ -1400,6 +1400,70 @@ class TenfoldEditingTest {
         assertFalse(current.pinned.value)
     }
 
+    @Test fun untouchedNormalizedDocumentsIgnoreCursorAndSelectionChanges() {
+        val normalizedDocuments = listOf(
+            initial(false).copy(blocks = listOf(NoteBlock(id = "empty_canvas", type = NoteBlockType.TEXT))),
+            initial(false),
+            initial(false).copy(blocks = listOf(
+                NoteBlock(id = "image", type = NoteBlockType.IMAGE, attachmentId = "photo", caption = "原图"),
+                NoteBlock(id = "contact", type = NoteBlockType.CONTACT, contactName = "联系人")
+            ))
+        )
+        for (start in normalizedDocuments) {
+            val session = DocumentEditorSession(start, false)
+            assertTrue(session.canLeaveUnmodified(start, requiresBlankDeletion = false, workspaceMatches = true))
+            val selected = start.copy(activeTextBlockId = start.blocks.first().id,
+                selections = mapOf(start.blocks.first().id to TextRange(0, 1)))
+            assertTrue(session.canLeaveUnmodified(selected, requiresBlankDeletion = false, workspaceMatches = true))
+            assertFalse(session.exitSaveGate.isDurableAtEpoch(0L))
+            assertFalse(session.exitSaveGate.hasPendingPersistence())
+        }
+    }
+
+    @Test fun persistentDocumentChangesCannotUseTheUntouchedVisitExit() {
+        val text = NoteBlock(id = "text", type = NoteBlockType.TEXT, text = "正文")
+        val image = NoteBlock(id = "image", type = NoteBlockType.IMAGE, attachmentId = "photo", caption = "原图")
+        val start = initial(false).copy(blocks = listOf(text, image))
+        val session = DocumentEditorSession(start, false)
+        val changes = mapOf(
+            "title" to start.copy(title = "新标题"),
+            "accent" to start.copy(accentSeed = "blue"),
+            "pin" to start.copy(pinned = true),
+            "folder" to start.copy(folderId = "folder"),
+            "markdown" to start.copy(markdownEnabled = false),
+            "text" to start.copy(blocks = listOf(text.copy(text = "新的正文"), image)),
+            "image" to start.copy(blocks = listOf(text, image.copy(attachmentId = "replacement"))),
+            "caption" to start.copy(blocks = listOf(text, image.copy(caption = "修改说明")))
+        )
+        for ((field, changed) in changes) {
+            assertFalse(field, session.canLeaveUnmodified(changed,
+                requiresBlankDeletion = false, workspaceMatches = true))
+        }
+    }
+
+    @Test fun acceptedWritesRestoresAndWorkspaceBoundariesRequireTheDurablePath() {
+        val start = initial(false)
+        val reverted = DocumentEditorSession(start, false)
+        // Restoring the entry text after an accepted edit does not cancel its storage obligation.
+        reverted.saveRequestGeneration.value = 1L
+        assertFalse(reverted.canLeaveUnmodified(start, requiresBlankDeletion = false, workspaceMatches = true))
+        reverted.saveState.value = DocumentEditorSaveState.FAILED
+        assertFalse(reverted.canLeaveUnmodified(start, requiresBlankDeletion = false, workspaceMatches = true))
+
+        val restoring = DocumentEditorSession(start, false)
+        restoring.pendingRevisionRestore.value = NoteRevisionSnapshot(title = "历史标题")
+        assertFalse(restoring.canLeaveUnmodified(start, requiresBlankDeletion = false, workspaceMatches = true))
+
+        val pending = DocumentEditorSession(start, false)
+        pending.exitSaveGate.beginPersistence(draft = NoteEntry(id = "note"),
+            requiresBlankDeletion = false, queueEpoch = 1L, onComplete = {})
+        assertFalse(pending.canLeaveUnmodified(start, requiresBlankDeletion = false, workspaceMatches = true))
+
+        val untouched = DocumentEditorSession(start, false)
+        assertFalse(untouched.canLeaveUnmodified(start, requiresBlankDeletion = false, workspaceMatches = false))
+        assertFalse(untouched.canLeaveUnmodified(start, requiresBlankDeletion = true, workspaceMatches = true))
+    }
+
     @Test fun externalImageDeletionKeepsUnsavedTextSelectionAndComposition() {
         val image = NoteBlock(id = "image", type = NoteBlockType.IMAGE, attachmentId = "removed")
         val pending = image.copy(id = "pending", attachmentId = "pending:operation")

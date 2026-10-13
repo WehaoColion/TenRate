@@ -1,4 +1,4 @@
-# v0.0.1 - Verify retained document exit completion and persistence deduplication.
+# v0.0.2 - Verify unmodified visits and retained document exit persistence boundaries.
 param([string]$Version)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -18,7 +18,13 @@ function Get-Literal([string]$Name) {
 $helper = Get-Literal 'EXIT_SAVE_GATE_CONTENTS'
 $tests = Get-Literal 'EXIT_SAVE_GATE_TEST_CONTENTS'
 $testCount = [regex]::Matches($tests, '@Test\s+fun ').Count
-if ($testCount -lt 20) { throw 'Exit save boundary tests missing' }
+if ($testCount -lt 24) { throw 'Exit save boundary tests missing' }
+foreach ($requiredTest in @(
+    'unmodifiedFirstVisitNeedsNoDurableReceipt',
+    'changedContentCannotUseReadOnlyExit',
+    'editedThenRevertedStillRequiresPersistence',
+    'blankDeletionWorkspaceRestoreAndPendingWriteCannotUseReadOnlyExit'
+)) { if (!$tests.Contains('@Test fun '+$requiredTest+'(')) { throw "Unmodified visit boundary test missing: $requiredTest" } }
 $cache = Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1'
 function Get-ExitSaveDependency([string]$Coordinate, [string]$DependencyVersion, [string]$Name) {
     $directory = Join-Path $cache ($Coordinate + '/' + $DependencyVersion)
@@ -52,6 +58,14 @@ if ([IO.File]::ReadAllText($actualHelper).Replace("`r`n", "`n").Trim() -cne $hel
 $editor = [IO.File]::ReadAllText($actualEditor)
 foreach ($binding in @(
     'val exitSaveGate = NoteEditorExitSaveGate<NoteEntry>()',
+    'val initialContentSnapshot = initial.copy(activeTextBlockId = null, selections = emptyMap())',
+    'fun canLeaveUnmodified(',
+    'entryContent = initialContentSnapshot',
+    'currentContent = current.copy(activeTextBlockId = null, selections = emptyMap())',
+    'editGeneration = saveRequestGeneration.value',
+    'pendingRevisionRestore = pendingRevisionRestore.value != null',
+    'editorSession.canLeaveUnmodified(',
+    'current = currentDraftState()',
     'val persistenceTicket = editorSession.exitSaveGate.beginPersistence(',
     'val completion = editorSession.exitSaveGate.completePersistence(',
     'completion.accepted && completion.latest && persistenceGeneration == saveRequestGeneration',
@@ -67,6 +81,7 @@ foreach ($binding in @(
     'queueEpoch = viewModel.noteMutationEpoch()',
     'editorSession.exitSaveGate.markEnqueued(persistenceTicket, viewModel.noteMutationEpoch())'
 )) { if (!$editor.Contains($binding)) { throw "Production editor is not using the domain gate: $binding" } }
+if ([regex]::Matches($editor, 'editorSession\.canLeaveUnmodified\(').Count -ne 2) { throw 'Both autosave and exit persistence must use the unmodified visit gate' }
 $backStart = $editor.IndexOf('    fun handleBack()')
 $backEnd = $editor.IndexOf('    fun undoDraft()', $backStart)
 if ($backStart -lt 0 -or $backEnd -le $backStart) { throw 'Production document back handler missing' }
@@ -76,7 +91,7 @@ $persistEnd = $editor.IndexOf('    val latestExitPersistence', $persistStart)
 if ($persistStart -lt 0 -or $persistEnd -le $persistStart) { throw 'Production document persistence function missing' }
 $persistBody = $editor.Substring($persistStart, $persistEnd - $persistStart)
 if ($persistBody.Contains('if (!editorSaveCallbackActive.get()')) { throw 'Disposed editor still abandons retained persistence completion' }
-foreach ($case in @('baseline','cosmetic_only','removed_completion_ownership','abandoned_disposed_completion','removed_workspace_delivery_guard','removed_blank_deletion_strength','removed_persistence_completion_ownership','removed_persistence_tail_order','removed_stronger_deletion_join','removed_queue_barrier_fence','removed_completed_cache_epoch','removed_complete_payload_equality')) {
+foreach ($case in @('baseline','cosmetic_only','removed_completion_ownership','abandoned_disposed_completion','removed_workspace_delivery_guard','removed_blank_deletion_strength','removed_persistence_completion_ownership','removed_persistence_tail_order','removed_stronger_deletion_join','removed_queue_barrier_fence','removed_completed_cache_epoch','removed_complete_payload_equality','removed_read_only_content_equality','removed_read_only_edit_generation','removed_read_only_blank_deletion_guard')) {
     $directory = Join-Path $evidence $case
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $production = $helper
@@ -90,6 +105,9 @@ foreach ($case in @('baseline','cosmetic_only','removed_completion_ownership','a
         removed_queue_barrier_fence = @('it.enqueuedEpoch == queueEpoch &&', '')
         removed_completed_cache_epoch = @('durableEpoch != null && durableEpoch == queueEpoch', 'durableEpoch != null')
         removed_complete_payload_equality = @('candidate == cachedDraft && candidate == visibleDraft &&', '')
+        removed_read_only_content_equality = @('entryContent == currentContent &&', '')
+        removed_read_only_edit_generation = @('editGeneration == 0L &&', '')
+        removed_read_only_blank_deletion_guard = @('!requiresBlankDeletion &&', '')
         removed_completion_ownership = @('        if (current !== ticket) return Completion(false, false, false)', '')
         abandoned_disposed_completion = @('        current = null', "        if (!uiIsCurrent) return Completion(false, false, false)`n        current = null")
         removed_workspace_delivery_guard = @('notifyUi = uiIsCurrent && workspaceMatches', 'notifyUi = uiIsCurrent')
@@ -125,6 +143,9 @@ foreach ($case in @('baseline','cosmetic_only','removed_completion_ownership','a
         'removed_queue_barrier_fence' { 'interveningQueueBarrierPreventsJoiningOlderLifecycleWrite' }
         'removed_completed_cache_epoch' { 'completedDurableProofExpiresWhenAnotherQueueMutationIsAccepted' }
         'removed_complete_payload_equality' { 'equalTextWithChangedNonTextPayloadCannotSkipDurableExit' }
+        'removed_read_only_content_equality' { 'changedContentCannotUseReadOnlyExit' }
+        'removed_read_only_edit_generation' { 'editedThenRevertedStillRequiresPersistence' }
+        'removed_read_only_blank_deletion_guard' { 'blankDeletionWorkspaceRestoreAndPendingWriteCannotUseReadOnlyExit' }
         default { '' }
     }
     $passed = if ($expectedPass) { $exitCode -eq 0 -and $log.Contains("OK ($testCount tests)") } else { $exitCode -ne 0 -and $log.Contains('java.lang.AssertionError') -and $log.Contains($requiredFailure) }

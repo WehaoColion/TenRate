@@ -1,3 +1,4 @@
+// v2.23.2.30 - Leave untouched document visits without adding a storage barrier.
 // v2.23.2.27 - Complete retained document exit saves after editor disposal.
 // v2.23.2.1 - Coalesce adjacent draft autosaves without crossing durable barriers.
 // Android implementation and JVM state tests are authored in this Rust generator.
@@ -81,6 +82,38 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "        ) { created, message ->\n            if (!editorSaveCallbackActive.get() || viewModel.currentWorkspaceKey() != editorWorkspaceKey) {\n                return@createNextNoteVersion\n            }\n            versionCreationBusy = false")?;
         }
         DOCUMENT => {
+            replace(&mut source,
+                "    val titleText = mutableStateOf(initial.title)",
+                "    // Keep the editor projection captured at entry; display normalization\n    // and cursor/selection state are not persisted edits.\n    val initialContentSnapshot = initial.copy(activeTextBlockId = null, selections = emptyMap())\n    val titleText = mutableStateOf(initial.title)")?;
+            replace(&mut source,
+                "    private var observedAttachmentIds: Set<String>? = null",
+                "    fun canLeaveUnmodified(\n        current: NoteDraftState,\n        requiresBlankDeletion: Boolean,\n        workspaceMatches: Boolean\n    ): Boolean = exitSaveGate.canLeaveUnmodified(\n        entryContent = initialContentSnapshot,\n        currentContent = current.copy(activeTextBlockId = null, selections = emptyMap()),\n        editGeneration = saveRequestGeneration.value,\n        requiresBlankDeletion = requiresBlankDeletion,\n        workspaceMatches = workspaceMatches,\n        pendingRevisionRestore = pendingRevisionRestore.value != null\n    )\n\n    private var observedAttachmentIds: Set<String>? = null")?;
+            // Merely opening an old/plain/empty document must not persist the
+            // editable Markdown/empty-block projection produced for display.
+            let autosave_start = source
+                .find("    LaunchedEffect(\n        titleText,")
+                .ok_or("missing document autosave")?;
+            let autosave_end = source[autosave_start..]
+                .find("    val editorAccent =")
+                .map(|offset| autosave_start + offset)
+                .ok_or("missing document autosave end")?;
+            let mut autosave = source[autosave_start..autosave_end].to_owned();
+            replace(&mut autosave,
+                "        val document = NoteDocument(",
+                "        if (editorSession.canLeaveUnmodified(\n                current = currentDraftState(),\n                requiresBlankDeletion = false,\n                workspaceMatches = viewModel.currentWorkspaceKey() == editorWorkspaceKey\n            )) return@LaunchedEffect\n        val document = NoteDocument(")?;
+            source.replace_range(autosave_start..autosave_end, &autosave);
+            let persistence_start = source
+                .find("    fun persistLatestDraft(\n")
+                .ok_or("missing document exit persistence")?;
+            let persistence_end = source[persistence_start..]
+                .find("    val latestExitPersistence")
+                .map(|offset| persistence_start + offset)
+                .ok_or("missing document exit persistence end")?;
+            let mut persistence = source[persistence_start..persistence_end].to_owned();
+            replace(&mut persistence,
+                "        val currentBlocks = materializedTextBlocks()",
+                "        // An unchanged visit owns no new write. Do not claim a durable\n        // receipt or wait for storage work owned by other callers. Any accepted\n        // edit/save/restore in this session still takes the durable path below.\n        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !blankDraftDeleted.value\n        if (editorSession.canLeaveUnmodified(\n                current = currentDraftState(),\n                requiresBlankDeletion = visitNeedsBlankDeletion,\n                workspaceMatches = viewModel.currentWorkspaceKey() == editorWorkspaceKey\n            )) {\n            onComplete(true)\n            return\n        }\n        val currentBlocks = materializedTextBlocks()")?;
+            source.replace_range(persistence_start..persistence_end, &persistence);
             replace(&mut source,
                 "    val isSavingDraft = mutableStateOf(false)",
                 "    val isSavingDraft = mutableStateOf(false)\n    val exitSaveGate = NoteEditorExitSaveGate<NoteEntry>()")?;
@@ -473,6 +506,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NoteSaveQueueTest {
+    @Test fun untouchedVisitDoesNotQueueBehindUnrelatedSlowWrite() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val blocker = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val controller = NoteMutationDrainController(scope) { throw it }
+        val visit = NoteEditorExitSaveGate<String>()
+        var writes = 0
+        try {
+            val unrelated = controller.enqueue {
+                started.complete(Unit); blocker.await(); NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            val epoch = controller.mutationEpoch()
+            // Exercise the same no-edit decision used before editor dispatch.
+            val finished = if (visit.canLeaveUnmodified("entry", "entry", 0L, false, true, false)) {
+                true
+            } else {
+                controller.enqueue { writes++; NoteSaveResult.committed() }.isCompleted
+            }
+            assertTrue(finished)
+            assertEquals(0, writes)
+            assertEquals(epoch, controller.mutationEpoch())
+            assertFalse(unrelated.isCompleted)
+        } finally { blocker.complete(Unit); scope.cancel() }
+    }
+
     @Test fun slowWriteKeepsOnlyLatestAdjacentAutosaveBeforeExplicitSave() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val gate = CompletableDeferred<Unit>()
@@ -674,6 +733,20 @@ internal class NoteEditorExitSaveGate<D> {
         candidate == cachedDraft && candidate == visibleDraft &&
         pendingPersistence.isEmpty() && isDurableAtEpoch(queueEpoch)
 
+    // This is permission to leave an untouched visit, not proof that another
+    // caller's queued data is durable. Never reuse it after this session accepted
+    // a mutation, even if undo has restored the entry content.
+    @Synchronized
+    fun <C> canLeaveUnmodified(
+        entryContent: C,
+        currentContent: C,
+        editGeneration: Long,
+        requiresBlankDeletion: Boolean,
+        workspaceMatches: Boolean,
+        pendingRevisionRestore: Boolean
+    ): Boolean = workspaceMatches && !pendingRevisionRestore && !requiresBlankDeletion &&
+        editGeneration == 0L && entryContent == currentContent && pendingPersistence.isEmpty()
+
     @Synchronized
     fun hasPendingPersistence(): Boolean = pendingPersistence.isNotEmpty()
 
@@ -775,6 +848,41 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NoteEditorExitSaveGateTest {
+    @Test fun unmodifiedFirstVisitNeedsNoDurableReceipt() {
+        val gate = NoteEditorExitSaveGate<String>()
+        assertFalse(gate.isDurableAtEpoch(100L))
+        assertTrue(gate.canLeaveUnmodified("entry", "entry", 0L, false, true, false))
+        // Lifecycle stop and disposal must not enqueue a second read-only write.
+        assertTrue(gate.canLeaveUnmodified("entry", "entry", 0L, false, true, false))
+        assertFalse(gate.hasPendingPersistence())
+    }
+
+    @Test fun changedContentCannotUseReadOnlyExit() {
+        val original = CompleteDocumentPayload("text", "contact", "call", listOf("image"), 4L)
+        val gate = NoteEditorExitSaveGate<CompleteDocumentPayload>()
+        for (changed in listOf(
+            original.copy(text = "edited"), original.copy(contactCaption = "edited"),
+            original.copy(callSummary = "edited"), original.copy(attachments = emptyList()),
+            original.copy(protectionRevision = 5L)
+        )) assertFalse(gate.canLeaveUnmodified(original, changed, 0L, false, true, false))
+    }
+
+    @Test fun editedThenRevertedStillRequiresPersistence() {
+        val gate = NoteEditorExitSaveGate<String>()
+        for (generation in listOf(1L, 2L, 100L)) {
+            assertFalse(gate.canLeaveUnmodified("entry", "entry", generation, false, true, false))
+        }
+    }
+
+    @Test fun blankDeletionWorkspaceRestoreAndPendingWriteCannotUseReadOnlyExit() {
+        val gate = NoteEditorExitSaveGate<String>()
+        assertFalse(gate.canLeaveUnmodified("", "", 0L, true, true, false))
+        assertFalse(gate.canLeaveUnmodified("entry", "entry", 0L, false, false, false))
+        assertFalse(gate.canLeaveUnmodified("entry", "entry", 0L, false, true, true))
+        gate.beginPersistence("entry", false) {}
+        assertFalse(gate.canLeaveUnmodified("entry", "entry", 0L, false, true, false))
+    }
+
     @Test fun successfulCurrentSaveClearsBusyAndAllowsNavigation() {
         val gate = NoteEditorExitSaveGate<String>()
         val ticket = checkNotNull(gate.begin())

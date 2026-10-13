@@ -1,3 +1,4 @@
+// v2.23.2.30 - Preserve hierarchy handoff and blank-child guards on untouched exits.
 // v2.23.2.29 - Navigate and edit knowledge containers without replacing page content.
 const STUDIO: &str = "com/ofairyo/gridtimer/ui/NoteStudioSheet.kt";
 const EDITOR: &str = "com/ofairyo/gridtimer/ui/NoteDocumentEditor.kt";
@@ -77,7 +78,8 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         replace(&mut source,"        }, onPreviewImage = onRequestPreviewAttachment)", "        }, onPreviewImage = onRequestPreviewAttachment, hierarchyContent = hierarchyContent)")?;
         replace(&mut source, "    val documentTransitionActive = LocalDocumentTransitionActive.current", "    val documentTransitionActive = LocalDocumentTransitionActive.current\n    var hierarchyHandedOff by remember(note.id, LocalNoteMediaWorkspaceKey.current) { mutableStateOf(false) }")?;
         replace(&mut source, "        if (isSavingDraft || pendingRevisionRestore != null) return@LaunchedEffect", "        if (hierarchyHandedOff || isSavingDraft || pendingRevisionRestore != null) return@LaunchedEffect")?;
-        replace(&mut source, "    ) {\n        val currentBlocks = materializedTextBlocks()\n        val document = NoteDocument(", "    ) {\n        if (hierarchyHandedOff) { onComplete(true); return }\n        val currentBlocks = materializedTextBlocks()\n        val document = NoteDocument(")?;
+        replace(&mut source, "    ) {\n        // An unchanged visit owns no new write.", "    ) {\n        if (hierarchyHandedOff) { onComplete(true); return }\n        // An unchanged visit owns no new write.")?;
+        replace(&mut source, "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&", "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry && !hasHierarchyChildren && latestNote.document.knowledge == null &&")?;
         replace(&mut source, "            blankDraftDeletionEligibleAtEntry = note.isBlankDraft()", "            blankDraftDeletionEligibleAtEntry = note.isBlankDraft() && note.document.knowledge == null && !hasHierarchyChildren")?;
         replace(&mut source, "        val needsBlankDeletion = deleteBlankDraft &&", "        val needsBlankDeletion = deleteBlankDraft && !hasHierarchyChildren && candidate.document.knowledge == null &&")?;
         replace(&mut source, "            deleteBlankDraft = deleteBlankDraft && blankDraftDeletionEligibleAtEntry", "            deleteBlankDraft = deleteBlankDraft && blankDraftDeletionEligibleAtEntry && !hasHierarchyChildren && candidate.document.knowledge == null")?;

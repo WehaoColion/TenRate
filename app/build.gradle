@@ -1,3 +1,4 @@
+// v2.23.2.30 - Skip knowledge-page persistence for unchanged read-only visits.
 // v2.23.2.29 - Add nested knowledge pages and convertible folders.
 // v2.23.2.25 - Show real Agent progress and explicit result states.
 // v2.23.2.24 - Guard document AI opening and source lifetime.
@@ -150,8 +151,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22298
-        versionName '2.23.2.29'
+        versionCode 22299
+        versionName '2.23.2.30'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
