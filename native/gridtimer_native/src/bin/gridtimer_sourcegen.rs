@@ -30,8 +30,14 @@ mod android_device_timer_sync;
 mod android_document_block_alignment;
 #[path = "../sourcegen/android_document_caret.rs"]
 mod android_document_caret;
+#[path = "../sourcegen/android_document_collection_work.rs"]
+mod android_document_collection_work;
+#[path = "../sourcegen/android_document_exit_feedback.rs"]
+mod android_document_exit_feedback;
 #[path = "../sourcegen/android_document_markdown.rs"]
 mod android_document_markdown;
+#[path = "../sourcegen/android_document_transition.rs"]
+mod android_document_transition;
 #[path = "../sourcegen/android_finance_workspace.rs"]
 mod android_finance_workspace;
 #[path = "../sourcegen/android_history_storage.rs"]
@@ -225,6 +231,16 @@ fn run() -> io::Result<()> {
         )?;
         write_source(
             &unit_test_output_root,
+            android_document_transition::TEST_PATH,
+            android_document_transition::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
+            android_document_collection_work::TEST_PATH,
+            android_document_collection_work::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
             android_note_save_queue::EXIT_SAVE_GATE_TEST_PATH,
             android_note_save_queue::EXIT_SAVE_GATE_TEST_CONTENTS,
         )?;
@@ -255,6 +271,11 @@ fn run() -> io::Result<()> {
         )?;
     }
 
+    write_source(
+        &output_root,
+        android_document_transition::PATH,
+        android_document_transition::CONTENTS,
+    )?;
     write_source(
         &output_root,
         android_note_save_queue::EXIT_SAVE_GATE_PATH,
@@ -631,6 +652,12 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_finance_workspace::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_markdown::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_document_exit_feedback::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_document_transition::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_document_collection_work::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_block_alignment::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

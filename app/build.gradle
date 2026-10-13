@@ -1,4 +1,4 @@
-// v2.23.2.27 - Settle retained editor saves and reuse matching pending exits.
+// v2.23.2.28 - Keep knowledge exit content stable and reduce transition work.
 // v2.23.2.25 - Show real Agent progress and explicit result states.
 // v2.23.2.24 - Guard document AI opening and source lifetime.
 // v2.23.2.23 - Add independent Agent review and verified draft saving.
@@ -150,8 +150,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22296
-        versionName '2.23.2.27'
+        versionCode 22297
+        versionName '2.23.2.28'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

@@ -1,3 +1,4 @@
+// v2.23.2.28 Android - Smooth knowledge exit without changing Windows identity.
 // v2.23.2.27 Android - Settle retained knowledge editor saves safely.
 // v2.23.2.26 Android - Keep legal evidence navigation on its selected record.
 // v2.23.2.25 Android - Improve Agent execution feedback and save clarity.
@@ -96,8 +97,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.7";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.2.27";
-pub const ANDROID_VERSION_CODE: i32 = 22296;
+pub const ANDROID_APP_VERSION: &str = "2.23.2.28";
+pub const ANDROID_VERSION_CODE: i32 = 22297;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
@@ -157,11 +158,12 @@ mod tests {
 
     #[test]
     fn platform_release_versions_remain_independent() {
+        // Also verify Android packaging identity in the host-side release gate.
+        let android_build = include_str!("../../../app/build.gradle");
+        assert!(android_build.contains(&format!("versionName '{}'", ANDROID_APP_VERSION)));
+        assert!(android_build.contains(&format!("versionCode {}", ANDROID_VERSION_CODE)));
         #[cfg(target_os = "android")]
         {
-            let android_build = include_str!("../../../app/build.gradle");
-            assert!(android_build.contains(&format!("versionName '{}'", ANDROID_APP_VERSION)));
-            assert!(android_build.contains(&format!("versionCode {}", ANDROID_VERSION_CODE)));
             assert_eq!(ANDROID_APP_VERSION, PRODUCT.app_version);
         }
         #[cfg(not(target_os = "android"))]
