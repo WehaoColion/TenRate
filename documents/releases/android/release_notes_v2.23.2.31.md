@@ -2,7 +2,7 @@ v2.23.2.31 - 法律风险扫描只纳入每个知识页和便签的当前内容�
 
 # Android 2.23.2.31 法律分析当前内容范围修复
 
-更新时间：2026-10-14 02:03（北京时间）
+更新时间：2026-10-14 04:26（北京时间）
 
 ## 问题与修复
 
@@ -18,7 +18,7 @@ v2.23.2.31 - 法律风险扫描只纳入每个知识页和便签的当前内容�
 
 ## 版本与交付范围
 
-Android源码候选2.23.2.31，versionCode22300，只递增第四段。本次先提交PR，不构建或替换已验收2.23.2.30安装包。共享Rust扫描核心采用当前内容范围；Windows正式程序、服务、签名配置和发布清单保持原版本，本次不发布Windows。
+Android候选APK2.23.2.31，versionCode22300，只递增第四段。正式签名APK已经构建并交付，等待手机验收；已验收2.23.2.30的三处安装包保留到old_apks/pr24_previous_delivery。共享Rust扫描核心采用当前内容范围；Windows正式程序、服务、签名配置和发布清单保持原版本，本次不发布Windows。
 
 ## 验证记录
 
@@ -29,3 +29,27 @@ Android源码候选2.23.2.31，versionCode22300，只递增第四段。本次先
 已执行 `pwsh -NoProfile -File tools/verify_legal_latest_scope_mutation.ps1 -Version 2.23.2.31`。隔离副本中的基线和仅改文案版本均通过 6 项规格；重新纳入历史正文、重新读取历史附件目录的两个变异均成功编译，并触发指定业务断言失败。4 个案例均符合预期，生产输入哈希保持一致。当前内容为空时，预计调用次数也正确归零。
 
 新增领域规格覆盖当前内容唯一性、空白不回退、加密当前输入、删除与归档、历史附件排除、当前附件去重和无效旧证据拒绝。验证使用合成记录，不发送个人资料或调用付费 AI 接口。没有进行本版真机交互验收，没有使用模拟器。
+
+
+## 候选APK构建与交付
+
+本次实际执行正式Release Gradle流程，包含`:app:testReleaseUnitTest`、`:app:lintRelease`、`:app:assembleRelease`，构建日志用时7m 4s。源码生成与三种架构原生编译结果、441项JVM测试以及lint由Gradle在未变化输入上复用；`:app:packageRelease`与`:app:assembleRelease`实际执行。先前已通过的Rust和变异检查在逐项核对相同源码与成功日志哈希后复用，保留signed_build_reuse_receipt.json，不修改正式构建脚本。完整验收结果为mode=build、passed=true。
+
+| 项目 | 核对结果 |
+| --- | --- |
+| 安装包 | `tenfold_v2.23.2.31.apk` |
+| 包名 | `com.ofairyo.gridtimer` |
+| 版本 | 2.23.2.31，versionCode 22300 |
+| 大小 | 24,991,421字节，约23.83 MiB |
+| APK SHA256 | `bfabc81a1673269964527b1f781aee68b70b235a5b20e0533996afbe6a70fc0c` |
+| 正式证书SHA256 | `4ac7b86a600bbb3215a6187018c1442efcf3ffb25cdbeea0082cab81ef4d605f` |
+| 应用代码提交 | `41c3e5871eb71f77f8af0f913d3bbeb42c36afc4` |
+| 应用输入快照SHA256 | `e1737d10dfc02f7835d0548ef930d7c52faea9ae14db8b39cc2fb6daa8b16079` |
+
+交付复核时间为2026-10-14 04:26（北京时间）。`apksigner verify --verbose --print-certs`验证通过，v2、v3签名有效；证书与已验收2.23.2.30完全相同。包名保持一致，versionCode从22299递增至22300，沿用覆盖更新身份，不需要卸载旧版。包中没有debuggable标志，16KiB ZIP对齐验证通过，arm64-v8a、armeabi-v7a、x86_64三个原生库与本次Rust及Gradle输出逐字节一致。
+
+APK按原流程放回项目根目录、APK/及app/build/outputs/apk/release/，三处大小与SHA256相同。原项目本地新文件、未提交源码及配置保留；旧版三处APK分别归档到old_apks/pr24_previous_delivery/，哈希未变。正式Windows程序和共用发布清单未改动。输出只保留带版本号的正式APK，没有debug APK、app-release APK或AAB。签名秘密和本机详细验收日志不上传。
+
+本版需要重新准备一次法律扫描，才能按当前内容范围生成新预览和新报告。历史已保存报告保留，不会因安装更新而重新分析或自动发送资料。手机安装、交互及真实AI调用尚未验收。PR #24保持待验收，未合并。后续交付说明提交仅修改文档，不改变已构建的应用输入。
+
+实际反汇编本次APK的DEX方法体，确认附件准备只读取当前文档及当前引用，不再访问revisions或versions；加密笔记发送前使用空历史列表建立副本，真正传给序列化器的对象也是该副本。同一规则对旧2.23.2.30正确拒绝。另行核验本轮法律范围变异脚本、领域测试、339项生产输入和四组编译/测试日志哈希均通过。这些核对证明修复已进入本次安装包，不替代手机运行验收。
