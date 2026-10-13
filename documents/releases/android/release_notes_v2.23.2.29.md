@@ -1,8 +1,8 @@
 v2.23.2.29 - 知识模块增加页面和文件夹的多层目录，保留原记录及内容。
 
-# Android 2.23.2.29 知识层级候选
+# Android 2.23.2.29 知识层级候选APK
 
-更新时间：2026-10-13 17:04（北京时间）
+更新时间：2026-10-13 21:19（北京时间）
 
 ## 本次功能
 
@@ -20,7 +20,7 @@ v2.23.2.29 - 知识模块增加页面和文件夹的多层目录，保留原记�
 
 普通根级页面保持既有加密流程。带子项的容器需先移出子项；嵌套页面需先移到根级，文件夹需先转回页面，才能进行首次加密，以避免现有密文结构抹去层级位置。从旧文件夹提升且仍保留同号兼容记录的容器暂不支持首次加密，界面会说明原因。原有已加密内容及其更新流程保留。
 
-Android候选版本为2.23.2.29，versionCode为22298。正式APK及原用户数据未被替换。本次提交源码PR，APK构建与手机验收另行记录，不把源码或编译验证写成真机通过。
+Android候选版本为2.23.2.29，versionCode为22298。正式签名候选APK已按原流程构建交付；原用户数据及原项目未提交源码、配置保留，手机验收待完成。
 
 ## 验证
 
@@ -41,6 +41,29 @@ Android候选版本为2.23.2.29，versionCode为22298。正式APK及原用户数
 
 实际运行流程：先执行完整的`tools/android.ps1 -Mode check -GradleHeapMiB 1536 -GradleWorkers 1`，完成领域库测试及三种安卓ABI正式版库编译；界面生成器修复后，执行`tools/verify_android_agent_mutation.ps1 -Version 2.23.2.29`并以`tools/android.ps1 -Mode check -ReuseNativeChecksForHierarchyUiRepair -GradleHeapMiB 1536 -GradleWorkers 1`完成最终汇总。原生测试结果的复用严格核对文件集合及每一文件SHA256，只允许本轮Rust界面生成器和构建调度脚本变化；领域库、领域测试及其他输入保持相同。源码生成器和打包器测试重新执行，修复后的Android正式版编译、单元测试与lint已执行；最后一次同源复核使用Gradle的UP-TO-DATE结果。最终验收记录`release_artifacts/verification/v2.23.2.29/offline_build_acceptance.json`为通过，包含本次输入快照和实际复用范围。
 
-在原项目之外的独立工作区实施。核对原项目Git状态、未暂存与暂存差异、123个未跟踪文件、HEAD及正式清单均未改变；三个已验收2.23.2.28 APK及四个Windows正式文件的哈希与原记录一致。提交前的文件与新增历史审计不包含签名材料、令牌、私人论文、个人数据、日志、备份或缓存。同步自启动任务及本机、公网健康身份另行核对。
+在原项目之外的独立工作区实施。核对原项目Git状态、未暂存与暂存差异、123个未跟踪文件、HEAD及正式清单均未改变；三个已验收2.23.2.28 APK已按原位置归档到old_apks/pr22_previous_delivery，归档哈希与原记录一致；四个Windows正式文件保持原哈希。提交前的文件与新增历史审计不包含签名材料、令牌、私人论文、个人数据、日志、备份或缓存。同步自启动任务及本机、公网健康身份另行核对。
 
-本次没有生成或发布APK，没有调用模拟器，没有执行手机交互或真实双端账户同步，也没有重新启动电脑或验证休眠恢复。页面互转、嵌套创建、长目录滚动及保存动画的手机观感，需后续正式签名候选APK由用户验收。
+本次没有调用模拟器，没有执行手机交互或真实双端账户同步，也没有重新启动电脑或验证休眠恢复。页面互转、嵌套创建、移动、长目录滚动及保存动画的手机观感，仍需用户安装本候选APK验收。PR #22保持待验收状态。
+
+## 候选APK构建与交付
+
+本轮正式构建于2026-10-13 21:11（北京时间）完成，交付复核于2026-10-13 21:19完成。运行命令为`$env:CARGO_INCREMENTAL='0'; $env:CARGO_BUILD_JOBS='1'; $env:RUST_TEST_THREADS='1'; pwsh -NoProfile -File tools/android.ps1 -Mode build -ReuseNativeChecksForHierarchyUiRepair -GradleHeapMiB 1536 -GradleWorkers 1`。Rust领域测试沿用上文已逐文件核对的同源结果；源码生成器141项、打包器66项重新执行。Android Release测试433项及lint通过，Gradle对未变化任务复用UP-TO-DATE结果，正式APK打包已实际执行，最终验收记录模式为build且passed为true。
+
+| 项目 | 实际结果 |
+| --- | --- |
+| APK | `tenfold_v2.23.2.29.apk` |
+| 应用包名 | `com.ofairyo.gridtimer` |
+| 版本 | 2.23.2.29，versionCode 22298 |
+| 大小 | 24,996,665字节，约23.84 MiB |
+| APK SHA256 | `09e0a438f511a917e0877d58923d4f09a2fa42cd19f65dcce33b7999f676b852` |
+| 正式证书SHA256 | `4ac7b86a600bbb3215a6187018c1442efcf3ffb25cdbeea0082cab81ef4d605f` |
+| 应用代码提交 | `20d7fd3dbdce05e88ed6f224bd28e91f744b659d` |
+| 应用输入快照SHA256 | `e86de7a423e5c1af74455425d4a3f48ff85d629b644ec3a251131dba7a4153de` |
+
+`apksigner verify --verbose --print-certs`验证有效，证书与已验收2.23.2.28相同；包名不变，versionCode由22297递增到22298，具备覆盖更新身份。APK不含debuggable标记，16KiB ZIP对齐检查通过，包含arm64-v8a、armeabi-v7a及x86_64三个ABI。后续交付说明提交只修改文档，不改变本APK应用输入。
+
+从实际签名APK解析DEX，核对知识层级模型、目录界面及界面到ViewModel、Repository、NativeOptimizerBridge的调用链，三种ABI均包含新增层级JNI导出。以旧版2.23.2.28作为反向样本，因缺少新层级定义而正确拒绝。既有退出保存与转场13个类、13个方法、3个字段和实际调用关系也通过包内回归核验。该检查用于确认真实安装包内容，不替代手机运行验收。
+
+新版已复制至原项目根目录、`APK/`及`app/build/outputs/apk/release/`，三个副本大小与SHA256全部一致。旧包在各自归档子目录保留；输出目录只保留带版本号的正式APK，没有debug APK、app-release APK或AAB。本次沿用候选交付流程，未修改Windows正式清单；APK和本机详细验收日志保留本地，不提交签名配置或密钥。
+
+交付后于2026-10-13 21:20（北京时间）复核同步服务：登录触发及每分钟无限恢复任务、正式稳定入口、当前用户归属、守护程序和监听进程均符合正式清单；本机与当前公网健康响应中的产品、服务角色、Windows 1.1.0.7版本、构建提交及源码快照一致。四个Windows正式程序及发布清单哈希保持不变，VPN未改动。该结果不包含手机真实账户同步、电脑重启或休眠恢复验收。
