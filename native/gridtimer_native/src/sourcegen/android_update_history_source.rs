@@ -1,3 +1,4 @@
+// v2.23.2.31 - Record current-only legal evidence scope.
 // v2.23.2.30 - Record unchanged knowledge-page exit and display normalization guards.
 // v2.23.2.29 - Record nested knowledge pages and reversible folder conversion.
 // v2.23.2.27 - Record retained save settlement and matching exit reuse.
@@ -30,7 +31,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.30";
+pub const LATEST_VERSION: &str = "2.23.2.31";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -60,6 +61,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.31",
+        updatedAt = "2026-10-14 01:58",
+        summary = "法律风险分析只使用每个页面和便签的最新内容",
+        sections = listOf(
+            AndroidUpdateSection("分析范围", listOf(
+                "同一个知识页或便签只读取当前保存的标题、正文、内容块、标签和属性，不再把编辑修订记录或历史版本重复加入分析。当前内容为空时，也不会用旧版本补充。恢复历史内容并保存为当前版本后，会按新的当前内容分析。",
+                "扫描页明确显示当前内容范围。独立的计时记录、归档任务和财务逐笔记录仍按原有规则纳入；已删除的记录继续排除。"
+            )),
+            AndroidUpdateSection("附件和加密内容", listOf(
+                "结构化页面只读取当前内容块或富文本实际引用的附件，仅保留在历史版本或旧附件目录中的文件不再发送。旧格式便签中仍显示的附件继续纳入；当前引用缺失或文件读取失败会明确列为未覆盖。",
+                "加密笔记仍需在本次扫描中逐条解锁，仅使用解锁后的当前内容。未解锁或当前内容不完整时不回退到旧版本。历史版本不再增加上传量、预计调用次数或未覆盖数量。"
+            )),
+            AndroidUpdateSection("历史记录与已有报告", listOf(
+                "本次调整仅作用于新扫描，原有笔记历史、恢复功能与已保存报告继续保留。旧报告中的证据仍可按原入口查看；需要最新内容结果时重新准备扫描并确认发送。",
+                "Android源码候选2.23.2.31，versionCode 22300；本次先提交PR，APK构建与手机验收另行记录。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.30",
         updatedAt = "2026-10-13 22:54",
@@ -761,7 +781,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.29"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.30"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));

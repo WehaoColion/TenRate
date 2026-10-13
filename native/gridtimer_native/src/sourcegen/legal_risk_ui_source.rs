@@ -1,3 +1,4 @@
+// v2.23.2.31 - Scan current note content and visible current attachments only.
 // v2.23.1.1 - Explain account report sync and retain evidence excerpts across devices.
 // v2.23 - Generate the Android legal-clue review page from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/LegalRiskScreen.kt";
@@ -219,6 +220,7 @@ import com.ofairyo.gridtimer.data.AppData
 import com.ofairyo.gridtimer.data.LegalLocalStore
 import com.ofairyo.gridtimer.data.NoteEntry
 import com.ofairyo.gridtimer.data.NoteMediaStore
+import com.ofairyo.gridtimer.data.richTextAttachmentIds
 import com.ofairyo.gridtimer.data.StoredLegalReport
 import com.ofairyo.gridtimer.data.SyncAccountSession
 import kotlinx.coroutines.Dispatchers
@@ -574,7 +576,7 @@ fun LegalRiskScreen(
             item {
                 LegalSection {
                     Text("按中国大陆法律寻找待核查线索。结论会标出原始记录、缺失事实和法条来源。")
-                    Text("资料会先在本机整理；点击发送前可以查看覆盖范围和内容。")
+                    Text("每个知识页和便签只分析当前最新内容及其附件，不包含历史版本。资料先在本机整理，发送前可查看。")
                     val aiConfiguration = AiConfiguration(syncSession.aiApiKey, syncSession.aiBaseUrl, syncSession.aiModel)
                     Text(if (aiConfiguration.testable) "AI：${syncSession.aiModel} · ${aiConfiguration.recipientHost}" else "AI 未配置完整，先配置后才能发送分析。", fontWeight = FontWeight.SemiBold)
                     TextButton(onClick = {
@@ -961,7 +963,7 @@ private fun LegalReportView(report: StoredLegalReport, onOpenEvidence: ((String)
 private fun unlockedNotesJson(notes: Map<String, NoteEntry>): String {
     val array = JSONArray()
     notes.values.forEach { note ->
-        val data = JSONObject(legalInputJson.encodeToString(note))
+        val data = JSONObject(legalInputJson.encodeToString(note.copy(revisions = emptyList(), versions = emptyList())))
         data.put("noteId", note.id)
         array.put(data)
     }
@@ -980,9 +982,10 @@ private fun attachmentDescriptorsJson(
     for (stored in appData.notes) {
         if (stored.deletedAtEpochMillis != null) continue
         val note = if (stored.encryption == null) stored else unlockedNotes[stored.id] ?: continue
-        val attachments = note.attachments +
-            note.revisions.flatMap { it.attachments } +
-            note.versions.filter { it.deletedAtEpochMillis == null }.flatMap { it.attachments }
+        val document = note.document
+        val explicitDocument = document.blocks.isNotEmpty() || document.knowledge != null
+        val currentIds = (document.blocks.mapNotNull { it.attachmentId } + document.richTextAttachmentIds()).toSet()
+        val attachments = if (explicitDocument) note.attachments.filter { it.id in currentIds } else note.attachments
         for (attachment in attachments) {
             val key = "${note.id}\u0000${attachment.id}\u0000${attachment.sha256.lowercase()}"
             if (!seen.add(key) || attachment.sha256.isBlank()) continue

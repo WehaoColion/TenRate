@@ -476,39 +476,63 @@ fn note_text(note: &Value) -> String {
     lines.join("\n")
 }
 
-fn add_note_versions(c: &mut Collector, note: &Value, note_id: &str, prefix: &str) {
-    let title = string(note, "title").to_string();
+// The root note is the editable current version; saved snapshots may lag it.
+fn add_current_note(c: &mut Collector, note: &Value, note_id: &str) {
     c.candidate("笔记");
     c.add(
         "笔记",
-        prefix.to_string(),
-        title.clone(),
+        format!("note/{note_id}"),
+        string(note, "title").to_string(),
         millis(note, "updatedAtEpochMillis"),
         note_text(note),
         None,
     );
-    for (key, label) in [("revisions", "笔记修订"), ("versions", "笔记版本")] {
-        for (index, revision) in array(note, key).iter().enumerate() {
-            let path = format!(
-                "note/{note_id}/{key}/{}",
-                object_id(revision, index.to_string())
-            );
-            c.candidate(label);
-            if millis(revision, "deletedAtEpochMillis").is_some() {
-                c.deleted(label);
+}
+
+// A retained catalog can contain files used only by old versions. Follow only
+// current visible references; legacy notes display their catalog as image blocks.
+fn current_attachment_references(note: &Value) -> Vec<(String, String)> {
+    let document = note.get("document").unwrap_or(&Value::Null);
+    let rich = document.get("richTextEnabled").and_then(Value::as_bool) == Some(true);
+    let explicit_document = !array(document, "blocks").is_empty()
+        || document
+            .get("knowledge")
+            .is_some_and(|value| !value.is_null());
+    let mut references = Vec::new();
+    if explicit_document {
+        for (index, block) in array(document, "blocks").iter().enumerate() {
+            if millis(block, "deletedAtEpochMillis").is_some() {
                 continue;
             }
-            c.add(
-                label,
-                path,
-                string(revision, "title").to_string(),
-                millis(revision, "capturedAtEpochMillis")
-                    .or_else(|| millis(revision, "updatedAtEpochMillis")),
-                note_text(revision),
-                None,
-            );
+            let location = format!("block/{}", object_id(block, index.to_string()));
+            let aid = string(block, "attachmentId");
+            if !aid.is_empty() {
+                references.push((aid.to_string(), location.clone()));
+            }
+            if rich && matches!(string(block, "type"), "" | "TEXT" | "text") {
+                references.extend(
+                    crate::rich_text_attachment_ids(string(block, "text"))
+                        .into_iter()
+                        .map(|id| (id, location.clone())),
+                );
+            }
         }
+    } else {
+        references.extend(
+            array(note, "attachments")
+                .iter()
+                .map(|attachment| (string(attachment, "id").to_string(), String::new())),
+        );
+        references.extend(
+            array(note, "attachmentIds")
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|id| (id.to_string(), String::new())),
+        );
     }
+    let mut seen = HashSet::new();
+    references.retain(|(id, _)| !id.is_empty() && seen.insert(id.clone()));
+    references
 }
 
 fn add_attachment(
@@ -1078,16 +1102,9 @@ pub fn prepare_scan(
             match unlocked.get(&id) {
                 Some(unlocked)
                     if string(unlocked, "id") == id
-                        && [
-                            "title",
-                            "content",
-                            "document",
-                            "revisions",
-                            "versions",
-                            "attachments",
-                        ]
-                        .iter()
-                        .all(|field| unlocked.get(*field).is_some()) =>
+                        && ["title", "content", "document", "attachments"]
+                            .iter()
+                            .all(|field| unlocked.get(*field).is_some()) =>
                 {
                     unlocked
                 }
@@ -1116,102 +1133,33 @@ pub fn prepare_scan(
             .entry("笔记容器".to_string())
             .or_default()
             .included += 1;
-        add_note_versions(&mut c, source, &id, &format!("note/{id}"));
-        let mut seen = HashSet::<(String, String, String)>::new();
-        for snapshot in std::iter::once(source)
-            .chain(array(source, "revisions"))
-            .chain(array(source, "versions"))
-        {
-            if millis(snapshot, "deletedAtEpochMillis").is_some() {
-                continue;
-            }
-            let suffix = if std::ptr::eq(snapshot, source) {
-                "current".to_string()
-            } else {
-                object_id(snapshot, "history".to_string())
-            };
-            for attachment in array(snapshot, "attachments") {
-                let aid = string(attachment, "id").to_string();
-                let sha = string(attachment, "sha256").to_string();
-                if !seen.insert((suffix.clone(), aid.clone(), sha)) {
-                    continue;
-                }
-                add_attachment(
+        add_current_note(&mut c, source, &id);
+        for (aid, location) in current_attachment_references(source) {
+            let metadata = array(source, "attachments")
+                .iter()
+                .find(|attachment| string(attachment, "id") == aid);
+            match metadata {
+                Some(attachment) => add_attachment(
                     &mut c,
                     &id,
                     attachment,
-                    format!("note/{id}/{suffix}/attachment/{aid}"),
+                    format!("note/{id}/current/attachment/{aid}"),
                     &inputs,
-                );
-            }
-            // Older revisions may retain only attachment IDs. Resolve their
-            // metadata from the note's retained attachment catalog; never
-            // guess a blob path or silently drop an unresolved reference.
-            for attachment_id in array(snapshot, "attachmentIds") {
-                let Some(aid) = attachment_id.as_str().filter(|id| !id.is_empty()) else {
-                    continue;
-                };
-                let path = format!("note/{id}/{suffix}/attachment/{aid}");
-                let metadata = array(snapshot, "attachments")
-                    .iter()
-                    .chain(array(source, "attachments"))
-                    .find(|attachment| string(attachment, "id") == aid);
-                match metadata {
-                    Some(attachment) => {
-                        let sha = string(attachment, "sha256").to_string();
-                        if seen.insert((suffix.clone(), aid.to_string(), sha)) {
-                            add_attachment(&mut c, &id, attachment, path, &inputs);
-                        }
-                    }
-                    None => {
-                        if seen.insert((suffix.clone(), aid.to_string(), "\0missing".to_string())) {
-                            c.candidate("附件");
-                            c.unavailable("附件", &path, "历史版本缺少附件元数据");
-                        }
-                    }
-                }
-            }
-            // A note block can reference a file even when its attachment
-            // catalog and the older attachmentIds list are absent. Record
-            // that missing metadata explicitly instead of silently omitting
-            // the block's file from the scan coverage.
-            if let Some(document) = snapshot.get("document") {
-                for (block_index, block) in array(document, "blocks").iter().enumerate() {
-                    if millis(block, "deletedAtEpochMillis").is_some() {
-                        continue;
-                    }
-                    let aid = string(block, "attachmentId");
-                    if aid.is_empty() {
-                        continue;
-                    }
-                    let block_id = object_id(block, block_index.to_string());
-                    let path = format!("note/{id}/{suffix}/block/{block_id}/attachment/{aid}");
-                    let metadata = array(snapshot, "attachments")
-                        .iter()
-                        .chain(array(source, "attachments"))
-                        .find(|attachment| string(attachment, "id") == aid);
-                    match metadata {
-                        Some(attachment) => {
-                            let sha = string(attachment, "sha256").to_string();
-                            if seen.insert((suffix.clone(), aid.to_string(), sha)) {
-                                add_attachment(&mut c, &id, attachment, path, &inputs);
-                            }
-                        }
-                        None => {
-                            if seen.insert((
-                                suffix.clone(),
-                                aid.to_string(),
-                                "\0missing".to_string(),
-                            )) {
-                                c.candidate("附件");
-                                c.unavailable("附件", &path, "笔记块缺少附件元数据");
-                            }
-                        }
-                    }
+                ),
+                None => {
+                    let location = if location.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{location}/")
+                    };
+                    let path = format!("note/{id}/current/{location}attachment/{aid}");
+                    c.candidate("附件");
+                    c.unavailable("附件", &path, "当前内容缺少附件元数据");
                 }
             }
         }
     }
+
     let finance = root.get("financeProfile").unwrap_or(&Value::Null);
     c.candidate("财务概况");
     let overview = finance_field_lines(
@@ -1367,7 +1315,11 @@ pub fn prepare_scan(
         .count();
     // Each image needs one OCR request and may yield its own later text batch.
     // Capability probes use synthetic material, before any workspace content.
-    c.manifest.estimated_calls = batches.len() + image_count * 2 + 1 + usize::from(image_count > 0);
+    c.manifest.estimated_calls = if c.evidence.is_empty() {
+        0
+    } else {
+        batches.len() + image_count * 2 + 1 + usize::from(image_count > 0)
+    };
     Ok(LegalScanPrepared {
         manifest: c.manifest,
         evidence: c.evidence,
@@ -1871,7 +1823,7 @@ mod tests {
             .map(|p| p.text.as_str())
             .collect::<String>();
         assert_eq!(rebuilt, format!("任务：{long}"));
-        assert!(prepared.evidence.iter().any(|e| e.text.contains("旧协议")));
+        assert!(!serde_json::to_string(&prepared).unwrap().contains("旧协议"));
         assert!(
             !prepared.evidence.iter().any(|e| e.text.contains("删除版本")
                 || e.text.contains("不应发送")
@@ -1888,26 +1840,22 @@ mod tests {
             .evidence
             .iter()
             .any(|e| e.source_path.contains("attachment/")));
-        assert_eq!(prepared.manifest.coverage["笔记修订"].excluded_deleted, 1);
-        assert_eq!(prepared.manifest.coverage["笔记版本"].excluded_deleted, 1);
+        assert!(!prepared.manifest.coverage.contains_key("笔记修订"));
+        assert!(!prepared.manifest.coverage.contains_key("笔记版本"));
     }
 
     #[test]
-    fn unresolved_historical_attachment_is_counted_as_uncovered() {
+    fn historical_attachment_does_not_reduce_current_coverage() {
         let data = json!({"notes":[{"id":"n","title":"现存笔记",
             "versions":[{"id":"old","content":"旧正文","attachmentIds":["missing"]}]}]});
         let prepared = prepare_scan(&data.to_string(), "w", 3, "[]", "[]").unwrap();
-        assert!(prepared.evidence.iter().any(|e| e.text.contains("旧正文")));
-        assert_eq!(prepared.manifest.coverage["附件"].unavailable, 1);
-        assert!(prepared
-            .manifest
-            .omissions
-            .iter()
-            .any(|omission| omission.source_path == "note/n/old/attachment/missing"));
+        assert!(!serde_json::to_string(&prepared).unwrap().contains("旧正文"));
+        assert!(!prepared.manifest.coverage.contains_key("附件"));
+        assert!(prepared.manifest.omissions.is_empty());
     }
 
     #[test]
-    fn repeated_attachment_keeps_current_and_historical_paths() {
+    fn repeated_attachment_keeps_only_current_path() {
         let data = json!({"notes":[{"id":"n","title":"现存笔记",
             "attachments":[{"id":"a","sha256":"abc","fileName":"record.pdf"}],
             "versions":[{"id":"old","content":"旧正文","attachmentIds":["a"]}]}]});
@@ -1919,8 +1867,8 @@ mod tests {
             .map(|item| item.source_path.as_str())
             .collect::<Vec<_>>();
         assert!(omitted.contains(&"note/n/current/attachment/a"));
-        assert!(omitted.contains(&"note/n/old/attachment/a"));
-        assert_eq!(prepared.manifest.coverage["附件"].unavailable, 2);
+        assert!(!omitted.contains(&"note/n/old/attachment/a"));
+        assert_eq!(prepared.manifest.coverage["附件"].unavailable, 1);
     }
 
     #[test]
@@ -1933,28 +1881,30 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let original = b"signed agreement from prior version";
+        let original = b"signed agreement in current document";
         std::fs::write(&path, original).unwrap();
         let digest = format!("{:x}", Sha256::digest(original));
         let data = json!({"notes":[{"id":"n","title":"现存笔记",
         "attachments":[{"id":"known","sha256":digest,"fileName":"agreement.txt","mimeType":"text/plain"}],
-        "versions":[{"id":"old","content":"旧正文","document":{"blocks":[
+        "document":{"blocks":[
             {"id":"known-block","attachmentId":"known"},
             {"id":"lost-block","attachmentId":"lost"},
             {"id":"removed-block","attachmentId":"removed","text":"不应扫描","deletedAtEpochMillis":1}
-        ]}}]}]});
+        ]}}]});
         let input = json!([{"noteId":"n","attachmentId":"known","sha256":digest,
             "path":path,"mimeType":"text/plain","sizeBytes":original.len()}]);
         let prepared = prepare_scan(&data.to_string(), "w", 3, "[]", &input.to_string()).unwrap();
-        assert!(prepared.evidence.iter().any(|item| item.source_path
-            == "note/n/old/block/known-block/attachment/known"
-            && item.text.contains("signed agreement")));
+        assert!(prepared
+            .evidence
+            .iter()
+            .any(|item| item.source_path == "note/n/current/attachment/known"
+                && item.text.contains("signed agreement")));
         assert!(prepared
             .manifest
             .omissions
             .iter()
             .any(
-                |item| item.source_path == "note/n/old/block/lost-block/attachment/lost"
+                |item| item.source_path == "note/n/current/block/lost-block/attachment/lost"
                     && item.reason.contains("缺少附件元数据")
             ));
         assert!(!serde_json::to_string(&prepared)
@@ -2144,3 +2094,7 @@ mod tests {
         assert_eq!(xml_text(cells[1].1, "v"), "23");
     }
 }
+
+#[cfg(test)]
+#[path = "legal_scan_current_tests.rs"]
+mod current_content_tests;
