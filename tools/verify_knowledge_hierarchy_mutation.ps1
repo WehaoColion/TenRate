@@ -1,3 +1,4 @@
+# v0.0.2 - Verify current document location and protected location actions.
 # v0.0.1 - Verify knowledge hierarchy boundaries from the Rust generated Android helper.
 param([string]$Version, [switch]$SkipGeneratedCheck)
 $ErrorActionPreference = 'Stop'
@@ -57,7 +58,7 @@ $runtime = @(
 $java = 'C:\tools\java\jdk-17.0.18+8\bin\java.exe'
 $utf8 = [Text.UTF8Encoding]::new($false)
 $results = @()
-foreach ($case in @('baseline', 'cosmetic_only', 'removed_descendant_guard', 'removed_protected_parent_guard', 'removed_inaccessible_parent_fallback')) {
+foreach ($case in @('baseline', 'cosmetic_only', 'removed_descendant_guard', 'removed_protected_parent_guard', 'removed_inaccessible_parent_fallback', 'restored_legacy_location', 'removed_location_write_guard', 'disabled_root_repair', 'removed_move_write_guard')) {
     $directory = Join-Path $evidence $case
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $candidate = $helper
@@ -66,6 +67,10 @@ foreach ($case in @('baseline', 'cosmetic_only', 'removed_descendant_guard', 're
         'removed_descendant_guard' { $candidate = Replace-HierarchyMutation $candidate 'val forbidden = descendantIds(id) + id' 'val forbidden = setOf(id)' $case }
         'removed_protected_parent_guard' { $candidate = Replace-HierarchyMutation $candidate 'return nodes.values.filter { mayCreateInside(it.id) && it.id !in forbidden }' 'return nodes.values.filter { it.id !in forbidden }' $case }
         'removed_inaccessible_parent_fallback' { $candidate = Replace-HierarchyMutation $candidate 'source.getValue(parent).note?.encryption != null ->' 'false ->' $case }
+        'restored_legacy_location' { $candidate = Replace-HierarchyMutation $candidate 'parentId = node.parentId,' 'parentId = node.note?.folderId,' $case }
+        'removed_location_write_guard' { $candidate = Replace-HierarchyMutation $candidate 'canMove = node.writable' 'canMove = true' $case }
+        'disabled_root_repair' { $candidate = Replace-HierarchyMutation $candidate 'if (parentId == node.parentId && !repairRoot) return false' 'if (parentId == node.parentId) return false' $case }
+        'removed_move_write_guard' { $candidate = Replace-HierarchyMutation $candidate 'if (!node.writable) return false' 'if (false) return false' $case }
     }
     $helperPath = Join-Path $directory 'KnowledgeHierarchy.kt'
     $testsPath = Join-Path $directory 'KnowledgeHierarchyTest.kt'
@@ -82,9 +87,13 @@ foreach ($case in @('baseline', 'cosmetic_only', 'removed_descendant_guard', 're
         'removed_descendant_guard' { 'moveTargetsRejectSelfDescendantsAndProtectedParents' }
         'removed_protected_parent_guard' { 'moveTargetsRejectSelfDescendantsAndProtectedParents' }
         'removed_inaccessible_parent_fallback' { 'deletedMissingOrEncryptedParentCannotHideChildren' }
+        'restored_legacy_location' { 'locationUsesRealHierarchyBeforeLegacyFolderAndTracksCurrentSnapshot' }
+        'removed_location_write_guard' { 'locationCannotMoveEncryptedLockedUnsupportedConflictingOrMissingRecords' }
+        'disabled_root_repair' { 'moveSelectionAllowsExplicitRootRepairForBrokenParentsOnly' }
+        'removed_move_write_guard' { 'moveSelectionRejectsNoOpDescendantsAndProtectedOrMissingTargets' }
         default { '' }
     }
-    $passed = if ($expectedPass) { $exitCode -eq 0 -and $log.Contains("OK ($testCount tests)") } else { $exitCode -ne 0 -and $log.Contains('java.lang.AssertionError') -and $log.Contains($requiredFailure) }
+    $passed = if ($expectedPass) { $exitCode -eq 0 -and $log.Contains("OK ($testCount tests)") } else { $exitCode -ne 0 -and ($log.Contains('java.lang.AssertionError') -or $log.Contains('org.junit.ComparisonFailure')) -and $log.Contains($requiredFailure) }
     $results += [ordered]@{ case=$case; passed=$passed; expectedPass=$expectedPass; exitCode=$exitCode; tests=$testCount; requiredFailure=$requiredFailure; helperSha256=(Get-FileHash -LiteralPath $helperPath).Hash.ToLowerInvariant(); cosmeticChanged=($case -eq 'cosmetic_only') }
     if (!$passed) { Get-Content -LiteralPath (Join-Path $directory 'tests.log') -Tail 30; throw "Unexpected hierarchy mutation result: $case" }
     Write-Output "$case verified"

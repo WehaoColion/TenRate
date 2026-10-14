@@ -1,3 +1,4 @@
+// v2.23.2.32 - Record accurate knowledge location and unified move entry.
 // v2.23.2.31 - Record current-only legal evidence scope.
 // v2.23.2.30 - Record unchanged knowledge-page exit and display normalization guards.
 // v2.23.2.29 - Record nested knowledge pages and reversible folder conversion.
@@ -31,7 +32,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.31";
+pub const LATEST_VERSION: &str = "2.23.2.32";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -61,6 +62,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.32",
+        updatedAt = "2026-10-14 19:07",
+        summary = "知识页位置与目录一致，属性中可直接更改位置",
+        sections = listOf(
+            AndroidUpdateSection("位置显示", listOf(
+                "移除知识页属性条中过时的“不放文件夹”标签，避免已经位于文件夹内仍被显示为未分类。上方目录路径与移动入口继续保留。",
+                "文档属性使用与目录相同的层级数据，显示从知识目录到直属上级的完整位置，支持多层文件夹、父页面和旧文件夹。目录移动或重命名后随最新记录更新。"
+            )),
+            AndroidUpdateSection("位置操作", listOf(
+                "属性改为明确的按钮；属性页中的“更改位置”直接打开完整目录选择器，预选当前上级。可选目标沿用已有层级规则，不能移入自身或后代。",
+                "更改位置前仍先保存本页真实编辑；保存失败保留当前页面，切换工作区或退出转场中的旧操作不能继续执行。页面色调入口保留。",
+                "上级丢失、循环或不可访问时明确提示；尚未载入、加密、只读及编号冲突记录不会被当成正常可移动页面。"
+            )),
+            AndroidUpdateSection("版本", listOf(
+                "Android 2.23.2.32，versionCode 22301；仅递增第四段，保留历版更新记录和复制入口。沿用现有数据格式、应用包名和正式签名。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.31",
         updatedAt = "2026-10-14 01:58",
@@ -781,7 +801,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.30"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.31"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));

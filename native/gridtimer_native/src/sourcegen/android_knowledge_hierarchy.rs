@@ -1,3 +1,4 @@
+// v2.23.2.32 - Resolve document location from the same hierarchy as navigation.
 //! Android knowledge hierarchy projection. Domain writes remain in shared Rust.
 //! Read only metadata so browsing containers cannot flatten or inspect page bodies.
 
@@ -59,6 +60,15 @@ internal data class KnowledgeHierarchyNode(
 
 internal enum class KnowledgeHierarchyIssue { MISSING_PARENT, INACCESSIBLE_PARENT, CYCLE, IDENTITY_CONFLICT }
 
+internal data class KnowledgeLocation(
+    val parentId: String?,
+    val ancestors: List<KnowledgeHierarchyNode>,
+    val issue: KnowledgeHierarchyIssue?,
+    val available: Boolean,
+    val canMove: Boolean
+)
+
+
 /** One snapshot index for the current workspace. No static/shared state or document text scan. */
 internal class KnowledgeHierarchy internal constructor(
     val nodes: Map<String, KnowledgeHierarchyNode>,
@@ -67,6 +77,18 @@ internal class KnowledgeHierarchy internal constructor(
     private val byParent = nodes.values.groupBy(KnowledgeHierarchyNode::parentId)
     fun children(parentId: String?): List<KnowledgeHierarchyNode> = byParent[parentId].orEmpty()
     fun parentOf(id: String): String? = nodes[id]?.parentId
+    fun location(id: String): KnowledgeLocation {
+        val node = nodes[id] ?: return KnowledgeLocation(null, emptyList(), null, false, false)
+        val parents = ancestors(id)
+        return KnowledgeLocation(
+            parentId = node.parentId,
+            ancestors = parents.asReversed(),
+            issue = issues[id] ?: parents.firstNotNullOfOrNull { issues[it.id] },
+            available = true,
+            canMove = node.writable
+        )
+    }
+
     fun ancestors(id: String): List<KnowledgeHierarchyNode> {
         val result = ArrayList<KnowledgeHierarchyNode>()
         val seen = hashSetOf(id)
@@ -86,6 +108,16 @@ internal class KnowledgeHierarchy internal constructor(
         val forbidden = descendantIds(id) + id
         return nodes.values.filter { mayCreateInside(it.id) && it.id !in forbidden }
     }
+    fun canMoveTo(id: String, parentId: String?): Boolean {
+        val node = nodes[id] ?: return false
+        if (!node.writable) return false
+        val repairRoot = parentId == null && issues[id] in setOf(
+            KnowledgeHierarchyIssue.MISSING_PARENT, KnowledgeHierarchyIssue.INACCESSIBLE_PARENT,
+            KnowledgeHierarchyIssue.CYCLE)
+        if (parentId == node.parentId && !repairRoot) return false
+        return parentId == null || moveTargets(id).any { it.id == parentId }
+    }
+
     fun descendantIds(id: String): Set<String> {
         val result = LinkedHashSet<String>()
         val pending = java.util.ArrayDeque<String>()
@@ -328,6 +360,104 @@ class KnowledgeHierarchyTest {
             assertTrue(field, structured.requiresStructuredKnowledgeReader())
         }
         assertTrue(plain.copy(document = plain.document.copy(blocks = listOf(NoteBlock(knowledge = buildJsonObject { put("kind", "todo") })))).requiresStructuredKnowledgeReader())
+    }
+
+
+    @Test fun locationUsesRealHierarchyBeforeLegacyFolderAndTracksCurrentSnapshot() {
+        val old = NoteFolder(id = "old", name = "Legacy")
+        val child = page("child", "folder").copy(folderId = "old")
+        val notes = listOf(page("root"), page("folder", "root", true), child)
+        val first = buildKnowledgeHierarchy(notes, listOf(old)).location("child")
+        assertTrue(first.available)
+        assertTrue(first.canMove)
+        assertNull(first.issue)
+        assertEquals("folder", first.parentId)
+        assertEquals(listOf("root", "folder"), first.ancestors.map { it.id })
+        val renamed = notes.map { if (it.id == "folder") it.copy(title = "Renamed") else it }
+        assertEquals("Renamed", buildKnowledgeHierarchy(renamed, listOf(old)).location("child").ancestors.last().title)
+        val moved = renamed.filterNot { it.id == "child" } + page("child", "root")
+        val current = buildKnowledgeHierarchy(moved, listOf(old)).location("child")
+        assertEquals("root", current.parentId)
+        assertEquals(listOf("root"), current.ancestors.map { it.id })
+        assertEquals("folder", first.parentId)
+    }
+
+    @Test fun locationDistinguishesRootLegacyAndMissingRecord() {
+        val legacy = NoteFolder(id = "legacy", name = "Old folder")
+        val index = buildKnowledgeHierarchy(listOf(page("root"), page("child").copy(folderId = "legacy")), listOf(legacy))
+        val root = index.location("root")
+        assertTrue(root.available)
+        assertNull(root.parentId)
+        assertTrue(root.ancestors.isEmpty())
+        assertNull(root.issue)
+        val old = index.location("child")
+        assertEquals("legacy", old.parentId)
+        assertEquals(listOf("legacy"), old.ancestors.map { it.id })
+        val absent = index.location("pending-or-deleted")
+        assertFalse(absent.available)
+        assertFalse(absent.canMove)
+        assertTrue(absent.ancestors.isEmpty())
+    }
+
+    @Test fun locationRetainsOwnAndAncestorIssuesInsteadOfClaimingNormalRoot() {
+        val secret = page("secret").copy(encryption = NoteEncryptionEnvelope(keyId = "key"))
+        val index = buildKnowledgeHierarchy(listOf(page("orphan", "gone"), page("descendant", "orphan"), secret,
+            page("hidden-parent", "secret"), page("a", "b"), page("b", "a")), emptyList())
+        for (id in listOf("orphan", "descendant")) {
+            assertEquals(KnowledgeHierarchyIssue.MISSING_PARENT, index.location(id).issue)
+            assertTrue(index.location(id).available)
+        }
+        assertEquals(listOf("orphan"), index.location("descendant").ancestors.map { it.id })
+        assertEquals(KnowledgeHierarchyIssue.INACCESSIBLE_PARENT, index.location("hidden-parent").issue)
+        assertEquals(KnowledgeHierarchyIssue.CYCLE, index.location("a").issue)
+        assertNull(index.location("a").parentId)
+    }
+
+    @Test fun locationCannotMoveEncryptedLockedUnsupportedConflictingOrMissingRecords() {
+        fun flag(note: NoteEntry, key: String, value: JsonElement) = note.copy(document = note.document.copy(
+            knowledge = JsonObject(note.document.knowledge!! + (key to value))))
+        val notes = listOf(page("ok"), page("encrypted").copy(encryption = NoteEncryptionEnvelope(keyId = "key")),
+            flag(page("locked"), "locked", JsonPrimitive(true)), flag(page("future"), "version", JsonPrimitive(999)), page("conflict"))
+        val index = buildKnowledgeHierarchy(notes, listOf(NoteFolder(id = "conflict", name = "original")))
+        assertTrue(index.location("ok").canMove)
+        for (id in listOf("encrypted", "locked", "future", "conflict", "missing")) assertFalse(id, index.location(id).canMove)
+        assertEquals(KnowledgeHierarchyIssue.IDENTITY_CONFLICT, index.location("conflict").issue)
+    }
+
+    @Test fun moveSelectionRejectsNoOpDescendantsAndProtectedOrMissingTargets() {
+        val locked = page("locked", "missing-parent").let { it.copy(document = it.document.copy(
+            knowledge = JsonObject(it.document.knowledge!! + ("locked" to JsonPrimitive(true))))) }
+        val encrypted = page("encrypted").copy(encryption = NoteEncryptionEnvelope(keyId = "private"))
+        val future = page("future", "missing-parent").let { it.copy(document = it.document.copy(
+            knowledge = JsonObject(it.document.knowledge!! + ("version" to JsonPrimitive(999))))) }
+        val index = buildKnowledgeHierarchy(listOf(page("root"), page("child", "root"), page("grandchild", "child"),
+            page("safe"), locked, page("under-locked", "locked"), encrypted, future, page("conflict")),
+            listOf(NoteFolder(id = "conflict", name = "old")))
+        assertTrue(index.canMoveTo("child", null))
+        assertTrue(index.canMoveTo("child", "safe"))
+        for (target in listOf("root", "child", "grandchild", "locked", "under-locked", "encrypted", "missing", "conflict")) {
+            assertFalse(target, index.canMoveTo("child", target))
+        }
+        assertFalse(index.canMoveTo("root", null))
+        for (id in listOf("locked", "future")) assertEquals(KnowledgeHierarchyIssue.MISSING_PARENT, index.location(id).issue)
+        for (id in listOf("locked", "encrypted", "future", "missing", "conflict")) {
+            assertFalse(id, index.canMoveTo(id, null))
+            assertFalse(id, index.canMoveTo(id, "safe"))
+        }
+    }
+
+    @Test fun moveSelectionAllowsExplicitRootRepairForBrokenParentsOnly() {
+        val secret = page("secret").copy(encryption = NoteEncryptionEnvelope(keyId = "key"))
+        val index = buildKnowledgeHierarchy(listOf(page("orphan", "gone"), secret, page("hidden", "secret"),
+            page("a", "b"), page("b", "a"), page("root"), page("child", "root")), emptyList())
+        for (id in listOf("orphan", "hidden", "a", "b")) {
+            assertNull(index.parentOf(id))
+            assertTrue(id, index.canMoveTo(id, null))
+        }
+        assertFalse(index.canMoveTo("root", null))
+        assertFalse(index.canMoveTo("child", "root"))
+        val repaired = buildKnowledgeHierarchy(listOf(page("orphan")), emptyList())
+        assertFalse(repaired.canMoveTo("orphan", null))
     }
 
     @Test fun markerCannotMasqueradeAsFolderWhenEncryptedOrWronglyTyped() {
