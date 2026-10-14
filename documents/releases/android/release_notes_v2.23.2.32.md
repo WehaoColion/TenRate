@@ -67,3 +67,7 @@ APK放回项目根目录、APK/及app/build/outputs/apk/release/，三处大小�
 补充核对：三种架构的Canvas、AI连接、AI回答及公式渲染JNI入口均存在；APK内离线公式脚本和样式与源码资源逐字节一致，ZIP完整性检查通过。另运行tools/publish_android_note.ps1 -Mode verify时，因本版本证据目录缺少历史ai_connection_mutation/receipt.json而提前停止，不能记为完整通过。候选交付沿用独立验签、版本、三份副本、原生库与资源核验流程；未修改通用验证脚本或补造历史证据。
 
 位置修复产物核对：直接解析新版APK的DEX，确认KnowledgeLocation、KnowledgeHierarchy.location/canMoveTo定义以及编辑器、属性面板、移动选择器的实际调用链。旧2.23.2.31作为负对照缺少新增定义，按预期被拒绝；新包与253项输入、生成代码和原生库哈希一致。此项不代替手机实际交互验收。
+
+## 用户验收
+
+2026-10-14 21:46（北京时间），用户在安装包交付后回复“可以了”，确认本版可用。验收对应2.23.2.32、versionCode22301，APK SHA256为`6cff98fc07b0c760e38fb6273e8eede6c63ea8fdb132a58ccdfaeb8824da69d5`。本次仅更新验收记录，不改应用代码，不重新构建、不更换已验收APK。此前通用历史发布校验缺少证据的限制仍保留记录；用户确认不代表未逐项说明的跨端同步、重启或休眠场景均已测试。
