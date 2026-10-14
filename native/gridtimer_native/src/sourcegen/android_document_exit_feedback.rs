@@ -1,3 +1,4 @@
+// v2.23.2.33 - Keep preview generation aligned with the compact editor prefix.
 //! v2.23.2.28 - Keep the document visible during a durable exit save.
 //! No repository, queue ordering, checkpoint or encryption changes.
 
@@ -42,22 +43,12 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     replace(&mut source, "        isSavingDraft = true\n        persistLatestDraft(", "        pendingFocusBlockId = null\n        focusManager.clearFocus(force = true)\n        exitKeyboard?.hide()\n        isSavingDraft = true\n        persistLatestDraft(")?;
     replace(&mut source, "    val markdownPreviewText = documentMarkdownPreviewText(initialDocument, blocks, textFieldStates)", PREVIEW)?;
     replace(&mut source, "        if (documentMarkdownPreviewText(initialDocument, blocks, textFieldStates) == null) return", "        if (!documentMarkdownPreviewAvailable(initialDocument, blocks, textFieldStates)) return")?;
-    for (before, after) in [
-        (
-            "showingMarkdownPreview, markdownPreviewText != null)",
-            "showingMarkdownPreview, markdownPreviewAvailable)",
-        ),
-        (
-            "pendingBlockIndex, markdownPreviewText != null, showingMarkdownPreview,",
-            "pendingBlockIndex, markdownPreviewAvailable, showingMarkdownPreview,",
-        ),
-        (
-            "        if (markdownPreviewText != null) {",
-            "        if (markdownPreviewAvailable) {",
-        ),
-    ] {
-        replace(&mut source, before, after)?;
-    }
+    // Caret indexing no longer depends on a separate preview-switch list item.
+    replace(
+        &mut source,
+        "        if (markdownPreviewText != null) {",
+        "        if (markdownPreviewAvailable) {",
+    )?;
     replace(&mut source, "    Column(\n        modifier = Modifier\n            .fillMaxSize()\n            .background(flowusEditorBackground())", "    Box(modifier = Modifier.fillMaxSize()) {\n    Column(\n        modifier = Modifier\n            .fillMaxSize()\n            .then(if (isSavingDraft) Modifier.clearAndSetSemantics { } else Modifier)\n            .background(flowusEditorBackground())")?;
     replace(
         &mut source,

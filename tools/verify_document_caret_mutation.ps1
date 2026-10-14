@@ -1,3 +1,4 @@
+# v0.0.2 - Reject restoring the obsolete block focus prefix.
 # v0.0.1 - Verify Rust-owned document caret policy with real Kotlin/JUnit mutations.
 [CmdletBinding()]
 param([string]$Version = '')
@@ -78,7 +79,7 @@ $caretDependencies = @(@($caretCompiler + $caretRuntime + $caretJava | Sort-Obje
 })
 $caretTestClass = 'com.ofairyo.gridtimer.ui.DocumentCaretPolicyTest'
 $caretResults = @()
-foreach ($caseName in @('baseline','cosmetic','removed_layout_identity','removed_visible_block_guard','restored')) {
+foreach ($caseName in @('baseline','cosmetic','removed_layout_identity','removed_visible_block_guard','restored_old_prefix','restored')) {
     $directory = Join-Path $caretEvidence $caseName
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $helper = $caretHelper
@@ -92,6 +93,10 @@ foreach ($caseName in @('baseline','cosmetic','removed_layout_identity','removed
         'removed_layout_identity' {
             $helper = Replace-CaretAnchor $helper ' || text != layoutText' ''
             $requiredFailure = 'equalLengthReplacementDoesNotUseAnOldLayout'
+        }
+        'restored_old_prefix' {
+            $helper = Replace-CaretAnchor $helper 'else 4 + blockIndex' 'else 3 + blockIndex'
+            $requiredFailure = 'offscreenNewlineAndInsertionIncludeAllPrecedingBlocks'
         }
         'removed_visible_block_guard' {
             $helper = Replace-CaretAnchor $helper ' || alreadyVisible' ''
