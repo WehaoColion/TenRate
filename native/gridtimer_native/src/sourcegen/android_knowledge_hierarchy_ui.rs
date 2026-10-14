@@ -1,3 +1,4 @@
+// v2.23.2.32 - Use the knowledge hierarchy as the single page-location source.
 // v2.23.2.30 - Preserve hierarchy handoff and blank-child guards on untouched exits.
 // v2.23.2.29 - Navigate and edit knowledge containers without replacing page content.
 const STUDIO: &str = "com/ofairyo/gridtimer/ui/NoteStudioSheet.kt";
@@ -20,7 +21,7 @@ fn imports(source: &mut String) {
         .find(|line| line.starts_with("package "))
         .unwrap_or("")
         .to_owned();
-    *source = source.replacen(&package, &format!("{package}\nimport com.ofairyo.gridtimer.data.KnowledgeHierarchyIssue\nimport com.ofairyo.gridtimer.data.knowledgeHierarchy\nimport com.ofairyo.gridtimer.data.isKnowledgeFolder\nimport com.ofairyo.gridtimer.data.requiresStructuredKnowledgeReader"),1);
+    *source = source.replacen(&package, &format!("{package}\nimport com.ofairyo.gridtimer.data.KnowledgeHierarchyIssue\nimport com.ofairyo.gridtimer.data.KnowledgeLocation\nimport com.ofairyo.gridtimer.data.knowledgeHierarchy\nimport com.ofairyo.gridtimer.data.isKnowledgeFolder\nimport com.ofairyo.gridtimer.data.requiresStructuredKnowledgeReader"),1);
 }
 pub fn render(path: &str, base: &str) -> Result<String, String> {
     let mut source = base.to_owned();
@@ -60,7 +61,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         replace(&mut studio, "            if (frame == null) {\n                NoteCollectionContent(", &format!("            if (frame == null) {{\n                if (hierarchyVisible) {{\n                    androidx.compose.runtime.CompositionLocalProvider(LocalDocumentTransitionActive provides interactiveFrame) {{\n{HIERARCHY_BROWSER}\n                    }}\n                }} else NoteCollectionContent("))?;
         replace(&mut studio, "                    onManageFolders = { if (isCurrentFrame()) folderManagerVisible = true },", "                    onManageFolders = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
         replace(&mut studio,"                    appData = appData,", "                    appData = appData,\n                    onOpenHierarchy = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
-        replace(&mut studio,"                    note = documentNote,", "                    note = documentNote,\n                    hasHierarchyChildren = hierarchyIndex.children(documentNote.id).isNotEmpty(),\n                    hierarchyContent = { rawNavigate ->\n                        val navigate: (() -> Unit) -> Unit = { action ->\n                            if (isCurrentFrame() && frameAccess.mayInteract()) rawNavigate {\n                                if (isCurrentFrame() && frameAccess.mayInteract()) action()\n                            }\n                        }\n                        KnowledgeHierarchyPanel(index = hierarchyIndex, parentId = documentNote.id,\n                            busy = hierarchyBusy, onBrowse = { parent -> navigate {\n                                hierarchyParentId = parent; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                            } }, onOpen = { node -> navigate {\n                                if (node.isFolder) { hierarchyParentId = node.id; hierarchyVisible = true; selectedNoteId = null }\n                                else node.note?.let { child ->\n                                    if (child.isEncryptionLocked()) { hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null; unlockedNote = null; unlockTarget = child; unlockError = \"\" }\n                                    else { hierarchyParentId = hierarchyIndex.parentOf(child.id); hierarchyVisible = true; selectedNoteId = child.id; pendingCreatedNote = null; unlockedNote = null }\n                                }\n                            } }, onRequest = { request -> navigate { hierarchyRequest = request; hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null } })\n                    },\n                    onHierarchyLocationChosen = { parent ->\n                        if (isCurrentFrame() && frameAccess.mayInteract()) {\n                            hierarchyRequest = KnowledgeHierarchyRequest(\"move\", documentNote.id, parent); hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                        }\n                    },")?;
+        replace(&mut studio,"                    note = documentNote,", "                    note = documentNote,\n                    hierarchyLocation = hierarchyIndex.location(documentNote.id),\n                    hasHierarchyChildren = hierarchyIndex.children(documentNote.id).isNotEmpty(),\n                    hierarchyContent = { rawNavigate ->\n                        val navigate: (() -> Unit) -> Unit = { action ->\n                            if (isCurrentFrame() && frameAccess.mayInteract()) rawNavigate {\n                                if (isCurrentFrame() && frameAccess.mayInteract()) action()\n                            }\n                        }\n                        KnowledgeHierarchyPanel(index = hierarchyIndex, parentId = documentNote.id,\n                            busy = hierarchyBusy, onBrowse = { parent -> navigate {\n                                hierarchyParentId = parent; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                            } }, onOpen = { node -> navigate {\n                                if (node.isFolder) { hierarchyParentId = node.id; hierarchyVisible = true; selectedNoteId = null }\n                                else node.note?.let { child ->\n                                    if (child.isEncryptionLocked()) { hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null; unlockedNote = null; unlockTarget = child; unlockError = \"\" }\n                                    else { hierarchyParentId = hierarchyIndex.parentOf(child.id); hierarchyVisible = true; selectedNoteId = child.id; pendingCreatedNote = null; unlockedNote = null }\n                                }\n                            } }, onRequest = { request -> navigate { hierarchyRequest = request; hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null } })\n                    },\n                    onHierarchyLocationChosen = { _ ->\n                        if (isCurrentFrame() && frameAccess.mayInteract()) {\n                            val currentLocation = viewModel.appData.value.knowledgeHierarchy().location(documentNote.id)\n                            hierarchyRequest = KnowledgeHierarchyRequest(\"move\", documentNote.id, currentLocation.parentId); hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                        }\n                    },")?;
         // The request owns a workspace-scoped callback. A stale callback cannot select another account's page.
         let end = "    unlockTarget?.let { target ->";
         replace(&mut studio, end, &format!("{STUDIO_DIALOG}\n{end}"))?;
@@ -74,7 +75,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             "    if (note.hasStructuredKnowledge()) {",
             "    if (note.requiresStructuredKnowledgeReader()) {",
         )?;
-        replace(&mut source,"    onAskKnowledge: (NoteEntry) -> Unit = {}", "    onAskKnowledge: (NoteEntry) -> Unit = {},\n    hierarchyContent: @Composable ((() -> Unit) -> Unit) -> Unit = {},\n    onHierarchyLocationChosen: (String?) -> Unit = {},\n    hasHierarchyChildren: Boolean = false")?;
+        replace(&mut source,"    onAskKnowledge: (NoteEntry) -> Unit = {}", "    onAskKnowledge: (NoteEntry) -> Unit = {},\n    hierarchyContent: @Composable ((() -> Unit) -> Unit) -> Unit = {},\n    onHierarchyLocationChosen: (String?) -> Unit = {},\n    hierarchyLocation: KnowledgeLocation? = null,\n    hasHierarchyChildren: Boolean = false")?;
         replace(&mut source,"        }, onPreviewImage = onRequestPreviewAttachment)", "        }, onPreviewImage = onRequestPreviewAttachment, hierarchyContent = hierarchyContent)")?;
         replace(&mut source, "    val documentTransitionActive = LocalDocumentTransitionActive.current", "    val documentTransitionActive = LocalDocumentTransitionActive.current\n    var hierarchyHandedOff by remember(note.id, LocalNoteMediaWorkspaceKey.current) { mutableStateOf(false) }")?;
         replace(&mut source, "        if (isSavingDraft || pendingRevisionRestore != null) return@LaunchedEffect", "        if (hierarchyHandedOff || isSavingDraft || pendingRevisionRestore != null) return@LaunchedEffect")?;
@@ -124,8 +125,43 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 other_location_anchor,
                 "            pinned = pinned,\n            folderId = latestNote.folderId",
             );
-        // Choosing a legacy folder is also a real hierarchy move, after saving the live draft.
-        replace(&mut source,"            onFolderChange = { recordChange(currentDraftState().copy(folderId = it)) },", "            onFolderChange = { parent ->\n                documentPropertiesVisible = false\n                navigateHierarchy { onHierarchyLocationChosen(parent) }\n            },")?;
+        // The breadcrumb is the sole location summary. The properties dialog opens
+        // the complete hierarchy picker instead of maintaining a second legacy list.
+        replace(&mut source,
+            "                folderLabel = folders.firstOrNull { it.id == folderId }?.name ?: \"不放文件夹\",\n",
+            "                enabled = documentTransitionActive && !isSavingDraft && pendingRevisionRestore == null,\n")?;
+        replace(
+            &mut source,
+            "private fun DocumentPropertyStrip(\n    folderLabel: String,",
+            "private fun DocumentPropertyStrip(\n    enabled: Boolean,",
+        )?;
+        replace(
+            &mut source,
+            "        DocumentMetaChip(folderLabel, accent, onOpenProperties)\n",
+            "",
+        )?;
+        replace(&mut source,
+            "        DocumentMetaChip(\"＋ 属性\", MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f), onOpenProperties)",
+            "        androidx.compose.material3.OutlinedButton(enabled = enabled, onClick = onOpenProperties, modifier = Modifier.heightIn(min = 48.dp)) { Text(\"属性\") }")?;
+        replace(&mut source,
+            "            folders = folders,\n            folderId = folderId,\n            accentSeed = accentSeed,",
+            "            location = hierarchyLocation,\n            canChangeLocation = documentTransitionActive && !isSavingDraft && pendingRevisionRestore == null && hierarchyLocation?.canMove == true,\n            accentSeed = accentSeed,")?;
+        replace(&mut source,
+            "            onFolderChange = { recordChange(currentDraftState().copy(folderId = it)) },",
+            "            onChangeLocation = {\n                val location = hierarchyLocation\n                if (location?.canMove == true && documentTransitionActive && !isSavingDraft && pendingRevisionRestore == null) {\n                    documentPropertiesVisible = false\n                    navigateHierarchy { onHierarchyLocationChosen(location.parentId) }\n                }\n            },")?;
+        replace(&mut source,
+            "private fun DocumentPropertyDialog(\n    folders: List<NoteFolder>,\n    folderId: String?,",
+            "private fun DocumentPropertyDialog(\n    location: KnowledgeLocation?,\n    canChangeLocation: Boolean,")?;
+        replace(&mut source,
+            "    onFolderChange: (String?) -> Unit,\n    onAccentChange: (String) -> Unit\n) {\n    Dialog(onDismissRequest = onDismiss)",
+            "    onChangeLocation: () -> Unit,\n    onAccentChange: (String) -> Unit\n) {\n    Dialog(onDismissRequest = onDismiss)")?;
+        replace(&mut source, LEGACY_LOCATION_PROPERTY, LOCATION_PROPERTY)?;
+        replace(
+            &mut source,
+            "\"属性\", \"文件夹与页面色调\"",
+            "\"属性\", \"位置与页面色调\"",
+        )?;
+        source.push_str(LOCATION_PRESENTATION);
     } else if path.ends_with("/StructuredKnowledgeReader.kt") {
         replace(&mut source,"    onPreviewImage: (String) -> Unit\n", "    hierarchyContent: @Composable ((() -> Unit) -> Unit) -> Unit = {},\n    onPreviewImage: (String) -> Unit\n")?;
         replace(&mut source,"            item(key = \"structured_header\") {", "            item(key = \"structured_hierarchy\") { hierarchyContent { action ->\n                if (transitionActive && !saving && draft == null && !insertOpen && latestWorkspace == workspace) action()\n            } }\n            item(key = \"structured_header\") {")?;
@@ -190,10 +226,21 @@ const HIERARCHY_BROWSER: &str = r####"                    KnowledgeHierarchyBrow
                         }, onRequest = { if (isCurrentFrame() && !hierarchyBusy) hierarchyRequest = it })
 "####;
 const STUDIO_DIALOG: &str = r####"    hierarchyRequest?.let { request ->
+        val requestLocation = request.id?.let(hierarchyIndex::location)
         KnowledgeHierarchyActionDialog(request = request, index = hierarchyIndex, busy = hierarchyBusy,
             error = hierarchyMessage, onDismiss = { if (!hierarchyBusy) { hierarchyRequest = null; hierarchyMessage = "" } },
-            onSubmit = { parent, title ->
+            onSubmit = submit@ { parent, title ->
                 if (!hierarchyBusy && hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {
+                    if (request.action == "move") {
+                        val currentIndex = viewModel.appData.value.knowledgeHierarchy()
+                        val currentLocation = currentIndex.location(request.id.orEmpty())
+                        if (currentLocation.parentId != requestLocation?.parentId || currentLocation.issue != requestLocation?.issue ||
+                            currentLocation.ancestors.map { it.id } != requestLocation?.ancestors?.map { it.id } ||
+                            !currentIndex.canMoveTo(request.id.orEmpty(), parent)) {
+                            hierarchyMessage = "页面位置或权限已变化，请重新选择位置。"
+                            return@submit
+                        }
+                    }
                     hierarchyBusy = true; hierarchyMessage = ""
                     val id = request.id ?: java.util.UUID.randomUUID().toString()
                     viewModel.knowledgeContainerAction(request.action, id, parent.orEmpty(), title, workspaceKey) { ok, detail ->
@@ -228,6 +275,55 @@ const EDITOR_NAVIGATION: &str = r####"    fun navigateHierarchy(action: () -> Un
             else localizedToast(context, "尚未保存成功，保留当前页面，请重试。", Toast.LENGTH_LONG).show()
         }
     }
+"####;
+
+const LEGACY_LOCATION_PROPERTY: &str = r####"                Text("文件夹", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FlowusDocChip("不放文件夹", folderId == null, accent) { onFolderChange(null) }
+                    folders.forEach { folder ->
+                        FlowusDocChip(folder.name, folderId == folder.id, accentFor("blue")) {
+                            onFolderChange(folder.id)
+                        }
+                    }
+                }"####;
+
+const LOCATION_PROPERTY: &str = r####"                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("当前位置", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+                    Text(knowledgeLocationPath(location), style = MaterialTheme.typography.bodyMedium)
+                    knowledgeLocationMessage(location)?.let { detail ->
+                        Text(detail, style = MaterialTheme.typography.bodySmall,
+                            color = if (location?.issue != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (!canChangeLocation && location?.canMove == true) {
+                        Text("正在处理当前页面，请稍后更改位置。", style = MaterialTheme.typography.bodySmall)
+                    }
+                    androidx.compose.material3.OutlinedButton(
+                        enabled = canChangeLocation,
+                        onClick = onChangeLocation,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    ) { Text("更改位置") }
+                }"####;
+
+const LOCATION_PRESENTATION: &str = r####"
+
+internal fun knowledgeLocationPath(location: KnowledgeLocation?): String = when {
+    location == null || !location.available -> "位置尚未载入"
+    location.issue != null -> "上级位置待核对"
+    else -> (listOf("知识目录") + location.ancestors.map { it.title.ifBlank { "无标题" } }).joinToString(" / ")
+}
+
+internal fun knowledgeLocationMessage(location: KnowledgeLocation?): String? = when {
+    location == null || !location.available -> "页面位置暂不可用，请返回目录后重新打开。"
+    location.issue == KnowledgeHierarchyIssue.MISSING_PARENT -> if (location.canMove) "原上级已不存在，请重新选择位置。" else "原上级已不存在；当前页面只读，暂不能更改位置。"
+    location.issue == KnowledgeHierarchyIssue.INACCESSIBLE_PARENT -> if (location.canMove) "原上级当前不可访问，请重新选择位置。" else "原上级不可访问；当前页面只读，暂不能更改位置。"
+    location.issue == KnowledgeHierarchyIssue.CYCLE -> if (location.canMove) "目录关系存在循环，请重新选择位置。" else "目录关系存在循环；当前页面只读，暂不能更改位置。"
+    location.issue == KnowledgeHierarchyIssue.IDENTITY_CONFLICT -> if (location.canMove) "上级目录存在编号冲突，请重新选择位置。" else "记录编号冲突，暂不能更改位置。"
+    !location.canMove -> "当前页面为只读、已加密或暂不支持修改，不能更改位置。"
+    else -> null
+}
 "####;
 
 pub const CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
@@ -341,15 +437,21 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
 internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, index: KnowledgeHierarchy,
     busy: Boolean, error: String, onDismiss: () -> Unit, onSubmit: (String?, String) -> Unit) {
     val node = request.id?.let(index.nodes::get)
-    var title by rememberSaveable(request) { mutableStateOf(if (request.action == "rename") node?.title.orEmpty() else "") }
-    var parent by rememberSaveable(request) { mutableStateOf(request.parentId) }
-    var query by rememberSaveable(request) { mutableStateOf("") }
+    val location = request.id?.let(index::location)
     val moving = request.action == "move"
+    // A move picker follows the live source location. Changes made elsewhere reset
+    // the pending target, so an earlier parent cannot be submitted by accident.
+    val sourceLocationKey = listOf(location?.parentId, location?.issue, location?.available,
+        location?.canMove, location?.ancestors?.map { it.id })
+    var title by rememberSaveable(request) { mutableStateOf(if (request.action == "rename") node?.title.orEmpty() else "") }
+    var parent by rememberSaveable(request, sourceLocationKey) { mutableStateOf(if (moving) location?.parentId else request.parentId) }
+    var destinationChosen by rememberSaveable(request, sourceLocationKey) { mutableStateOf(false) }
+    var query by rememberSaveable(request) { mutableStateOf("") }
     val creating = request.action.startsWith("create_")
     val naming = creating || request.action == "rename"
     val valid = !busy && when {
         naming -> (if (creating) index.mayCreateInside(request.parentId) else node?.writable == true) && title.isNotBlank() && title.length <= 120 && !title.contains('\n')
-        moving -> node?.writable == true && (parent == null || index.moveTargets(request.id.orEmpty()).any { it.id == parent }) && parent != node?.parentId
+        moving -> destinationChosen && index.canMoveTo(request.id.orEmpty(), parent)
         else -> node?.writable == true
     }
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text(when(request.action) {
@@ -362,13 +464,18 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
             if (moving) {
                 OutlinedTextField(value = query, onValueChange = { query = it.take(120) }, singleLine = true,
                     enabled = !busy, label = { Text("查找位置") }, modifier = Modifier.fillMaxWidth())
-                Text("当前位置：" + node?.parentId?.let(index::pathLabel).orEmpty().ifBlank { "知识目录" })
-                Text("目标：" + parent?.let(index::pathLabel).orEmpty().ifBlank { "知识目录" })
+                Text("当前位置：" + knowledgeLocationPath(location))
+                knowledgeLocationMessage(location)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                Text("目标：" + if (!destinationChosen) "请选择位置" else parent?.let { target ->
+                    if (index.nodes.containsKey(target)) "知识目录 / " + index.pathLabel(target) else "所选位置已不存在"
+                }.orEmpty().ifBlank { "知识目录" })
                 val targets = index.moveTargets(request.id.orEmpty()).filter { index.pathLabel(it.id).contains(query.trim(), ignoreCase = true) }
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
-                    item { TextButton(enabled = !busy, onClick = { parent = null }) { Text("知识目录（根级）") } }
+                    item { TextButton(enabled = !busy && location?.canMove == true,
+                        onClick = { parent = null; destinationChosen = true }) { Text("知识目录（根级）") } }
                     items(targets, key = { it.id }) { target ->
-                        TextButton(enabled = !busy, onClick = { parent = target.id }) { Text(index.pathLabel(target.id)) }
+                        TextButton(enabled = !busy && location?.canMove == true,
+                            onClick = { parent = target.id; destinationChosen = true }) { Text(index.pathLabel(target.id)) }
                     }
                 }
             } else if (!naming) Text("保留正文、附件、页面链接和子项，只更改页面类型。可随时转换回来。")
