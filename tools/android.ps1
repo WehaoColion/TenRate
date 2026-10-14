@@ -1,3 +1,4 @@
+# v0.0.39 - Gate isolated directory ordering and its real state mutations.
 # v0.0.38 - Verify knowledge hierarchy and hash-bound UI-only native reuse.
 # v0.0.37 - Check knowledge transition and focused collection work sources.
 # v0.0.36 - Gate retained editor save settlement and pending exit ordering.
@@ -62,6 +63,7 @@ function Get-TaskInputs {
     if([version]$taskVersion -ge [version]'2.23.2.27'){$paths += Join-Path $taskRoot 'tools/verify_note_exit_save_mutation.ps1';$paths += Join-Path $taskRoot 'tools/verify_note_save_queue_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.28'){$paths += Join-Path $taskRoot 'tools/verify_document_transition_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.29'){$paths += Join-Path $taskRoot 'tools/verify_knowledge_hierarchy_mutation.ps1'}
+    if([version]$taskVersion -ge [version]'2.23.2.34'){$paths += Join-Path $taskRoot 'tools/verify_directory_order_mutation.ps1'}
     # Cargo gates timer_windows_client behind the desktop feature. Its private
     # desktop/ modules are not inputs to the Android library, generator or tests.
     # Shared library modules (including desktop_*.rs) remain in the snapshot.
@@ -149,6 +151,7 @@ try {
     $formatPaths += @('src\sourcegen\android_knowledge_compat.rs','src\knowledge.rs','src\knowledge_sync.rs','src\knowledge_references.rs','src\knowledge_app_data.rs','src\knowledge_exchange.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += @('src\android_canvas.rs','src\android_canvas_tests.rs','src\sourcegen\android_canvas_ui.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += Join-Path $taskCrate 'src\sourcegen\android_note_list_performance.rs'
+    $formatPaths += Join-Path $taskCrate 'src/sourcegen/android_knowledge_directory_order.rs'
     $formatPaths += @('src/knowledge_hierarchy_app_data.rs','src/knowledge_hierarchy_persistence_tests.rs','src/sourcegen/android_knowledge_hierarchy.rs','src/sourcegen/android_knowledge_hierarchy_ui.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += @('src\sourcegen\android_knowledge_header.rs','src\sourcegen\android_document_caret.rs') | ForEach-Object {Join-Path $taskCrate $_}
     $formatPaths += Join-Path $taskCrate 'src\sourcegen\android_note_collection_recovery.rs'
@@ -201,6 +204,9 @@ try {
     if([version]$taskVersion -ge [version]'2.23.2.29'){
         Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_knowledge_hierarchy_mutation.ps1'),'-Version',$taskVersion) 'knowledge_hierarchy_mutation.log'
     }
+    if([version]$taskVersion -ge [version]'2.23.2.34'){
+        Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_directory_order_mutation.ps1'),'-Version',$taskVersion) 'directory_order_mutation.log'
+    }
     $after = Get-TaskInputs
     if($before.sha256 -ne $after.sha256){throw 'Source inputs changed during verification'}
     $junitPath = Join-Path $taskRoot 'app\build\test-results\testReleaseUnitTest\TEST-com.ofairyo.gridtimer.ui.TenfoldEditingTest.xml'
@@ -231,6 +237,7 @@ try {
         @{name='KnowledgeDocumentTransitionTest';package='ui';source='android_document_transition.rs'},
         @{name='DocumentCollectionWorkTest';package='ui';source='android_document_collection_work.rs'},
         @{name='KnowledgeHierarchyTest';package='data';source='android_knowledge_hierarchy.rs'},
+        @{name='KnowledgeDirectoryOrderTest';package='data';source='android_knowledge_directory_order.rs'},
         @{name='FinanceMoneyTest';package='data';source='finance_money_source.rs'}
     )){
         $suitePath = Join-Path $taskRoot ("app\build\test-results\testReleaseUnitTest\TEST-com.ofairyo.gridtimer."+$suite.package+"."+$suite.name+".xml")

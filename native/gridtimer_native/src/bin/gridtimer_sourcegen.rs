@@ -46,6 +46,8 @@ mod android_history_storage;
 mod android_jvm_test_sources;
 #[path = "../sourcegen/android_knowledge_compat.rs"]
 mod android_knowledge_compat;
+#[path = "../sourcegen/android_knowledge_directory_order.rs"]
+mod android_knowledge_directory_order;
 #[path = "../sourcegen/android_knowledge_filters.rs"]
 mod android_knowledge_filters;
 #[path = "../sourcegen/android_knowledge_hierarchy.rs"]
@@ -153,6 +155,11 @@ fn run() -> io::Result<()> {
     fs::create_dir_all(&output_root)?;
 
     if let Some(unit_test_output_root) = unit_test_output_root {
+        write_source(
+            &unit_test_output_root,
+            android_knowledge_directory_order::TEST_PATH,
+            android_knowledge_directory_order::TEST_CONTENTS,
+        )?;
         write_source(
             &unit_test_output_root,
             android_knowledge_hierarchy::TEST_PATH,
@@ -280,6 +287,11 @@ fn run() -> io::Result<()> {
         )?;
     }
 
+    write_source(
+        &output_root,
+        android_knowledge_directory_order::PATH,
+        android_knowledge_directory_order::CONTENTS,
+    )?;
     write_source(
         &output_root,
         android_knowledge_hierarchy::PATH,

@@ -1,3 +1,4 @@
+// Workspace-local sibling dragging in the full directory; page dates and shared data stay intact.
 // Compact page controls while preserving hierarchy navigation and durable handoff.
 // v2.23.2.32 - Use the knowledge hierarchy as the single page-location source.
 // v2.23.2.30 - Preserve hierarchy handoff and blank-child guards on untouched exits.
@@ -277,6 +278,14 @@ const STUDIO_STATE: &str = r####"    val hierarchyIndex = remember(appData.notes
     }
 "####;
 const HIERARCHY_BROWSER: &str = r####"                    KnowledgeHierarchyBrowser(index = hierarchyIndex, parentId = hierarchyParentId,
+                        currentScope = {
+                            if (!hierarchyCallbacksAlive.get() || !isCurrentFrame() || !hierarchyVisible) null
+                            else com.ofairyo.gridtimer.data.knowledgeDirectoryOrderScope(
+                                viewModel.appData.value.knowledgeHierarchy(), viewModel.currentWorkspaceKey(), hierarchyParentId,
+                                canInteract = com.ofairyo.gridtimer.data.knowledgeDirectoryCollectionMayInteract(
+                                    currentFrame = isCurrentFrame(), collectionFrame = frame == null,
+                                    visible = hierarchyVisible, busy = hierarchyBusy || hierarchyRequest != null))
+                        },
                         busy = hierarchyBusy, message = hierarchyMessage, onBack = {
                             if (isCurrentFrame() && !hierarchyBusy) {
                                 if (hierarchyParentId == null) hierarchyVisible = false
@@ -393,23 +402,56 @@ internal fun knowledgeLocationMessage(location: KnowledgeLocation?): String? = w
 pub const CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
 import com.ofairyo.gridtimer.data.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 internal data class KnowledgeHierarchyRequest(val action: String, val id: String? = null, val parentId: String? = null)
 
@@ -424,8 +466,10 @@ private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrows
 }
 
 @Composable
-private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: KnowledgeHierarchy, onOpen: () -> Unit) {
-    ListItem(modifier = Modifier.fillMaxWidth().clickable(enabled = index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen),
+private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: KnowledgeHierarchy,
+    modifier: Modifier = Modifier, enabled: Boolean = true,
+    trailing: (@Composable () -> Unit)? = null, onOpen: () -> Unit) {
+    ListItem(modifier = modifier.fillMaxWidth().clickable(enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen),
         headlineContent = { Text((if (node.isFolder) "▣ " else "▤ ") + node.title.ifBlank { "无标题" }) },
         supportingContent = { Text(when {
             index.issues[node.id] == KnowledgeHierarchyIssue.IDENTITY_CONFLICT -> "记录编号冲突，已保护原页面和旧文件夹，暂停修改"
@@ -433,7 +477,7 @@ private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: Knowledge
             index.issues.containsKey(node.id) -> "上级不可用，已放在目录中"
             !node.writable -> "只读 · ${index.children(node.id).size} 个子项"
             else -> "${if (node.isFolder) "文件夹" else "页面"} · ${index.children(node.id).size} 个子项"
-        }) }, trailingContent = { Text("›") })
+        }) }, trailingContent = trailing ?: { Text("›") })
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -564,33 +608,335 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
     }
 }
 
+private data class KnowledgeDirectoryDragVisual(
+    val session: KnowledgeDirectoryDragSession,
+    val node: KnowledgeHierarchyNode,
+    val pointerY: Float,
+    val pointerOffsetY: Float,
+    val heightPx: Int
+)
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
-    message: String, onBack: () -> Unit, onBrowse: (String?) -> Unit,
+    message: String, currentScope: () -> KnowledgeDirectoryOrderScope?,
+    onBack: () -> Unit, onBrowse: (String?) -> Unit,
     onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
-    val node = parentId?.let(index.nodes::get)
-    val children = index.children(parentId)
+    val workspace = LocalNoteMediaWorkspaceKey.current
+    val context = LocalContext.current
     val active = LocalDocumentTransitionActive.current
-    BackHandler(enabled = active) { if (!busy) onBack() }
-    LazyColumn(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp),
-        contentPadding = PaddingValues(bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(enabled = !busy, onClick = onBack) { Text("返回") }
-                Text("目录", style = MaterialTheme.typography.titleLarge)
-                if (busy) CircularProgressIndicator(Modifier.size(22.dp))
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val workerScope = rememberCoroutineScope()
+    val listState = key(workspace, parentId) { rememberLazyListState() }
+    val directoryScope = remember(index, workspace, parentId, active, busy) {
+        knowledgeDirectoryOrderScope(index, workspace, parentId, active && !busy)
+    }
+    val latestIndex by rememberUpdatedState(index)
+    val latestScope by rememberUpdatedState(directoryScope)
+    val latestFreshScope by rememberUpdatedState(currentScope)
+    val latestInteractive by rememberUpdatedState(active && !busy)
+    val callbacksAlive = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicBoolean(true) }
+    var savedIds by remember(workspace, parentId) { mutableStateOf<List<String>>(emptyList()) }
+    var loaded by remember(workspace, parentId) { mutableStateOf(false) }
+    var loading by remember(workspace, parentId) { mutableStateOf(true) }
+    var saving by remember(workspace, parentId) { mutableStateOf(false) }
+    var reload by remember(workspace, parentId) { mutableIntStateOf(0) }
+    var orderMessage by remember(workspace, parentId) { mutableStateOf("") }
+    var pendingIds by remember(workspace, parentId) { mutableStateOf<List<String>?>(null) }
+    var previewIds by remember(workspace, parentId) { mutableStateOf<List<String>?>(null) }
+    var dragging by remember(workspace, parentId) { mutableStateOf<KnowledgeDirectoryDragVisual?>(null) }
+    var autoScrollJob by remember(workspace, parentId) { mutableStateOf<Job?>(null) }
+    var autoScrollGeneration by remember(workspace, parentId) { mutableIntStateOf(0) }
+    var viewport by remember(workspace, parentId) { mutableStateOf<LayoutCoordinates?>(null) }
+    val handleBounds = remember(workspace, parentId) { mutableMapOf<String, Rect>() }
+    val normalIds = knowledgeDirectoryOrderedIds(directoryScope, savedIds)
+    val displayedIds = pendingIds ?: previewIds ?: normalIds
+    val latestDisplayedIds by rememberUpdatedState(displayedIds)
+    val edgePx = with(density) { 64.dp.toPx() }
+    val maxScrollPx = with(density) { 18.dp.toPx() }
+    val hysteresisPx = with(density) { 5.dp.toPx() }
+
+    fun freshScope(): KnowledgeDirectoryOrderScope? = latestFreshScope()?.takeIf {
+        callbacksAlive.get() && latestInteractive && it.workspaceKey == workspace && it.parentId == parentId
+    }
+    fun stopAutoScroll() {
+        autoScrollGeneration++
+        autoScrollJob?.cancel()
+        autoScrollJob = null
+    }
+    fun cancelDrag() {
+        stopAutoScroll()
+        dragging?.session?.cancel()
+        dragging = null
+        previewIds = null
+    }
+    fun navigation(action: () -> Unit) {
+        if (!callbacksAlive.get() || !latestInteractive || saving || freshScope() == null) return
+        cancelDrag()
+        action()
+    }
+    fun submitOrder(expected: KnowledgeDirectoryOrderScope, proposed: List<String>) {
+        val current = freshScope()
+        if (!loaded || loading || saving || current == null || !expected.isSameSnapshot(current)) return
+        saving = true
+        pendingIds = proposed
+        orderMessage = ""
+        workerScope.launch {
+            val committed = try {
+                KnowledgeDirectoryOrderStore.commit(context, expected, { freshScope() }, proposed)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) { false }
+            if (!callbacksAlive.get()) return@launch
+            saving = false
+            pendingIds = null
+            val stillHere = freshScope()
+            if (stillHere == null) return@launch
+            if (committed) savedIds = proposed
+            else {
+                orderMessage = "排序未保存，已恢复原顺序。请核对目录和存储后重试。"
+                loaded = false
+                reload++
             }
-            KnowledgeBreadcrumbs(index, parentId) { if (!busy) onBrowse(it) }
-            Text(node?.title?.ifBlank { "无标题" } ?: "页面与文件夹", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
-            KnowledgeHierarchyActions(index, parentId, busy, onRequest,
-                onOpenBody = node?.note?.let { { onOpen(node) } })
-            if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
-            Text("${children.size} 个子项", style = MaterialTheme.typography.labelLarge)
         }
-        items(children, key = { it.id }) { child ->
-            KnowledgeHierarchyRow(child, index) { if (!busy) { if (child.isFolder) onBrowse(child.id) else onOpen(child) } }
+    }
+    fun finishDrag() {
+        val visual = dragging ?: return
+        val current = freshScope()
+        stopAutoScroll()
+        dragging = null
+        previewIds = null
+        if (current == null) { visual.session.cancel(); return }
+        val proposed = visual.session.finish(current) ?: return
+        submitOrder(visual.session.expectedScope, proposed)
+    }
+    fun updateDrag(pointerY: Float) {
+        val visual = dragging ?: return
+        // Preview uses the current projection; begin/drop/write independently read authoritative state.
+        val current = latestScope
+        if (!callbacksAlive.get() || !latestInteractive || !visual.session.expectedScope.isSameSnapshot(current)) {
+            cancelDrag()
+            if (callbacksAlive.get()) orderMessage = "目录内容或权限已变化，请重新拖动。"
+            return
         }
-        if (children.isEmpty()) item { Text("此处还没有页面或文件夹") }
+        val ids = visual.session.previewIds
+        val positions = ids.withIndex().associate { it.value to it.index }
+        val sourceIndex = positions[visual.session.draggedId] ?: return
+        val center = pointerY - visual.pointerOffsetY + visual.heightPx / 2f
+        val target = listState.layoutInfo.visibleItemsInfo.filter { item ->
+            val id = item.key as? String
+            val position = positions[id] ?: -1
+            val midpoint = item.offset + item.size / 2f
+            position >= 0 && id != visual.session.draggedId &&
+                ((position > sourceIndex && center > midpoint + hysteresisPx) ||
+                    (position < sourceIndex && center < midpoint - hysteresisPx))
+        }.minByOrNull { abs(center - (it.offset + it.size / 2f)) }
+        if (target != null) visual.session.move(current, target.key as String)
+        if (!visual.session.isActive) { cancelDrag(); return }
+        previewIds = visual.session.previewIds
+        dragging = visual.copy(pointerY = pointerY)
+    }
+    fun autoScrollStep(pointerY: Float): Float {
+        val layout = listState.layoutInfo
+        val start = layout.viewportStartOffset.toFloat()
+        val end = (layout.viewportEndOffset - layout.afterContentPadding).toFloat()
+        if (end <= start) return 0f
+        val edge = edgePx.coerceAtMost((end - start) / 3f).coerceAtLeast(1f)
+        val strength = when {
+            pointerY < start + edge -> ((pointerY - start - edge) / edge).coerceIn(-1f, 0f)
+            pointerY > end - edge -> ((pointerY - end + edge) / edge).coerceIn(0f, 1f)
+            else -> 0f
+        }
+        return strength * abs(strength) * maxScrollPx
+    }
+    fun updateAutoScroll() {
+        val visual = dragging ?: return
+        if (autoScrollStep(visual.pointerY) == 0f) { stopAutoScroll(); return }
+        if (autoScrollJob?.isActive == true) return
+        val generation = ++autoScrollGeneration
+        autoScrollJob = workerScope.launch {
+            try {
+                while (isActive) {
+                    val current = dragging ?: break
+                    if (!callbacksAlive.get() || !latestInteractive ||
+                        !current.session.expectedScope.isSameSnapshot(latestScope)) { cancelDrag(); break }
+                    val step = autoScrollStep(current.pointerY)
+                    if (step == 0f) break
+                    val consumed = listState.scrollBy(step)
+                    // scrollBy may suspend while a newer pointer event updates the drag.
+                    val latest = dragging ?: break
+                    if (generation != autoScrollGeneration || latest.session !== current.session) break
+                    updateDrag(latest.pointerY)
+                    if (consumed == 0f) break
+                    delay(16)
+                }
+            } finally {
+                if (generation == autoScrollGeneration) autoScrollJob = null
+            }
+        }
+    }
+    fun startDrag(id: String, pointer: Offset): Boolean {
+        if (!loaded || loading || saving || dragging != null) return false
+        val current = freshScope() ?: return false
+        if (!latestScope.isSameSnapshot(current)) return false
+        val session = KnowledgeDirectoryDragSession.start(current, latestDisplayedIds, id) ?: return false
+        val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id } ?: return false
+        val node = latestIndex.nodes[id] ?: return false
+        dragging = KnowledgeDirectoryDragVisual(session, node, pointer.y,
+            (pointer.y - item.offset).coerceIn(0f, item.size.toFloat()), item.size)
+        previewIds = session.previewIds
+        orderMessage = ""
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        updateAutoScroll()
+        return true
+    }
+    fun moveOnePosition(id: String, direction: Int): Boolean {
+        if (!loaded || loading || saving || dragging != null) return false
+        val current = freshScope() ?: return false
+        if (!latestScope.isSameSnapshot(current)) return false
+        val ids = latestDisplayedIds
+        val sourceIndex = ids.indexOf(id)
+        val target = ids.getOrNull(sourceIndex + direction) ?: return false
+        val session = KnowledgeDirectoryDragSession.start(current, ids, id) ?: return false
+        if (!session.move(current, target)) return false
+        val proposed = session.finish(current) ?: return false
+        submitOrder(current, proposed)
+        return true
+    }
+
+    DisposableEffect(callbacksAlive) {
+        onDispose {
+            callbacksAlive.set(false)
+            dragging?.session?.cancel()
+            autoScrollJob?.cancel()
+            handleBounds.clear()
+        }
+    }
+    LaunchedEffect(workspace, parentId, reload) {
+        loading = true
+        try {
+            val stored = KnowledgeDirectoryOrderStore.load(context, workspace, parentId)
+            if (callbacksAlive.get()) { savedIds = stored; loaded = true }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (callbacksAlive.get()) {
+                loaded = false
+                orderMessage = "无法读取本机目录顺序，请重试。"
+            }
+        } finally {
+            if (callbacksAlive.get()) loading = false
+        }
+    }
+    LaunchedEffect(directoryScope, active, busy) {
+        val session = dragging?.session
+        if (session != null && (!active || busy || !session.expectedScope.isSameSnapshot(directoryScope))) {
+            cancelDrag()
+        }
+    }
+    BackHandler(enabled = active) { navigation(onBack) }
+    val node = parentId?.let(index.nodes::get)
+    val canSort = active && !busy && !saving && loaded && !loading && directoryScope.canReorder && displayedIds.size > 1
+    val navigationEnabled = active && !busy && !saving && dragging == null
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp)
+        .clipToBounds().onGloballyPositioned { viewport = it }
+        .pointerInput(workspace, parentId, callbacksAlive) {
+            // The viewport owns the pointer: recycling an offscreen dragged row cannot end the gesture.
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val id = listState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { item ->
+                    (item.key as? String)?.takeIf { handleBounds[it]?.contains(down.position) == true }
+                } ?: return@awaitEachGesture
+                val pressed = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                if (!startDrag(id, pressed.position)) return@awaitEachGesture
+                pressed.consume()
+                try {
+                    val released = drag(pressed.id) { change ->
+                        if (dragging != null) {
+                            change.consume()
+                            updateDrag(change.position.y)
+                            updateAutoScroll()
+                        }
+                    }
+                    if (released) {
+                        currentEvent.changes.forEach { if (it.changedToUp()) it.consume() }
+                        finishDrag()
+                    } else cancelDrag()
+                } finally {
+                    // Coroutine cancellation is a cancellation, never a drop/commit.
+                    if (dragging != null) cancelDrag()
+                }
+            }
+        }) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, userScrollEnabled = dragging == null && !saving,
+            contentPadding = PaddingValues(bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item(key = 0L) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(enabled = active && !busy && !saving, onClick = { navigation(onBack) }) { Text("返回") }
+                    Text("目录", style = MaterialTheme.typography.titleLarge)
+                    if (busy || saving || loading) CircularProgressIndicator(Modifier.size(22.dp))
+                }
+                KnowledgeBreadcrumbs(index, parentId) { navigation { onBrowse(it) } }
+                Text(node?.title?.ifBlank { "无标题" } ?: "页面与文件夹", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
+                KnowledgeHierarchyActions(index, parentId, !navigationEnabled,
+                    onRequest = { request -> navigation { onRequest(request) } },
+                    onOpenBody = node?.note?.let { { navigation { onOpen(node) } } })
+                if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
+                if (orderMessage.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(orderMessage, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                    if (!loaded && !loading) TextButton(onClick = { orderMessage = ""; reload++ }) { Text("重试") }
+                }
+                Text("${displayedIds.size} 个子项", style = MaterialTheme.typography.labelLarge)
+            }
+            items(displayedIds, key = { it }) { id ->
+                val child = index.nodes[id]
+                if (child != null) {
+                    val placeholder = dragging?.session?.draggedId == id
+                    val draggable = canSort && directoryScope.items.any { it.id == id && it.canDrag }
+                    val position = displayedIds.indexOf(id)
+                    DisposableEffect(id, handleBounds) { onDispose { handleBounds.remove(id) } }
+                    var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(tween(140)) else Modifier
+                    if (placeholder) rowModifier = rowModifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { }
+                    else if (draggable) rowModifier = rowModifier.semantics {
+                        customActions = buildList {
+                            if (position > 0) add(CustomAccessibilityAction("上移") { moveOnePosition(id, -1) })
+                            if (position < displayedIds.lastIndex) add(CustomAccessibilityAction("下移") { moveOnePosition(id, 1) })
+                        }
+                    }
+                    KnowledgeHierarchyRow(child, index, modifier = rowModifier, enabled = navigationEnabled,
+                        trailing = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (draggable) Box(Modifier.size(48.dp).semantics {
+                                    contentDescription = "$KNOWLEDGE_DIRECTORY_DRAG_LABEL，${child.title.ifBlank { "无标题" }}"
+                                    stateDescription = "第 ${position + 1} 项，共 ${displayedIds.size} 项"
+                                }.onGloballyPositioned { handle ->
+                                    val surface = viewport
+                                    if (surface?.isAttached == true && handle.isAttached) {
+                                        handleBounds[id] = surface.localBoundingBoxOf(handle, clipBounds = false)
+                                    }
+                                }, contentAlignment = Alignment.Center) { Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                Text("›")
+                            }
+                        }) {
+                        navigation { if (child.isFolder) onBrowse(child.id) else onOpen(child) }
+                    }
+                }
+            }
+            if (displayedIds.isEmpty()) item(key = 1L) { Text("此处还没有页面或文件夹") }
+        }
+        dragging?.let { visual ->
+            Surface(modifier = Modifier.fillMaxWidth().height(with(density) { visual.heightPx.toDp() })
+                .offset { IntOffset(0, (visual.pointerY - visual.pointerOffsetY).roundToInt()) }
+                .zIndex(1f).clearAndSetSemantics { }, shape = RoundedCornerShape(12.dp),
+                tonalElevation = 3.dp, shadowElevation = 6.dp) {
+                KnowledgeHierarchyRow(visual.node, index, enabled = false,
+                    trailing = { Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { Text("⠿") }; Text("›")
+                    } }) { }
+            }
+        }
     }
 }
 
