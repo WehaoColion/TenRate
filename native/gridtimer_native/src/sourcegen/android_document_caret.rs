@@ -1,3 +1,4 @@
+// v2.23.2.33 - Bind block focus to the compact four-item editor prefix.
 // Keep the block-editor caret inside the viewport after newlines and IME/layout changes.
 // Kotlin remains generated from Rust-owned production and regression-test sources.
 pub const SCREEN: &str = "com/ofairyo/gridtimer/ui/NoteDocumentEditor.kt";
@@ -110,10 +111,10 @@ const LIST_FOCUS: &str = r####"    val showingMarkdownPreview = markdownPreview 
         it.id == pendingFocusBlockId && it.type == NoteBlockType.TEXT
     }
     LaunchedEffect(note.id, workspaceKey, pendingFocusBlockId, pendingBlockIndex,
-        showingMarkdownPreview, markdownPreviewText != null) {
+        showingMarkdownPreview) {
         val targetId = pendingFocusBlockId ?: return@LaunchedEffect
         val targetIndex = documentFocusItemIndex(
-            pendingBlockIndex, markdownPreviewText != null, showingMarkdownPreview,
+            pendingBlockIndex, showingMarkdownPreview,
             editorListState.layoutInfo.visibleItemsInfo.any { it.key == targetId }
         ) ?: return@LaunchedEffect
         // A newly split block may not be composed at all. Materialize it first;
@@ -165,15 +166,14 @@ internal fun documentCaretRevealBounds(
     return DocumentCaretBounds(caret.left, top, maxOf(caret.right, caret.left + 1f), bottom)
 }
 
-// Top bar, title and property strip precede the blocks. The preview switch is optional.
+// Top bar, title, hierarchy and the combined property/preview toolbar precede blocks.
 // Keep this mapping aligned with the named lazy-list prefix entries in the editor.
 internal fun documentFocusItemIndex(
     blockIndex: Int,
-    hasPreviewSwitch: Boolean,
     showingPreview: Boolean,
     alreadyVisible: Boolean
 ): Int? = if (blockIndex < 0 || showingPreview || alreadyVisible) null
-    else 3 + (if (hasPreviewSwitch) 1 else 0) + blockIndex
+    else 4 + blockIndex
 "####;
 
 pub const UI_CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
@@ -325,16 +325,16 @@ class DocumentCaretPolicyTest {
         assertNull(documentCaretRevealBounds(DocumentCaretBounds(0f, 0f, 2f, 26f), 280, Float.NaN))
     }
     @Test fun offscreenNewlineAndInsertionIncludeAllPrecedingBlocks() {
-        assertEquals(3, documentFocusItemIndex(0, false, false, false))
-        assertEquals(4, documentFocusItemIndex(0, true, false, false))
-        assertEquals(24, documentFocusItemIndex(20, true, false, false))
+        assertEquals(4, documentFocusItemIndex(0, false, false))
+        assertEquals(5, documentFocusItemIndex(1, false, false))
+        assertEquals(24, documentFocusItemIndex(20, false, false))
     }
     @Test fun visibleBlockNeverJumpsToItsTop() {
-        assertNull(documentFocusItemIndex(20, true, false, true))
+        assertNull(documentFocusItemIndex(20, false, true))
     }
     @Test fun removedBlockOrPreviewModeCannotStealFocus() {
-        assertNull(documentFocusItemIndex(-1, true, false, false))
-        assertNull(documentFocusItemIndex(2, true, true, false))
+        assertNull(documentFocusItemIndex(-1, false, false))
+        assertNull(documentFocusItemIndex(2, true, false))
     }
     @Test fun consecutiveLinesStayWithinTheAvailableHeight() {
         for (line in 0..200) for (height in listOf(32, 64, 180, 280, 640)) {

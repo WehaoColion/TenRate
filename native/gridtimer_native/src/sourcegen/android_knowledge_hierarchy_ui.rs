@@ -1,3 +1,4 @@
+// Compact page controls while preserving hierarchy navigation and durable handoff.
 // v2.23.2.32 - Use the knowledge hierarchy as the single page-location source.
 // v2.23.2.30 - Preserve hierarchy handoff and blank-child guards on untouched exits.
 // v2.23.2.29 - Navigate and edit knowledge containers without replacing page content.
@@ -162,6 +163,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             "\"属性\", \"位置与页面色调\"",
         )?;
         source.push_str(LOCATION_PRESENTATION);
+        compact_editor_toolbar(&mut source)?;
     } else if path.ends_with("/StructuredKnowledgeReader.kt") {
         replace(&mut source,"    onPreviewImage: (String) -> Unit\n", "    hierarchyContent: @Composable ((() -> Unit) -> Unit) -> Unit = {},\n    onPreviewImage: (String) -> Unit\n")?;
         replace(&mut source,"            item(key = \"structured_header\") {", "            item(key = \"structured_hierarchy\") { hierarchyContent { action ->\n                if (transitionActive && !saving && draft == null && !insertOpen && latestWorkspace == workspace) action()\n            } }\n            item(key = \"structured_header\") {")?;
@@ -169,6 +171,68 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     }
     Ok(source)
 }
+
+fn compact_editor_toolbar(source: &mut String) -> Result<(), String> {
+    replace(source,
+        "                enabled = documentTransitionActive && !isSavingDraft && pendingRevisionRestore == null,\n                pinned = pinned,",
+        "                enabled = documentTransitionActive && !isSavingDraft && pendingRevisionRestore == null,\n                hasPreviewSwitch = markdownPreviewAvailable,\n                showingPreview = showingMarkdownPreview,\n                onEdit = { if (documentTransitionActive && !isSavingDraft && pendingRevisionRestore == null) beginEditing(requestBodyFocus = true) },\n                onPreview = { if (documentTransitionActive && !isSavingDraft && pendingRevisionRestore == null) beginMarkdownPreview() },\n                pinned = pinned,")?;
+    let preview_start = source.find("        if (markdownPreviewAvailable) {\n            item(key = \"document-editor-preview-switch\") {")
+        .ok_or("compact editor preview switch missing")?;
+    let preview_end = source[preview_start..]
+        .find("        if (showingMarkdownPreview) {")
+        .map(|offset| preview_start + offset)
+        .ok_or("compact editor preview boundary missing")?;
+    source.replace_range(preview_start..preview_end, "");
+    let strip_start = source
+        .find("@Composable\nprivate fun DocumentPropertyStrip(")
+        .ok_or("compact property strip missing")?;
+    let strip_end = source[strip_start..]
+        .find("@Composable\nprivate fun DocumentMetaChip(")
+        .map(|offset| strip_start + offset)
+        .ok_or("compact property strip boundary missing")?;
+    source.replace_range(strip_start..strip_end, COMPACT_PROPERTY_STRIP);
+    Ok(())
+}
+
+const COMPACT_PROPERTY_STRIP: &str = r####"@Composable
+private fun DocumentPropertyStrip(
+    enabled: Boolean,
+    hasPreviewSwitch: Boolean,
+    showingPreview: Boolean,
+    onEdit: () -> Unit,
+    onPreview: () -> Unit,
+    pinned: Boolean,
+    encrypted: Boolean,
+    accent: Color,
+    onOpenProperties: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        androidx.compose.material3.TextButton(enabled = enabled, onClick = onOpenProperties,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text("属性", maxLines = 1, softWrap = false) }
+        if (hasPreviewSwitch) {
+            androidx.compose.material3.FilterChip(selected = !showingPreview, enabled = enabled,
+                onClick = onEdit, modifier = Modifier.heightIn(min = 48.dp),
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = accent.copy(alpha = 0.12f), selectedLabelColor = accent),
+                label = { Text("编辑原文", maxLines = 1, softWrap = false) })
+            androidx.compose.material3.FilterChip(selected = showingPreview, enabled = enabled,
+                onClick = onPreview, modifier = Modifier.heightIn(min = 48.dp),
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = accent.copy(alpha = 0.12f), selectedLabelColor = accent),
+                label = { Text("公式预览", maxLines = 1, softWrap = false) })
+        }
+        if (pinned) androidx.compose.material3.TextButton(enabled = enabled, onClick = onOpenProperties,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text("已置顶", maxLines = 1, softWrap = false) }
+        if (encrypted) androidx.compose.material3.TextButton(enabled = enabled, onClick = onOpenProperties,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text("已加密", maxLines = 1, softWrap = false) }
+    }
+}
+
+"####;
 
 const BRIDGE: &str = r####"    fun knowledgeContainerActionAppDataJson(raw: String, action: String, id: String,
         parentId: String, title: String, now: Long): String? {
@@ -339,6 +403,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ofairyo.gridtimer.data.*
@@ -391,15 +459,108 @@ private fun KnowledgeHierarchyActions(index: KnowledgeHierarchy, parentId: Strin
 @Composable
 internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String, busy: Boolean,
     onBrowse: (String?) -> Unit, onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
+    val workspace = LocalNoteMediaWorkspaceKey.current
+    val active = LocalDocumentTransitionActive.current
+    val canInteract = active && !busy
     val children = index.children(parentId)
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        KnowledgeBreadcrumbs(index, parentId) { if (!busy) onBrowse(it) }
-        KnowledgeHierarchyActions(index, parentId, busy, onRequest)
-        Text("子项 ${children.size}", style = MaterialTheme.typography.labelLarge)
-        children.take(3).forEach { node -> KnowledgeHierarchyRow(node, index) { if (!busy) onOpen(node) } }
-        if (children.isEmpty()) Text("还没有子项", style = MaterialTheme.typography.bodySmall)
-        TextButton(enabled = !busy, onClick = { onBrowse(parentId) }) { Text("查看全部子项") }
-        HorizontalDivider()
+    val node = index.nodes[parentId]
+    val canCreate = index.mayCreateInside(parentId)
+    val canEdit = node?.writable == true
+    val canConvert = canEdit && node?.note?.document?.knowledge?.get("database")?.let { it != kotlinx.serialization.json.JsonNull } != true
+    var menu by remember(workspace, parentId) { mutableStateOf<String?>(null) }
+    var expanded by rememberSaveable(workspace, parentId) { mutableStateOf(false) }
+    val callbacksAlive = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicBoolean(true) }
+    DisposableEffect(callbacksAlive) { onDispose { callbacksAlive.set(false) } }
+    val latestIndex by rememberUpdatedState(index)
+    val latestCanInteract by rememberUpdatedState(canInteract)
+    val latestParentId by rememberUpdatedState(parentId)
+    val latestWorkspace by rememberUpdatedState(workspace)
+    LaunchedEffect(canInteract, canCreate, canEdit, canConvert, node?.isFolder) { menu = null }
+    fun mayInteract(): Boolean = callbacksAlive.get() && latestCanInteract &&
+        latestParentId == parentId && latestWorkspace == workspace
+    fun requestAction(action: String) {
+        menu = null
+        if (!mayInteract()) return
+        val currentIndex = latestIndex
+        val currentNode = currentIndex.nodes[parentId] ?: return
+        val creating = action == "create_page" || action == "create_folder"
+        val allowed = when (action) {
+            "create_page", "create_folder" -> currentIndex.mayCreateInside(parentId)
+            "move", "rename" -> currentNode.writable
+            "to_page", "to_folder" -> currentNode.writable &&
+                (action == "to_page") == currentNode.isFolder &&
+                currentNode.note?.document?.knowledge?.get("database")?.let { it != kotlinx.serialization.json.JsonNull } != true
+            else -> false
+        }
+        if (allowed) onRequest(KnowledgeHierarchyRequest(action,
+            id = if (creating) null else currentNode.id,
+            parentId = if (creating) parentId else currentNode.parentId))
+    }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically) {
+            TextButton(enabled = canInteract, onClick = { if (mayInteract()) onBrowse(null) },
+                modifier = Modifier.heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                Text("知识目录", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
+            }
+            index.breadcrumbs(parentId).forEach { crumb ->
+                Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(enabled = canInteract, onClick = { if (mayInteract()) onBrowse(crumb.id) },
+                    modifier = Modifier.heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text(crumb.title.ifBlank { "无标题" }, maxLines = 1, softWrap = false,
+                        style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(enabled = canInteract, onClick = {
+                if (mayInteract()) {
+                    if (children.isEmpty()) onBrowse(parentId) else expanded = !expanded
+                }
+            }, modifier = Modifier.heightIn(min = 48.dp).semantics {
+                contentDescription = "子项，共 ${children.size} 项"
+                stateDescription = if (expanded && children.isNotEmpty()) "已展开" else "已收起"
+            }) { Text("子项 ${children.size}" + if (children.isEmpty()) "" else if (expanded) " ▴" else " ▾", maxLines = 1, softWrap = false) }
+            Box {
+                TextButton(enabled = canInteract && canCreate, onClick = {
+                    if (mayInteract() && latestIndex.mayCreateInside(parentId)) menu = "create"
+                }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "新建子页面或子文件夹" }) {
+                    Text("新建 ▾", maxLines = 1, softWrap = false)
+                }
+                DropdownMenu(expanded = menu == "create" && canInteract && canCreate,
+                    onDismissRequest = { menu = null }) {
+                    DropdownMenuItem(text = { Text("子页面") }, enabled = canInteract && canCreate,
+                        onClick = { requestAction("create_page") })
+                    DropdownMenuItem(text = { Text("子文件夹") }, enabled = canInteract && canCreate,
+                        onClick = { requestAction("create_folder") })
+                }
+            }
+            Box {
+                TextButton(enabled = canInteract && canEdit, onClick = {
+                    if (mayInteract() && latestIndex.nodes[parentId]?.writable == true) menu = "more"
+                }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "更多页面操作" }) {
+                    Text("更多 ▾", maxLines = 1, softWrap = false)
+                }
+                DropdownMenu(expanded = menu == "more" && canInteract && canEdit,
+                    onDismissRequest = { menu = null }) {
+                    DropdownMenuItem(text = { Text("移动") }, enabled = canInteract && canEdit,
+                        onClick = { requestAction("move") })
+                    DropdownMenuItem(text = { Text("重命名") }, enabled = canInteract && canEdit,
+                        onClick = { requestAction("rename") })
+                    DropdownMenuItem(text = { Text(if (node?.isFolder == true) "转为页面" else "转为文件夹") },
+                        enabled = canInteract && canConvert,
+                        onClick = { requestAction(if (node?.isFolder == true) "to_page" else "to_folder") })
+                }
+            }
+        }
+        if (expanded && children.isNotEmpty()) {
+            children.take(3).forEach { child -> KnowledgeHierarchyRow(child, index) {
+                if (mayInteract()) onOpen(child)
+            } }
+            TextButton(enabled = canInteract, onClick = { if (mayInteract()) onBrowse(parentId) },
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("查看全部 ${children.size} 项") }
+        }
     }
 }
 

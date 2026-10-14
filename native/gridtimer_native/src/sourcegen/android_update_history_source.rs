@@ -1,3 +1,4 @@
+// v2.23.2.33 - Record compact knowledge controls.
 // v2.23.2.32 - Record accurate knowledge location and unified move entry.
 // v2.23.2.31 - Record current-only legal evidence scope.
 // v2.23.2.30 - Record unchanged knowledge-page exit and display normalization guards.
@@ -32,7 +33,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.32";
+pub const LATEST_VERSION: &str = "2.23.2.33";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -62,6 +63,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.33",
+        updatedAt = "2026-10-14 22:01",
+        summary = "知识页目录和工具栏更紧凑，完整功能按需展开",
+        sections = listOf(
+            AndroidUpdateSection("目录与子项", listOf(
+                "目录路径保留在单行中，长路径可横向滑动，仍能返回任意上级。子项数量、新建和更多操作集中到一行，为正文留出更多空间。",
+                "子项列表默认收起，点击子项数量即可展开和收起。展开后可直接打开前几个子项，也可进入完整子项目录；没有子项时不再重复显示大段空态。"
+            )),
+            AndroidUpdateSection("操作入口", listOf(
+                "新建菜单保留子页面和子文件夹。更多菜单保留移动、重命名以及页面与文件夹互转，操作继续受原有权限和保存规则保护。",
+                "属性、编辑原文和公式排版预览合并到同一工具行；置顶和加密状态仍可查看。窄屏可横向滑动访问完整操作，按钮保留足够的点按面积。",
+                "正文编辑、撤销重做、公式预览及历史记录不改动；切换页面、工作区或进入保存状态时，不允许旧菜单继续提交操作。"
+            )),
+            AndroidUpdateSection("版本", listOf(
+                "Android 2.23.2.33，versionCode 22302；只递增第四段，保留历版更新说明及点按复制。沿用原包名、正式签名和数据格式。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.32",
         updatedAt = "2026-10-14 19:07",
@@ -801,7 +821,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.31"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.32"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));

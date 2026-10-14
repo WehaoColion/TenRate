@@ -1,3 +1,4 @@
+v2.23.2.33（Android已验收APK）- 收紧知识页目录、子项和编辑工具区域，完整操作按需展开；versionCode22302。正式签名APK已按原流程构建交付，用户于2026-10-15确认本版可用；旧2.23.2.32安装包已归档到old_apks。详见[本版说明](documents/releases/android/release_notes_v2.23.2.33.md)。
 v2.23.2.32（Android已验收APK）- 修复知识页位置显示混用旧文件夹字段，统一属性中的完整路径与移动入口；versionCode22301。正式签名APK已按原流程构建交付，用户于2026-10-14确认本版可用；旧2.23.2.31安装包已归档到old_apks。详见[本版说明](documents/releases/android/release_notes_v2.23.2.32.md)。
 v2.23.2.31（Android已验收APK）- 法律风险分析只纳入页面与便签的当前内容及其附件，排除历史版本；versionCode22300。正式签名APK已按原流程构建交付，用户于2026-10-14确认本版可用，旧2.23.2.30安装包已归档到old_apks。详见[本版说明](documents/releases/android/release_notes_v2.23.2.31.md)。
 v2.23.2.30（Android已验收APK）- 修复知识页未编辑退出仍进入保存队列、显示归一化误触发自动保存的问题，保留真实编辑及失败草稿的保存保护；versionCode 22299。正式签名APK已按原流程构建交付，用户于2026-10-14确认本版可用；已验收2.23.2.29安装包已保留到old_apks。详见[本版说明](documents/releases/android/release_notes_v2.23.2.30.md)。
