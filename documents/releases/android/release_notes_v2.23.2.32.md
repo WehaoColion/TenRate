@@ -2,7 +2,7 @@ v2.23.2.32 - 统一知识页位置显示与移动入口。
 
 # Android 2.23.2.32 知识页位置修复
 
-更新时间：2026-10-14 19:07（北京时间）
+更新时间：2026-10-14 21:17（北京时间）
 
 ## 问题原因
 
@@ -40,4 +40,30 @@ v2.23.2.32 - 统一知识页位置显示与移动入口。
 
 ## 交付范围
 
-Android源码候选2.23.2.32，versionCode22301，仅递增第四段。本次先提交PR，不替换已验收2.23.2.31安装包；Windows正式程序和发布清单保持原版本。只修改Rust源码及其生成器，不直接修改生成后的Kotlin。手机点击、长路径显示和保存后移动交互仍需候选APK验收。
+Android候选APK2.23.2.32，versionCode22301，仅递增第四段。正式签名APK已经构建并交付，等待手机验收；已验收2.23.2.31安装包已归档，Windows正式程序和发布清单保持原版本。只修改Rust源码及其生成器，不直接修改生成后的Kotlin。手机点击、长路径显示和保存后移动交互仍需候选APK验收。
+
+
+## 候选APK构建与交付
+
+本次执行正式Release Gradle流程，包含`:app:testReleaseUnitTest`、`:app:lintRelease`、`:app:assembleRelease`，构建日志用时8m 49s。先核对253个输入文件与已通过检查的源码快照完全一致；Gradle复用未变化输入的源码生成、原生库编译、447项JVM测试及lint结果，正式打包任务实际执行。已通过的Rust和变异检查按相同源码、成功日志及结果文件哈希复用，记录在signed_build_reuse_receipt.json；原构建检查脚本未修改。最终offline_build_acceptance.json为mode=build、passed=true。
+
+| 项目 | 核对结果 |
+| --- | --- |
+| 安装包 | `tenfold_v2.23.2.32.apk` |
+| 包名 | `com.ofairyo.gridtimer` |
+| 版本 | 2.23.2.32，versionCode 22301 |
+| 大小 | 24,994,305字节，约23.84 MiB |
+| APK SHA256 | `6cff98fc07b0c760e38fb6273e8eede6c63ea8fdb132a58ccdfaeb8824da69d5` |
+| 正式证书SHA256 | `4ac7b86a600bbb3215a6187018c1442efcf3ffb25cdbeea0082cab81ef4d605f` |
+| 构建所用提交 | `272255f7627c3fbc9d6481eb01334ff70c963474` |
+| 应用输入快照SHA256 | `a5002e41ebf234c6035b84cf77faca43fd182ab8c7c15ce1ec4c2d172a855d3f` |
+
+交付复核时间为2026-10-14 21:17（北京时间）。apksigner验证通过，v2、v3签名有效，证书与已验收2.23.2.31完全相同；包名不变，versionCode从22300递增至22301，沿用覆盖更新身份，无需卸载旧版。无debuggable标志；16KiB ZIP对齐通过；arm64-v8a、armeabi-v7a、x86_64三种原生库与本次Rust和Gradle输出逐字节一致。
+
+APK放回项目根目录、APK/及app/build/outputs/apk/release/，三处大小与SHA256一致。旧2.23.2.31的三处副本归档到old_apks/pr25_previous_delivery/，保留原始哈希。原项目未提交源码、新文件及配置保留，Windows正式文件和共用清单未改变。构建输出只保留带版本号的正式APK。签名秘密与本机详细日志未上传。
+
+手机安装、属性按钮点按、完整目录路径、保存后更改位置与跨端移动交互尚未验证。PR #25保持待验收，未合并。后续说明提交仅修改文档，不改变本次APK的应用输入。
+
+补充核对：三种架构的Canvas、AI连接、AI回答及公式渲染JNI入口均存在；APK内离线公式脚本和样式与源码资源逐字节一致，ZIP完整性检查通过。另运行tools/publish_android_note.ps1 -Mode verify时，因本版本证据目录缺少历史ai_connection_mutation/receipt.json而提前停止，不能记为完整通过。候选交付沿用独立验签、版本、三份副本、原生库与资源核验流程；未修改通用验证脚本或补造历史证据。
+
+位置修复产物核对：直接解析新版APK的DEX，确认KnowledgeLocation、KnowledgeHierarchy.location/canMoveTo定义以及编辑器、属性面板、移动选择器的实际调用链。旧2.23.2.31作为负对照缺少新增定义，按预期被拒绝；新包与253项输入、生成代码和原生库哈希一致。此项不代替手机实际交互验收。
