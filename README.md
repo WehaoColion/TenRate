@@ -1,4 +1,4 @@
-v2.23.2.35（Android候选源码）- 修复过期自动保存继续排队，减少保存时对历史快照的重复展开；versionCode22304。当前交付APK仍为已验收的2.23.2.34，本轮先提交修复PR。详见[本版说明](documents/releases/android/release_notes_v2.23.2.35.md)。
+v2.23.2.35（Android候选APK）- 修复过期自动保存继续排队，减少保存时对历史快照的重复展开；versionCode22304。正式签名APK于2026-10-16 00:04（北京时间）按原流程构建交付，旧2.23.2.34已归档到old_apks；本版待手机验收。详见[本版说明](documents/releases/android/release_notes_v2.23.2.35.md)。
 
 v2.23.2.34（Android已验收APK）- 知识目录支持同层页面和文件夹拖动排序，首页日期列表与更新时间保持原样；versionCode22303。正式签名APK已按原流程构建交付，用户于2026-10-15 15:02（北京时间）确认本版可用；旧2.23.2.33安装包已归档到old_apks。详见[本版说明](documents/releases/android/release_notes_v2.23.2.34.md)。
 v2.23.2.33（Android已验收APK）- 收紧知识页目录、子项和编辑工具区域，完整操作按需展开；versionCode22302。正式签名APK已按原流程构建交付，用户于2026-10-15确认本版可用；旧2.23.2.32安装包已归档到old_apks。详见[本版说明](documents/releases/android/release_notes_v2.23.2.33.md)。
