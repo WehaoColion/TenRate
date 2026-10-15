@@ -1,3 +1,4 @@
+// v2.23.2.35 - Record save queue cancellation and verified history reuse.
 // v2.23.2.34 - Record directory-only drag ordering.
 // v2.23.2.33 - Record compact knowledge controls.
 // v2.23.2.32 - Record accurate knowledge location and unified move entry.
@@ -34,7 +35,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.34";
+pub const LATEST_VERSION: &str = "2.23.2.35";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -64,6 +65,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.35",
+        updatedAt = "2026-10-15 15:36",
+        summary = "减少知识页保存退出时的过期任务和历史重复读取",
+        sections = listOf(
+            AndroidUpdateSection("保存排队", listOf(
+                "修复被新编辑取代的自动保存仍占用写入队列的问题。旧任务尚未取得数据库锁时可以取消；已经开始的写入继续完成，避免中断本地提交。",
+                "退出继续等待当前内容保存成功。写入失败时保留编辑内容和原有重试流程，不把尚未保存的内容显示为保存成功。",
+                "返回成功后，编辑页销毁不再重复提交刚刚保存的内容，避免重新打开页面时又排在上一轮的重复写入后面。保存失败或工作区变化不会触发此优化。"
+            )),
+            AndroidUpdateSection("历史检查", listOf(
+                "保存检查缓存失效时，使用同一数据库事务中的原生完整性校验结果，减少对已验证历史快照的重复解压和读取。校验结果不会跨工作区或跨事务使用。",
+                "原生校验不可用、内容损坏、数据发生变化、缺失有效当前记录或出现不兼容版本时，继续执行完整检查。隔离记录、恢复副本和旧格式文件仍单独核对，不删除历史记录。"
+            )),
+            AndroidUpdateSection("版本", listOf(
+                "Android 2.23.2.35，versionCode 22304。本次调整本地保存流程，保留知识目录拖动排序、首页日期列表、页面内容、同步格式和现有操作布局。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.34",
         updatedAt = "2026-10-15 03:15",
@@ -841,7 +861,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.33"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.34"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));

@@ -1,3 +1,4 @@
+// v2.23.2.35 - Hand off a committed exit before disposal can enqueue it again.
 // v2.23.2.30 - Leave untouched document visits without adding a storage barrier.
 // v2.23.2.27 - Complete retained document exit saves after editor disposal.
 // v2.23.2.1 - Coalesce adjacent draft autosaves without crossing durable barriers.
@@ -833,6 +834,7 @@ const DOCUMENT_BACK_NEW: &str = r####"    fun handleBack() {
             isSavingDraft = false
             if (!completion.notifyUi) return@exitCompletion
             if (completion.savedLocally) {
+                hierarchyHandedOff = true
                 editorSessionViewModel.clear(note.id, editorWorkspaceKey, editorSession)
                 onBack()
             } else {

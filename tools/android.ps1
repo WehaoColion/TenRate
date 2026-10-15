@@ -1,3 +1,4 @@
+# v0.0.40 - Gate cancellable snapshot admission and transaction-bound save preflight.
 # v0.0.39 - Gate isolated directory ordering and its real state mutations.
 # v0.0.38 - Verify knowledge hierarchy and hash-bound UI-only native reuse.
 # v0.0.37 - Check knowledge transition and focused collection work sources.
@@ -64,6 +65,7 @@ function Get-TaskInputs {
     if([version]$taskVersion -ge [version]'2.23.2.28'){$paths += Join-Path $taskRoot 'tools/verify_document_transition_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.29'){$paths += Join-Path $taskRoot 'tools/verify_knowledge_hierarchy_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.34'){$paths += Join-Path $taskRoot 'tools/verify_directory_order_mutation.ps1'}
+    if([version]$taskVersion -ge [version]'2.23.2.35'){$paths += Join-Path $taskRoot 'tools/verify_note_persist_latency_mutation.ps1'}
     # Cargo gates timer_windows_client behind the desktop feature. Its private
     # desktop/ modules are not inputs to the Android library, generator or tests.
     # Shared library modules (including desktop_*.rs) remain in the snapshot.
@@ -174,6 +176,7 @@ try {
     if([version]$taskVersion -ge [version]'2.23.2.25'){$formatPaths += @('src/android_agent_progress.rs','src/sourcegen/android_agent_progress_ui.rs') | ForEach-Object {Join-Path $taskCrate $_}}
     if([version]$taskVersion -ge [version]'2.23.2.26'){$formatPaths += Join-Path $taskCrate 'src/sourcegen/android_legal_integration.rs'}
     if([version]$taskVersion -ge [version]'2.23.2.28'){$formatPaths += @('src/sourcegen/android_document_transition.rs','src/sourcegen/android_document_exit_feedback.rs','src/sourcegen/android_document_collection_work.rs') | ForEach-Object {Join-Path $taskCrate $_}}
+    if([version]$taskVersion -ge [version]'2.23.2.35'){$formatPaths += @('src/sourcegen/android_note_persist_debounce.rs','src/sourcegen/android_note_persist_preflight.rs') | ForEach-Object {Join-Path $taskCrate $_}}
     Invoke-TaskCommand $taskRustfmt (@('--check','--edition','2021','--config','skip_children=true') + $formatPaths) 'rust_format.log'
     $cargoBase = @('--manifest-path',(Join-Path $taskCrate 'Cargo.toml'),'--locked','--offline')
     # These suites exercise runtime cancellation and WinHTTP, neither of which
@@ -234,6 +237,8 @@ try {
         @{name='NoteCollectionRecoveryTest';package='core';source='android_note_collection_recovery.rs'},
         @{name='KnowledgeFilterStateTest';package='ui';source='android_knowledge_filters.rs'},
         @{name='NoteSaveQueueTest';package='ui';source='android_note_save_queue.rs'},
+        @{name='NotePersistDebounceTest';package='data';source='android_note_persist_debounce.rs'},
+        @{name='NoteSavePreflightTest';package='data';source='android_note_persist_preflight.rs'},
         @{name='KnowledgeDocumentTransitionTest';package='ui';source='android_document_transition.rs'},
         @{name='DocumentCollectionWorkTest';package='ui';source='android_document_collection_work.rs'},
         @{name='KnowledgeHierarchyTest';package='data';source='android_knowledge_hierarchy.rs'},
@@ -252,6 +257,17 @@ try {
         if($suiteExpected -lt 1 -or [int]$suiteResult.testsuite.tests -ne $suiteExpected -or [int]$suiteResult.testsuite.failures -ne 0 -or [int]$suiteResult.testsuite.errors -ne 0 -or [int]$suiteResult.testsuite.skipped -ne 0){throw ("Incomplete or failed knowledge suite: "+$suite.name)}
         Copy-Item -LiteralPath $suitePath -Destination (Join-Path $taskEvidence ($suite.name+'.xml')) -Force
         $taskKnowledgeTestCounts[$suite.name] = $suiteExpected
+    }
+    if([version]$taskVersion -ge [version]'2.23.2.35'){
+        Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_note_persist_latency_mutation.ps1'),'-Version',$taskVersion) 'note_persist_latency_mutation.log'
+        $latencyReceipt = Get-Content -LiteralPath (Join-Path $taskEvidence 'note_persist_latency_mutation/receipt.json') -Raw | ConvertFrom-Json
+        $latencyExpected = $taskKnowledgeTestCounts.NotePersistDebounceTest + $taskKnowledgeTestCounts.NoteSavePreflightTest
+        if(!$latencyReceipt.passed -or !$latencyReceipt.productionUnchanged -or !$latencyReceipt.productionIntegrationVerified -or !$latencyReceipt.generatedChecked -or $latencyReceipt.version -ne $taskVersion -or $latencyReceipt.tests -ne $latencyExpected -or $latencyReceipt.cases.Count -ne 8 -or @($latencyReceipt.cases | Where-Object {!$_.passed -or $_.compileExit -ne 0}).Count -ne 0){throw 'Save persistence latency mutation evidence missing or incomplete'}
+        foreach($identity in $latencyReceipt.identities){
+            if((Get-FileHash -LiteralPath (Join-Path $taskRoot $identity.path)).Hash.ToLowerInvariant() -cne $identity.sha256){throw ('Save persistence mutation source is stale: '+$identity.path)}
+        }
+        $taskSaveLatencyIntegration = [ordered]@{passed=$true;tests=$latencyExpected;mutationCases=$latencyReceipt.cases.Count;productionIntegrationVerified=$true;sourceSnapshotSha256=$before.sha256;hostOnly=$true;deviceVerified=$false}
+        Write-TaskJson 'note_persist_latency_acceptance.json' $taskSaveLatencyIntegration
     }
     $taskAiSource = Get-Content -LiteralPath (Join-Path $taskCrate 'src\sourcegen\my_account_source.rs') -Raw
     $taskAiTestSource = [regex]::Match($taskAiSource, '(?s)pub const AI_TEST_CONTENTS:\s*&str\s*=\s*r(?<hashes>#+)"(?<body>.*?)"\k<hashes>;')
@@ -590,6 +606,7 @@ try {
     $result['noteListTests'] = $expectedNoteTests
     $result['startupDecodeTests'] = $expectedStartupTests
     $result['knowledgeRecoveryTests'] = $taskKnowledgeTestCounts
+    if($taskSaveLatencyIntegration){$result['notePersistLatencyIntegration']=$taskSaveLatencyIntegration}
     $result['aiConnectionTests'] = $taskAiExpected
     $result['aiWorkflowTests'] = $taskAiWorkflowCounts
     if($taskLegalWorkflowIntegration){$result['legalWorkflowIntegration']=$taskLegalWorkflowIntegration}
