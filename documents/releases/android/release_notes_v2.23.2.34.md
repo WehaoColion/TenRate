@@ -16,4 +16,14 @@ Android候选版本2.23.2.34，versionCode22303，只递增第四段。Windows�
 
 ## 验证与验收
 
-按项目正式检查流程执行`pwsh -NoProfile -File tools/android.ps1 -Mode check -GradleHeapMiB 1536 -GradleWorkers 1`。Rust领域测试951项、源码生成测试141项、打包工具测试66项通过。Android正式版单元测试458项、27个套件通过，无失败或跳过；lint无错误，21项警告。新增11项目录排序领域规格通过；6个变异场景验证完成：基线及文案修改通过，去掉目录当前帧门禁、工作区门禁、取消保护或写入失败保护均被断言拦截。生成后的生产源码与Rust生成器一致，验证前后哈希未变。现有Rust检查另有8项忽略和4项非安卓测试过滤；打包工具另有2项忽略。本次先提交源码PR，未构建或替换APK；现有已验收的2.23.2.33安装包保留。手机长按、点按、边缘滚动、取消与退出体验待后续安装包验收。未启动模拟器。
+按项目正式检查流程执行`pwsh -NoProfile -File tools/android.ps1 -Mode check -GradleHeapMiB 1536 -GradleWorkers 1`。Rust领域测试951项、源码生成测试141项、打包工具测试66项通过。Android正式版单元测试458项、27个套件通过，无失败或跳过；lint无错误，21项警告。新增11项目录排序领域规格通过；6个变异场景验证完成：基线及文案修改通过，去掉目录当前帧门禁、工作区门禁、取消保护或写入失败保护均被断言拦截。生成后的生产源码与Rust生成器一致，验证前后哈希未变。现有Rust检查另有8项忽略和4项非安卓测试过滤；打包工具另有2项忽略。本次正式签名候选APK已按原流程构建交付；已验收的2.23.2.33安装包归档到old_apks/pr27_previous_delivery。手机长按、点按、边缘滚动、取消与退出体验待后续安装包验收。未启动模拟器。
+
+## 候选APK构建与交付
+
+本轮实际执行`pwsh -NoProfile -File tools/android.ps1 -Mode build -GradleHeapMiB 1536 -GradleWorkers 1`，交付复核于2026-10-15 14:35（北京时间）完成。Rust测试、源码生成与打包工具检查通过，Android正式版测试与lint复用输入未变化的Gradle增量结果，实际执行assembleRelease并生成本版安装包。APK来自代码提交`83e183d22a6d655440ccfa4ea31a433c9005347d`，冻结应用输入快照为`3efd80f5094673dc160aa59475915be8cf9262c6f4c4bb8c69745c182458e80e`。
+
+安装包为`tenfold_v2.23.2.34.apk`，versionCode22303，大小25042497字节，SHA-256为`36a99a865134a9318cd5b6816b4657634074728a58a38339796cf14d98881f44`。包名`com.ofairyo.gridtimer`，正式签名实测有效，与已验收的2.23.2.33证书相同；证书SHA-256为`4ac7b86a600bbb3215a6187018c1442efcf3ffb25cdbeea0082cab81ef4d605f`。16KiB ZIP对齐、三种ABI与实际Rust/Gradle输出的一致性、目录排序DEX定义及调用链检查通过。
+
+三份新APK分别交付到原项目根目录、APK及app/build/outputs/apk/release，大小和哈希一致。旧APK在归档前后核对哈希，Windows正式清单与四个正式程序文件保持原样。本轮使用与实际构建绑定的独立候选验证和交付流程，未将候选写成正式已发布版本。
+
+此包等待用户手机验收，PR #27暂不合并。本轮未进行真机安装、长按拖动、边缘滚动、取消、无障碍操作、退出重进和持久化的运行验证，首页日期列表与更新时间保持的真机体验仍待确认。未启动模拟器，未生成debug APK或AAB。
