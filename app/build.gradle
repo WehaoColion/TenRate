@@ -1,4 +1,4 @@
-// v2.23.2.34 - Add workspace-local directory drag ordering.
+// v2.23.2.35 - Cancel stale persistence waiters and reuse verified save preflight.
 // v2.23.2.33 - Compact knowledge navigation and editor controls.
 // v2.23.2.32 - Unify knowledge document location and move entry.
 // v2.23.2.31 - Analyze only current legal evidence.
@@ -155,8 +155,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22303
-        versionName '2.23.2.34'
+        versionCode 22304
+        versionName '2.23.2.35'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

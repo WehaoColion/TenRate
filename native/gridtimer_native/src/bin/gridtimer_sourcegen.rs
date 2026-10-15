@@ -70,6 +70,10 @@ mod android_note_collection_recovery;
 mod android_note_latency;
 #[path = "../sourcegen/android_note_list_performance.rs"]
 mod android_note_list_performance;
+#[path = "../sourcegen/android_note_persist_debounce.rs"]
+mod android_note_persist_debounce;
+#[path = "../sourcegen/android_note_persist_preflight.rs"]
+mod android_note_persist_preflight;
 #[path = "../sourcegen/android_note_save_performance.rs"]
 mod android_note_save_performance;
 #[path = "../sourcegen/android_note_save_queue.rs"]
@@ -247,6 +251,16 @@ fn run() -> io::Result<()> {
         )?;
         write_source(
             &unit_test_output_root,
+            android_note_persist_debounce::TEST_PATH,
+            android_note_persist_debounce::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
+            android_note_persist_preflight::TEST_PATH,
+            android_note_persist_preflight::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
             android_document_transition::TEST_PATH,
             android_document_transition::TEST_CONTENTS,
         )?;
@@ -312,6 +326,11 @@ fn run() -> io::Result<()> {
         &output_root,
         android_note_save_queue::EXIT_SAVE_GATE_PATH,
         android_note_save_queue::EXIT_SAVE_GATE_CONTENTS,
+    )?;
+    write_source(
+        &output_root,
+        android_note_persist_debounce::PATH,
+        android_note_persist_debounce::CONTENTS,
     )?;
 
     write_source(
@@ -417,6 +436,10 @@ fn run() -> io::Result<()> {
         let rendered = android_sync_failure::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = legal_report_sync_source::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_persist_debounce::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_persist_preflight::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
