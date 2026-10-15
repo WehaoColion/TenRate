@@ -1,3 +1,4 @@
+// v2.23.2.34 - Record directory-only drag ordering.
 // v2.23.2.33 - Record compact knowledge controls.
 // v2.23.2.32 - Record accurate knowledge location and unified move entry.
 // v2.23.2.31 - Record current-only legal evidence scope.
@@ -33,7 +34,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.33";
+pub const LATEST_VERSION: &str = "2.23.2.34";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -63,6 +64,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.34",
+        updatedAt = "2026-10-15 03:15",
+        summary = "知识目录支持拖动排序，首页日期列表保持原样",
+        sections = listOf(
+            AndroidUpdateSection("目录排序", listOf(
+                "知识模块进入目录后，可长按右侧拖动手柄调整同一层级的页面和文件夹。根目录及各层子目录均可分别保存顺序，普通点按仍打开页面或进入文件夹。",
+                "拖动时显示当前位置预览，长目录可在边缘继续滚动；松手后保存一次。手势取消、退出或工作区变化会停止拖动，未改变位置不产生保存。"
+            )),
+            AndroidUpdateSection("保留首页与内容", listOf(
+                "手动顺序仅用于安卓版当前工作区的目录显示。知识首页仍使用原来的日期、标题、置顶及筛选规则；排序不会修改页面正文、创建时间、更新时间或历史版本。",
+                "顺序保存在安卓本机，重新打开目录仍可使用；本次不加入跨设备同步数据。删除或移走的子项自动从显示顺序中排除，新子项追加到已排好的项目之后。"
+            )),
+            AndroidUpdateSection("操作保护", listOf(
+                "只读、已加密、位置异常或当前不能操作的条目不会开始拖动。保存前再次核对工作区、父级、子项及权限；失败保留已保存的顺序并提示重试。",
+                "Android 2.23.2.34，versionCode 22303；只递增第四段，保留历版更新说明和点按复制。沿用原包名、正式签名与数据格式。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.33",
         updatedAt = "2026-10-14 22:01",
@@ -821,7 +841,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.32"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.33"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));

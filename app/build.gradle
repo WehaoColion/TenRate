@@ -1,3 +1,4 @@
+// v2.23.2.34 - Add workspace-local directory drag ordering.
 // v2.23.2.33 - Compact knowledge navigation and editor controls.
 // v2.23.2.32 - Unify knowledge document location and move entry.
 // v2.23.2.31 - Analyze only current legal evidence.
@@ -154,8 +155,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22302
-        versionName '2.23.2.33'
+        versionCode 22303
+        versionName '2.23.2.34'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
