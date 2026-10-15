@@ -54,7 +54,9 @@ fn desktop_legal_attachment_inputs(
         if !active() {
             break;
         }
-        if stored.deleted_at_epoch_millis.is_some() {
+        if stored.deleted_at_epoch_millis.is_some()
+            || legal_source_tombstoned(data, "note", &stored.id, stored.updated_at_epoch_millis)
+        {
             continue;
         }
         let note = if stored.encryption.is_some() {
@@ -65,25 +67,18 @@ fn desktop_legal_attachment_inputs(
         } else {
             stored
         };
-        let attachments = note
-            .attachments
-            .iter()
-            .chain(
-                note.revisions
-                    .iter()
-                    .flat_map(|revision| revision.attachments.iter()),
-            )
-            .chain(
-                note.versions
-                    .iter()
-                    .filter(|version| version.deleted_at_epoch_millis.is_none())
-                    .flat_map(|version| version.attachments.iter()),
-            );
+        let attachments = desktop_legal_current_attachments(note);
         for item in attachments {
             if !active() {
                 return result;
             }
             if item.sha256.is_empty()
+                || legal_source_tombstoned(
+                    data,
+                    "noteAttachment",
+                    &item.id,
+                    item.updated_at_epoch_millis,
+                )
                 || item.size_bytes <= 0
                 || !seen.insert((note.id.clone(), item.id.clone(), item.sha256.clone()))
             {
@@ -111,6 +106,7 @@ impl TimerWindowsClient {
         state.sync_cancel.store(true, AtomicOrdering::Release);
         state.store_cancel.store(true, AtomicOrdering::Release);
         state.waiting_for_save = false;
+        state.history_source = None;
         state.preview = None;
         state.selected_report = None;
         state.preview_version = None;

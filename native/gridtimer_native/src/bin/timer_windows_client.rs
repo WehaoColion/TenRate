@@ -1,3 +1,4 @@
+// v1.1.0.8 Windows - Complete knowledge hierarchy, guarded task Agent and exact legal evidence navigation.
 // v1.1.0.7 Windows - Add real provider question modes, bound consent and offline formula reading.
 // v1.1.0.3 Windows - Reuse the desktop entry and save drafts before handing off to a newer release.
 // v1.1.0.2 Windows - Load verified workspaces asynchronously and isolate content caches and legal tasks.
@@ -92,6 +93,9 @@ include!("../desktop/design_system.rs");
 include!("../desktop/navigation.rs");
 include!("../desktop/knowledge_ui.rs");
 include!("../desktop/ai_answer_ui.rs");
+include!("../desktop/agent_ui.rs");
+include!("../desktop/ai_current_content.rs");
+include!("../desktop/knowledge_exit.rs");
 include!("../desktop/knowledge_canvas.rs");
 include!("../desktop/knowledge_experience.rs");
 include!("../desktop/knowledge_workspace.rs");
@@ -1454,6 +1458,7 @@ struct TimerWindowsClient {
     knowledge_folder_manager_open: bool,
     knowledge_folder_edit_id: Option<String>,
     knowledge_folder_name_draft: String,
+    desktop_agent: DesktopAgentSession,
     knowledge_ai_panel_open: bool,
     knowledge_ai_question_draft: String,
     knowledge_ai_scope_all: bool,
@@ -1602,6 +1607,7 @@ impl TimerWindowsClient {
             knowledge_folder_manager_open: false,
             knowledge_folder_edit_id: None,
             knowledge_folder_name_draft: String::new(),
+            desktop_agent: DesktopAgentSession::default(),
             knowledge_ai_panel_open: false,
             knowledge_ai_question_draft: String::new(),
             knowledge_ai_scope_all: true,
@@ -6793,6 +6799,7 @@ impl TimerWindowsClient {
         self.cancel_active_sync();
         self.startup_sync_due_epoch_millis = 0;
         self.reconcile_active_background_job("client shutdown before completion was recorded");
+        self.cancel_desktop_agent();
         self.task_supervisor.begin_shutdown();
         self.shutdown_state = ClientShutdownState::Draining {
             started: Instant::now(),
@@ -6994,6 +7001,7 @@ impl TimerWindowsClient {
                     self.reconcile_active_background_job(
                         "forced close before completion was recorded",
                     );
+                    self.cancel_desktop_agent();
                     self.task_supervisor.begin_shutdown();
                     self.shutdown_state = ClientShutdownState::ReadyToClose;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -7027,6 +7035,7 @@ impl TimerWindowsClient {
         );
         self.sync_apply.frame_context = Some(ctx.clone());
         self.poll_draft_persistence();
+        self.poll_document_exit();
         self.poll_ordinary_sync_apply();
         self.poll_media_result_apply();
         self.poll_synced_media_cleanup();
@@ -7086,6 +7095,7 @@ impl TimerWindowsClient {
         }
         self.poll_ai_result();
         self.poll_knowledge_ai_result();
+        self.poll_desktop_agent();
         if !timer_priority {
             self.poll_sync_result();
             self.poll_note_media_sync_result();
@@ -7301,6 +7311,7 @@ impl TimerWindowsClient {
             self.ui_knowledge_quick_switch(ctx);
         }
         self.ui_desktop_ai_preview(ctx);
+        self.ui_desktop_agent_window(ctx);
         self.ui_legal_send_confirmation(ctx);
         self.ui_timer_dialogs(ctx);
         self.ui_history_delete_dialog(ctx);
@@ -7313,6 +7324,7 @@ impl TimerWindowsClient {
             append_client_runtime_log(&format!("EXIT_SAVE_FAILED message={error}"));
         }
         self.reconcile_active_background_job("application exited before completion was recorded");
+        self.cancel_desktop_agent();
         self.task_supervisor.begin_shutdown();
         let _ = self.task_supervisor.drain_for(Duration::from_millis(500));
         if self.task_supervisor.active_count() > 0 {
@@ -9620,12 +9632,15 @@ impl TimerWindowsClient {
             } else {
                 "先填写 API Key、接口根地址和模型"
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.button("直接问 AI").clicked() {
                     self.open_desktop_ai_entry(QueryMode::Direct);
                 }
                 if ui.button("问知识库").clicked() {
                     self.open_desktop_ai_entry(QueryMode::Knowledge);
+                }
+                if ui.button("任务 Agent").clicked() {
+                    self.open_desktop_agent_entry(None);
                 }
                 if ui.button("法律风险线索").clicked() {
                     self.switch_tab(AppTab::Finance);
@@ -19648,6 +19663,10 @@ mod tests {
     include!("../desktop/timer_collision_performance_tests.rs");
     include!("../desktop/content_versions_tests.rs");
     include!("../desktop/knowledge_workspace_tests.rs");
+    include!("../desktop/knowledge_directory_tests.rs");
+    include!("../desktop/agent_tests.rs");
+    include!("../desktop/legal_navigation_tests.rs");
+    include!("../desktop/knowledge_exit_tests.rs");
     include!("../desktop/input_boundary_audit_tests.rs");
     include!("../desktop/knowledge_acceptance.rs");
     include!("../desktop/finance_usability_tests.rs");
@@ -21675,6 +21694,7 @@ mod tests {
             knowledge_folder_manager_open: false,
             knowledge_folder_edit_id: None,
             knowledge_folder_name_draft: String::new(),
+            desktop_agent: DesktopAgentSession::default(),
             knowledge_ai_panel_open: false,
             knowledge_ai_question_draft: String::new(),
             knowledge_ai_scope_all: true,

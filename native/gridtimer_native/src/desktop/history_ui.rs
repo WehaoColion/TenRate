@@ -187,16 +187,28 @@ impl TimerWindowsClient {
             self.desktop_ui.history_version = self.timers_cache_version();
             self.desktop_ui.history_summary_key.clear();
         }
+        let scope = self.background_job_workspace_fingerprint();
+        if self
+            .desktop_ui
+            .legal_risk
+            .history_source
+            .as_ref()
+            .is_some_and(|(binding, _, _)| binding != &scope)
+        {
+            self.desktop_ui.legal_risk.history_source = None;
+        }
+        let source = self.desktop_ui.legal_risk.history_source.as_ref();
         let today = desktop_local_day_window(now, 0);
         let week = (desktop_local_day_window(now, 6).0, today.1);
         let key = format!(
-            "{}\0{}\0{}\0{}\0{}\0{:?}",
+            "{}\0{}\0{}\0{}\0{}\0{:?}\0{:?}",
             self.timers_cache_version(),
             today.0,
             self.desktop_ui.history_period,
             self.desktop_ui.history_category,
             self.desktop_ui.history_query,
-            self.desktop_ui.history_slot
+            self.desktop_ui.history_slot,
+            source
         );
         if key == self.desktop_ui.history_summary_key {
             return;
@@ -231,6 +243,7 @@ impl TimerWindowsClient {
             .enumerate()
             .filter(|(_, s)| {
                 session_ids.contains(&s.id)
+                    && source.is_none_or(|(_, archives, id)| !*archives && id == &s.id)
                     && s.ended_at_epoch_millis >= window.0
                     && s.ended_at_epoch_millis < window.1
             })
@@ -242,6 +255,7 @@ impl TimerWindowsClient {
             .enumerate()
             .filter(|(_, a)| {
                 archive_ids.contains(&a.id)
+                    && source.is_none_or(|(_, archives, id)| *archives && id == &a.id)
                     && a.archived_at_epoch_millis >= window.0
                     && a.archived_at_epoch_millis < window.1
             })
@@ -252,6 +266,15 @@ impl TimerWindowsClient {
     }
 
     fn ui_history(&mut self, ui: &mut egui::Ui) {
+        if self.desktop_ui.legal_risk.history_source.is_some() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("报告所属记录");
+                if ui.small_button("查看全部记录").clicked() {
+                    self.desktop_ui.legal_risk.history_source = None;
+                    self.desktop_ui.history_summary_key.clear();
+                }
+            });
+        }
         ui.horizontal_wrapped(|ui| {
             desktop_segment(ui, &mut self.desktop_ui.history_archives, false, "计时记录");
             desktop_segment(ui, &mut self.desktop_ui.history_archives, true, "归档");

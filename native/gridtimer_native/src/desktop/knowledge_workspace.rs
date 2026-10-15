@@ -1,3 +1,4 @@
+// Windows - Add nested page/folder directory operations without changing the home date list.
 // Windows - Share immutable database query IDs without per-frame string copies.
 // v1.0.2.1 Windows - Render only visible knowledge navigation rows.
 // v2.22.54 - Reuse lightweight navigation and immutable query records between data changes.
@@ -5,9 +6,12 @@
 // v2.22.52 - Page metadata and workspace actions use the existing atomic draft path.
 use gridtimer_native::knowledge;
 include!("knowledge_read_cache.rs");
+include!("knowledge_hierarchy_ui.rs");
 
 #[derive(Default)]
 struct KnowledgeWorkspaceState {
+    directory: DesktopKnowledgeDirectory,
+    revealed_blocks: HashSet<String>,
     page: Option<knowledge::KnowledgePage>,
     collapsed: std::collections::HashSet<String>,
     active_view: String,
@@ -38,6 +42,7 @@ struct KnowledgeWorkspaceState {
 impl KnowledgeWorkspaceState {
     fn clear_draft(&mut self) {
         self.page = None;
+        self.revealed_blocks.clear();
         self.external_url = None;
         self.extract_attachment = None;
         self.query_key = None;
@@ -120,16 +125,19 @@ impl TimerWindowsClient {
     }
 
     fn create_knowledge_page(&mut self, parent: Option<String>, database: bool) -> bool {
-        if let Some(id) = parent.as_deref() {
-            if !self.data.notes.iter().any(|p| {
-                p.id == id
-                    && p.encryption.is_none()
-                    && p.deleted_at_epoch_millis.is_none()
-                    && !p.document.knowledge.as_ref().is_some_and(|m| m.locked)
-            }) {
-                self.status = "父页面不可编辑".into();
-                return false;
-            }
+        let index = self.knowledge_directory_index();
+        if !index.may_create(parent.as_deref()) {
+            self.status = "父页面或文件夹不可编辑".into();
+            return false;
+        }
+        if !database {
+            return self.apply_knowledge_directory_action(&KnowledgeDirectoryRequest {
+                workspace: self.background_job_workspace_fingerprint(),
+                action: "create_page".into(),
+                id: random_hex_identifier(),
+                parent: parent.or_else(|| self.data.note_preferences.selected_folder_id.clone()),
+                title: "新页面".into(),
+            });
         }
         if !self.new_note_with_kind(DesktopNoteKind::Document) {
             return false;
@@ -150,66 +158,53 @@ impl TimerWindowsClient {
         self.save_note()
     }
 
-    fn move_knowledge_page(&mut self, id: &str, parent: Option<&str>, order: i64) -> bool {
-        if self.flush_note_draft().is_err() {
-            return false;
-        }
-        if !knowledge::can_move_page(&self.knowledge_records(), id, parent) {
-            self.status = "无法移动到此页面：存在循环、锁定或无效父页面".into();
-            return false;
-        }
-        let Some(mut note) = self.data.notes.iter().find(|p| p.id == id).cloned() else {
-            return false;
-        };
-        let meta = note.document.knowledge.get_or_insert_with(Default::default);
-        meta.parent_id = parent.map(str::to_string);
-        meta.order = order;
-        self.replace_state(
-            app_data::upsert_note_app_data_json(
-                &self.state_json,
-                &serde_json::to_string(&note).unwrap_or_default(),
-                now_millis(),
-            ),
-            "页面已移动",
-        )
+    fn move_knowledge_page(&mut self, id: &str, parent: Option<&str>, _order: i64) -> bool {
+        self.apply_knowledge_directory_action(&KnowledgeDirectoryRequest {
+            workspace: self.background_job_workspace_fingerprint(),
+            action: "move".into(),
+            id: id.into(),
+            parent: parent.map(str::to_string),
+            title: String::new(),
+        })
     }
 
     fn place_knowledge_page_edge(&mut self, id: &str, last: bool) -> bool {
-        if self.flush_note_draft().is_err() {
+        let index = self.knowledge_directory_index();
+        let Some(node) = index.nodes.get(id) else {
+            return false;
+        };
+        if !node.writable || node.issue.is_some() {
             return false;
         }
-        let Some(page) = self.data.notes.iter().find(|p| p.id == id).cloned() else {
+        let parent = node.parent.clone();
+        if !self.open_knowledge_directory(parent.clone()) {
             return false;
-        };
-        let parent = page
-            .document
+        }
+        let index = self.knowledge_directory_index();
+        let scope = index.scope(
+            &self.background_job_workspace_fingerprint(),
+            parent.as_deref(),
+            true,
+        );
+        let saved = self
+            .desktop_ui
             .knowledge
-            .as_ref()
-            .and_then(|m| m.parent_id.clone());
-        let orders = self
-            .data
-            .notes
-            .iter()
-            .filter(|p| {
-                p.id != id
-                    && p.deleted_at_epoch_millis.is_none()
-                    && p.document
-                        .knowledge
-                        .as_ref()
-                        .and_then(|m| m.parent_id.as_ref())
-                        == parent.as_ref()
-            })
-            .map(|p| p.document.knowledge.as_ref().map_or(0, |m| m.order));
-        let order = if last {
-            orders.max().unwrap_or(0).checked_add(1)
+            .directory
+            .preferences
+            .parents
+            .get(&KnowledgeDirectoryPreferences::parent_key(
+                parent.as_deref(),
+            ))
+            .cloned()
+            .unwrap_or_default();
+        let mut ids = knowledge_directory_ordered(index.children(parent.as_deref()), &saved);
+        ids.retain(|candidate| candidate != id);
+        if last {
+            ids.push(id.into());
         } else {
-            orders.min().unwrap_or(0).checked_sub(1)
-        };
-        let Some(order) = order else {
-            self.status = "页面排序已到边界".into();
-            return false;
-        };
-        self.move_knowledge_page(id, parent.as_deref(), order)
+            ids.insert(0, id.into());
+        }
+        self.commit_knowledge_directory_order(&scope, &ids)
     }
 
     fn ui_knowledge_tree(&mut self, ui: &mut egui::Ui, max_height: f32) {
@@ -374,6 +369,9 @@ impl TimerWindowsClient {
         page: &KnowledgeNavigationPage,
         depth: usize,
     ) {
+        let directory = self.knowledge_directory_index();
+        let directory_node = directory.nodes.get(&page.id);
+        let folder = directory_node.is_some_and(|node| node.folder);
         let children = !all.children_of(Some(&page.id)).is_empty();
         let collapsed = self.desktop_ui.knowledge.collapsed.contains(&page.id);
         ui.horizontal(|ui| {
@@ -397,7 +395,9 @@ impl TimerWindowsClient {
                 format!(
                     "{} {}",
                     if page.icon.is_empty() {
-                        if page.database {
+                        if folder {
+                            "▣"
+                        } else if page.database {
                             "▦"
                         } else {
                             "▤"
@@ -452,7 +452,11 @@ impl TimerWindowsClient {
             let response = response.on_hover_text(&label);
             response.dnd_set_drag_payload(KnowledgePageDrag(page.id.clone()));
             if response.clicked() {
-                self.select_note_by_id(&page.id);
+                if folder {
+                    self.open_knowledge_directory(Some(page.id.clone()));
+                } else {
+                    self.select_note_by_id(&page.id);
+                }
             }
             if let Some(payload) = response.dnd_release_payload::<KnowledgePageDrag>() {
                 self.move_knowledge_page(&payload.0, Some(&page.id), now_millis());
@@ -466,6 +470,45 @@ impl TimerWindowsClient {
                     .clicked()
                 {
                     self.create_knowledge_page(Some(page.id.clone()), false);
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(
+                        directory.may_create(Some(&page.id)),
+                        egui::Button::new("新建子文件夹"),
+                    )
+                    .clicked()
+                {
+                    if self.open_knowledge_directory(Some(page.id.clone())) {
+                        self.request_knowledge_directory_action(
+                            "create_folder",
+                            &random_hex_identifier(),
+                            Some(page.id.clone()),
+                            "",
+                        );
+                    }
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(
+                        directory_node.is_some_and(|node| node.writable && !node.database),
+                        egui::Button::new(if folder {
+                            "转为页面"
+                        } else {
+                            "转为文件夹"
+                        }),
+                    )
+                    .clicked()
+                {
+                    self.open_knowledge_directory(
+                        directory_node.and_then(|node| node.parent.clone()),
+                    );
+                    self.request_knowledge_directory_action(
+                        if folder { "to_page" } else { "to_folder" },
+                        &page.id,
+                        directory_node.and_then(|node| node.parent.clone()),
+                        &page.title,
+                    );
                     ui.close_menu();
                 }
                 if ui
@@ -493,7 +536,7 @@ impl TimerWindowsClient {
                     self.save_note();
                     ui.close_menu();
                 }
-                for (label, last) in [("移到同级最前", false), ("移到同级最后", true)] {
+                for (label, last) in [("目录同级最前", false), ("目录同级最后", true)] {
                     if ui
                         .add_enabled(!page.encrypted && !page.locked, egui::Button::new(label))
                         .clicked()
@@ -601,15 +644,21 @@ impl TimerWindowsClient {
             }
         });
         ui.add_space(16.0);
+        self.ui_knowledge_compact_hierarchy(ui);
         // Record fields are part of the record, and remain adjacent to its title.
         self.ui_knowledge_record_properties(ui);
     }
 
     fn ui_knowledge_page_properties(&mut self, ui: &mut egui::Ui) {
         let editing_id = self.selected_note_id.clone();
-        let records = self.knowledge_records();
+        let directory = self.knowledge_directory_index();
         let mut meta = self.desktop_ui.knowledge.page.clone().unwrap_or_default();
         let original = meta.clone();
+        let original_parent = directory
+            .nodes
+            .get(&editing_id)
+            .and_then(|node| node.parent.clone());
+        let mut requested_parent = None;
         ui.set_max_width(ui.available_width());
         if ui
             .add_sized(
@@ -675,25 +724,27 @@ impl TimerWindowsClient {
                     .map(str::to_string)
                     .collect();
             }
-            ui.label("上级页面");
-            let mut parent = meta.parent_id.clone();
+            ui.label("上级位置");
+            let mut parent = original_parent.clone();
             egui::ComboBox::from_id_source("knowledge_page_parent")
                 .width(ui.available_width() - 12.0)
                 .selected_text(
                     parent
                         .as_ref()
-                        .and_then(|id| records.iter().find(|p| &p.id == id))
+                        .and_then(|id| directory.nodes.get(id))
                         .map_or("顶层", |p| p.title.as_str()),
                 )
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut parent, None, "顶层");
-                    for p in records.iter() {
-                        if knowledge::can_move_page(&records, &self.selected_note_id, Some(&p.id)) {
+                    for p in directory.nodes.values() {
+                        if directory.may_move(&self.selected_note_id, Some(&p.id)) {
                             ui.selectable_value(&mut parent, Some(p.id.clone()), &p.title);
                         }
                     }
                 });
-            meta.parent_id = parent;
+            if parent != original_parent {
+                requested_parent = Some(parent);
+            }
             let pin = ui.checkbox(&mut self.note_pinned_draft, "收藏页面");
             #[cfg(test)]
             ui.ctx()
@@ -711,6 +762,10 @@ impl TimerWindowsClient {
             self.update_knowledge_page(meta.clone());
         }
         if editing_id != self.selected_note_id {
+            return;
+        }
+        if let Some(parent) = requested_parent {
+            self.move_knowledge_page(&editing_id, parent.as_deref(), now_millis());
             return;
         }
         ui.separator();

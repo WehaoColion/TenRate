@@ -224,6 +224,7 @@ fn desktop_money_input(
         data.insert_temp(egui::Id::new(("finance_money_input", &field)), response.id)
     });
     if drafts.focus.as_ref() == Some(&field) {
+        response.scroll_to_me(Some(egui::Align::Center));
         response.request_focus();
         drafts.focus = None;
     }

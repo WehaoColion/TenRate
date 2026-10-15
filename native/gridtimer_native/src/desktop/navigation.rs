@@ -17,6 +17,7 @@ struct KnowledgeBrowseReturn {
 
 #[derive(Default)]
 struct DesktopNavigationState {
+    pending_exit: Option<DesktopDocumentExit>,
     history_return: Option<TimerHistoryReturn>,
     editor_visible: bool,
     editor_epoch: u64,
@@ -138,15 +139,45 @@ impl TimerWindowsClient {
     }
 
     fn return_to_document_list(&mut self) -> bool {
+        if self.desktop_ui.navigation.pending_exit.is_some() {
+            return false;
+        }
+        if self.note_dirty {
+            if let Some(ctx) = self.sync_apply.frame_context.clone() {
+                if !self.workspace_persistence_ready
+                    || self.workspace_edit_locked()
+                    || self.selected_note_is_locked()
+                {
+                    self.status = "当前文档不能写入，修改已留在编辑器中".into();
+                    return false;
+                }
+                self.submit_draft_snapshot(&ctx, true);
+                if !self.persistence.failed() {
+                    self.desktop_ui.navigation.pending_exit = Some(DesktopDocumentExit {
+                        workspace: self.background_job_workspace_fingerprint(),
+                        note_id: self.selected_note_id.clone(),
+                        editor_epoch: self.desktop_ui.navigation.editor_epoch,
+                        revision: self.persistence.revisions.note,
+                        started: Instant::now(),
+                        property_inputs: self.document_exit_property_inputs(),
+                    });
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                }
+                return false;
+            }
+        }
         if self.flush_note_draft().is_err() {
             return false;
         }
-        self.desktop_ui.navigation.editor_visible = false;
-        self.desktop_ui.note_editor_focus = false;
+        self.finish_document_exit();
         true
     }
 
     fn ui_document_back(&mut self, ui: &mut egui::Ui) {
+        self.sync_apply.frame_context = Some(ui.ctx().clone());
+        if self.ui_document_exit_wait(ui) {
+            return;
+        }
         let response = ui.button(if self.tab == AppTab::Knowledge {
             "返回文档列表"
         } else {
@@ -167,13 +198,7 @@ impl TimerWindowsClient {
             && !self.note_trash_mode;
         ui.horizontal_wrapped(|ui| {
             if compact_editor {
-                let back = ui.button("返回便签列表");
-                #[cfg(test)]
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(egui::Id::new("document_back"), back.rect));
-                if back.clicked() {
-                    self.return_to_document_list();
-                }
+                self.ui_document_back(ui);
             }
             if !self.note_trash_mode && action_button(ui, "新建便签", ButtonTone::Primary).clicked()
             {

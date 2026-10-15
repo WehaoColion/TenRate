@@ -23,7 +23,6 @@ pub mod ai_client;
 mod android_agent_progress;
 #[cfg(any(target_os = "android", test))]
 mod android_agent_registry;
-#[cfg(any(target_os = "android", test))]
 mod android_agent_upgrade;
 #[cfg(target_os = "android")]
 mod android_ai_session;
@@ -34,6 +33,8 @@ mod android_legal_session;
 pub mod android_snapshot_codec;
 pub mod android_snapshot_verifier;
 pub mod app_data;
+#[cfg(not(target_os = "android"))]
+pub mod desktop_agent;
 #[cfg(not(target_os = "android"))]
 pub mod desktop_background_jobs;
 #[cfg(not(target_os = "android"))]
