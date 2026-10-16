@@ -901,7 +901,32 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.35"));
+        let latest = LATEST_VERSION
+            .split('.')
+            .map(|segment| segment.parse::<u32>().expect("numeric release segment"))
+            .collect::<Vec<_>>();
+        let previous = versions
+            .get(1)
+            .expect("previous Android release must remain in update history")
+            .split('.')
+            .map(|segment| segment.parse::<u32>().expect("numeric release segment"))
+            .collect::<Vec<_>>();
+        assert_eq!(latest.len(), 4, "current release must have four segments");
+        assert_eq!(
+            previous.len(),
+            4,
+            "previous release must have four segments"
+        );
+        assert_eq!(
+            &latest[..3],
+            &previous[..3],
+            "release prefix must remain fixed"
+        );
+        assert_eq!(
+            latest[3].checked_sub(1),
+            Some(previous[3]),
+            "previous release must precede the current fourth segment"
+        );
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));
