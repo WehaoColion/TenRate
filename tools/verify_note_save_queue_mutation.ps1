@@ -1,3 +1,4 @@
+# v0.0.3 - Verify bounded admission and shutdown ordering under saturation.
 # v0.0.2 - Verify admission epochs without private historical classpaths.
 # v0.0.1 - Run the actual generated queue and preserve save/identity barriers.
 param([string]$Version = '2.23.2.1')
@@ -57,12 +58,12 @@ foreach ($entry in $noteQueueCompiler) { if (!(Test-Path -LiteralPath $entry -Pa
 $noteQueueJava = 'C:\tools\java\jdk-17.0.18+8\bin\java.exe'
 $noteQueueUtf8 = [Text.UTF8Encoding]::new($false)
 $noteQueueResults = @()
-foreach ($case in @('baseline', 'wording_only', 'removed_explicit_barrier', 'removed_identity_guard', 'removed_checkpoint_failure_guard', 'removed_admission_epoch')) {
+foreach ($case in @('baseline', 'wording_only', 'removed_explicit_barrier', 'removed_identity_guard', 'removed_checkpoint_failure_guard', 'removed_admission_epoch', 'rejected_full_admission', 'removed_shutdown_flush_barrier')) {
     $directory = Join-Path $noteQueueEvidence $case
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $production = $noteQueueProduction
     if ($case -eq 'wording_only') {
-        $production = $production.Replace('The note mutation queue is full, closing, or closed.', 'The note save queue is unavailable.')
+        $production = $production.Replace('The note mutation queue is closing, closed, or cancelled.', 'The note save queue is unavailable.')
         if ($production -ceq $noteQueueProduction) { throw 'Wording mutation did not change source' }
     }
     if ($case -eq 'removed_explicit_barrier') {
@@ -85,6 +86,16 @@ foreach ($case in @('baseline', 'wording_only', 'removed_explicit_barrier', 'rem
         if (!$production.Contains($anchor)) { throw 'Actual autosave admission epoch guard missing' }
         $production = $production.Replace($anchor, '// accepted autosave epoch removed')
     }
+    if ($case -eq 'rejected_full_admission') {
+        $anchor = '                queue.send(mutation)'
+        if (!$production.Contains($anchor)) { throw 'Suspending bounded admission anchor missing' }
+        $production = $production.Replace($anchor, "                if (!queue.trySend(mutation).isSuccess) {`n                    settle(mutation, queueUnavailableResult())`n                }")
+    }
+    if ($case -eq 'removed_shutdown_flush_barrier') {
+        $anchor = 'terminalResult = runFlushBarrier(flushOperation)'
+        if (!$production.Contains($anchor)) { throw 'Shutdown queue barrier anchor missing' }
+        $production = $production.Replace($anchor, 'terminalResult = flushOperation()')
+    }
     $sourcePath = Join-Path $directory 'NoteMutationDrainController.kt'
     $testPath = Join-Path $directory 'NoteSaveQueueTest.kt'
     [IO.File]::WriteAllText($sourcePath, $noteQueueHeader + $production, $noteQueueUtf8)
@@ -96,7 +107,7 @@ foreach ($case in @('baseline', 'wording_only', 'removed_explicit_barrier', 'rem
     $testExit = $LASTEXITCODE
     $log = [IO.File]::ReadAllText((Join-Path $directory 'tests.log'))
     $expectedPass = $case -in @('baseline', 'wording_only')
-    $requiredFailure = if ($case -eq 'removed_admission_epoch') { 'acceptedQueueMutationsAdvanceFenceIncludingCoalescedAutosaves' } elseif ($case -eq 'removed_checkpoint_failure_guard') { 'failedCheckpointCannotEnterCommitAndReceiptPrecedesDurableCommit' } else { 'explicitBarrierWorkspaceAndNoteIdentityCannotBeCrossed' }
+    $requiredFailure = if ($case -in @('rejected_full_admission', 'removed_shutdown_flush_barrier')) { 'saturatedBoundedQueuePreservesFinalSaveOrderAndShutdownBarrier' } elseif ($case -eq 'removed_admission_epoch') { 'acceptedQueueMutationsAdvanceFenceIncludingCoalescedAutosaves' } elseif ($case -eq 'removed_checkpoint_failure_guard') { 'failedCheckpointCannotEnterCommitAndReceiptPrecedesDurableCommit' } else { 'explicitBarrierWorkspaceAndNoteIdentityCannotBeCrossed' }
     $accepted = if ($expectedPass) { $testExit -eq 0 -and $log.Contains("OK ($noteQueueTestCount tests)") } else {
         $testExit -ne 0 -and $log.Contains('java.lang.AssertionError') -and $log.Contains($requiredFailure)
     }

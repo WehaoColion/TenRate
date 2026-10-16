@@ -1,3 +1,4 @@
+# v0.0.41 - Gate bounded snapshot payload reads and final-save admission.
 # v0.0.40 - Gate cancellable snapshot admission and transaction-bound save preflight.
 # v0.0.39 - Gate isolated directory ordering and its real state mutations.
 # v0.0.38 - Verify knowledge hierarchy and hash-bound UI-only native reuse.
@@ -66,6 +67,7 @@ function Get-TaskInputs {
     if([version]$taskVersion -ge [version]'2.23.2.29'){$paths += Join-Path $taskRoot 'tools/verify_knowledge_hierarchy_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.34'){$paths += Join-Path $taskRoot 'tools/verify_directory_order_mutation.ps1'}
     if([version]$taskVersion -ge [version]'2.23.2.35'){$paths += Join-Path $taskRoot 'tools/verify_note_persist_latency_mutation.ps1'}
+    if([version]$taskVersion -ge [version]'2.23.2.36'){$paths += Join-Path $taskRoot 'tools/verify_snapshot_payload_mutation.ps1'}
     # Cargo gates timer_windows_client behind the desktop feature. Its private
     # desktop/ modules are not inputs to the Android library, generator or tests.
     # Shared library modules (including desktop_*.rs) remain in the snapshot.
@@ -162,6 +164,7 @@ try {
     $formatPaths += @('src\legal_scan.rs','src\android_legal_session.rs','src\sourcegen\android_legal_integration.rs','src\sourcegen\legal_risk_ui_source.rs','src\sourcegen\legal_storage_source.rs','src\sourcegen\finance_risk_v2_ui_source.rs','src\finance_profile.rs','src\ai_client.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += @('src\sourcegen\my_account_source.rs','src\sourcegen\android_update_history_source.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += @('src\finance_money.rs','src\finance_precision_guard.rs','src\sourcegen\finance_money_source.rs','src\sourcegen\android_note_save_queue.rs') | ForEach-Object { Join-Path $taskCrate $_ }
+    $formatPaths += @('src/sourcegen/android_note_save_failure.rs','src/sourcegen/android_snapshot_row_read.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += Join-Path $taskCrate 'src\android_ai_session.rs'
     $formatPaths += @('src\sourcegen\android_ai_workflow.rs','src\sourcegen\android_sync_failure.rs') | ForEach-Object { Join-Path $taskCrate $_ }
     $formatPaths += @('src\android_answer_render.rs','src\sourcegen\android_ai_answer_ui.rs') | ForEach-Object { Join-Path $taskCrate $_ }
@@ -212,6 +215,11 @@ try {
     }
     $after = Get-TaskInputs
     if($before.sha256 -ne $after.sha256){throw 'Source inputs changed during verification'}
+    if([version]$taskVersion -ge [version]'2.23.2.36'){
+        Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_snapshot_payload_mutation.ps1'),'-Version',$taskVersion) 'snapshot_payload_mutation.log'
+        $payloadReceipt = Get-Content -LiteralPath (Join-Path $taskEvidence 'snapshot_payload_mutation/receipt.json') -Raw | ConvertFrom-Json
+        if(!$payloadReceipt.passed -or !$payloadReceipt.productionUnchanged -or $payloadReceipt.tests -ne 4 -or $payloadReceipt.cases.Count -ne 4 -or @($payloadReceipt.cases | Where-Object {!$_.passed}).Count -ne 0 -or $payloadReceipt.sourceSha256 -cne (Get-FileHash -LiteralPath (Join-Path $taskCrate 'src/sourcegen/android_snapshot_row_read.rs')).Hash.ToLowerInvariant()){throw 'Snapshot payload integrity mutation proof missing or stale'}
+    }
     $junitPath = Join-Path $taskRoot 'app\build\test-results\testReleaseUnitTest\TEST-com.ofairyo.gridtimer.ui.TenfoldEditingTest.xml'
     [xml]$junit = Get-Content -LiteralPath $junitPath -Raw
     $expectedTests = ([regex]'@Test fun ').Matches((Get-Content -LiteralPath (Join-Path $taskCrate 'src\sourcegen\android_jvm_test_sources.rs') -Raw)).Count
@@ -239,6 +247,7 @@ try {
         @{name='NoteSaveQueueTest';package='ui';source='android_note_save_queue.rs'},
         @{name='NotePersistDebounceTest';package='data';source='android_note_persist_debounce.rs'},
         @{name='NoteSavePreflightTest';package='data';source='android_note_persist_preflight.rs'},
+        @{name='SnapshotPayloadChunksTest';package='data';source='android_snapshot_row_read.rs'},
         @{name='KnowledgeDocumentTransitionTest';package='ui';source='android_document_transition.rs'},
         @{name='DocumentCollectionWorkTest';package='ui';source='android_document_collection_work.rs'},
         @{name='KnowledgeHierarchyTest';package='data';source='android_knowledge_hierarchy.rs'},
@@ -334,7 +343,8 @@ try {
         if(!$exitReceipt.passed -or !$exitReceipt.productionUnchanged -or $exitReceipt.tests -ne $exitCount -or @($exitReceipt.cases | Where-Object {!$_.passed}).Count -ne 0 -or $exitReceipt.sourceSha256 -cne (Get-FileHash -LiteralPath $exitEmitterPath).Hash.ToLowerInvariant()){throw 'Retained editor save mutation evidence missing or stale'}
         Invoke-TaskCommand (Get-Command pwsh -ErrorAction Stop).Source @('-NoProfile','-File',(Join-Path $taskRoot 'tools/verify_note_save_queue_mutation.ps1'),'-Version',$taskVersion) 'note_save_queue_mutation.log'
         $queueReceipt = Get-Content -LiteralPath (Join-Path $taskEvidence 'note_save_queue_mutation/mutation_result.json') -Raw | ConvertFrom-Json
-        if(!$queueReceipt.passed -or !$queueReceipt.productionUnchanged -or $queueReceipt.tests -ne $taskKnowledgeTestCounts.NoteSaveQueueTest -or $queueReceipt.cases.Count -ne 6 -or @($queueReceipt.cases | Where-Object {!$_.passed}).Count -ne 0 -or $queueReceipt.sourceSha256.ToLowerInvariant() -cne (Get-FileHash -LiteralPath $exitEmitterPath).Hash.ToLowerInvariant()){throw 'Real queue epoch and barrier mutation proof missing or stale'}
+        $queueExpectedCases = if([version]$taskVersion -ge [version]'2.23.2.36'){8}else{6}
+        if(!$queueReceipt.passed -or !$queueReceipt.productionUnchanged -or $queueReceipt.tests -ne $taskKnowledgeTestCounts.NoteSaveQueueTest -or $queueReceipt.cases.Count -ne $queueExpectedCases -or @($queueReceipt.cases | Where-Object {!$_.passed}).Count -ne 0 -or $queueReceipt.sourceSha256.ToLowerInvariant() -cne (Get-FileHash -LiteralPath $exitEmitterPath).Hash.ToLowerInvariant()){throw 'Real queue epoch and barrier mutation proof missing or stale'}
         Copy-Item -LiteralPath (Join-Path $taskRoot 'app/build/test-results/testReleaseUnitTest/TEST-com.ofairyo.gridtimer.ui.NoteEditorExitSaveGateTest.xml') -Destination (Join-Path $taskEvidence 'NoteEditorExitSaveGateTest.xml') -Force
         Write-TaskJson 'note_exit_save_integration.json' ([ordered]@{passed=$true;tests=$exitCount;generatedHelperMatchesProduction=$true;sessionCompletionConnected=$true;mutationCases=$exitReceipt.cases.Count;sourceSnapshotSha256=$before.sha256;hostOnly=$true;deviceVerified=$false})
     }

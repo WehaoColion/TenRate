@@ -74,6 +74,8 @@ mod android_note_list_performance;
 mod android_note_persist_debounce;
 #[path = "../sourcegen/android_note_persist_preflight.rs"]
 mod android_note_persist_preflight;
+#[path = "../sourcegen/android_note_save_failure.rs"]
+mod android_note_save_failure;
 #[path = "../sourcegen/android_note_save_performance.rs"]
 mod android_note_save_performance;
 #[path = "../sourcegen/android_note_save_queue.rs"]
@@ -88,6 +90,8 @@ mod android_responsiveness;
 mod android_rest_bell;
 #[path = "../sourcegen/android_snapshot_memory.rs"]
 mod android_snapshot_memory;
+#[path = "../sourcegen/android_snapshot_row_read.rs"]
+mod android_snapshot_row_read;
 #[path = "../sourcegen/android_sources.rs"]
 mod android_sources;
 #[path = "../sourcegen/android_startup_decode.rs"]
@@ -258,6 +262,11 @@ fn run() -> io::Result<()> {
             &unit_test_output_root,
             android_note_persist_preflight::TEST_PATH,
             android_note_persist_preflight::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
+            android_snapshot_row_read::TEST_PATH,
+            android_snapshot_row_read::TEST_CONTENTS,
         )?;
         write_source(
             &unit_test_output_root,
@@ -719,6 +728,10 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_knowledge_navigation::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_knowledge_hierarchy_ui::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_note_save_failure::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_snapshot_row_read::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = contents
         .replace("十倍率", "tenfold")

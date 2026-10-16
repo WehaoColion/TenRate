@@ -1,3 +1,4 @@
+// v2.23.2.36 - Record large snapshot reads and lossless final-save admission.
 // v2.23.2.35 - Record save queue cancellation and verified history reuse.
 // v2.23.2.34 - Record directory-only drag ordering.
 // v2.23.2.33 - Record compact knowledge controls.
@@ -35,7 +36,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.35";
+pub const LATEST_VERSION: &str = "2.23.2.36";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -65,6 +66,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.36",
+        updatedAt = "2026-10-17 01:13",
+        summary = "修复大资料读取及保存队列满时的知识页保存失败",
+        sections = listOf(
+            AndroidUpdateSection("大资料读取", listOf(
+                "本机资料、历史记录或恢复副本较大时，改为按固定字节块读取快照正文，避免整份资料超过系统数据库游标窗口容量而导致保存失败。中文、表情和跨块字符会在完整读取后统一还原。",
+                "读取时保留原来的工作区、版本、摘要和完整性检查；记录缺失、长度不符或读取失败时停止保存，不把不完整资料当作有效数据。现有数据格式、历史保留及同步内容不变。"
+            )),
+            AndroidUpdateSection("保存排队", listOf(
+                "连续操作产生较多保存任务时，最后一次退出保存会按原顺序等待，不再因队列暂时满而直接失败。相邻且尚未开始的同页自动保存仍合并为最新内容。",
+                "关闭保存服务时继续等待已接收任务，再执行最后一次刷盘。任务取消和真实写入失败仍返回失败，编辑页保留内容，不能提前显示保存成功。"
+            )),
+            AndroidUpdateSection("失败提示", listOf(
+                "知识页现在区分手机空间不足、本机数据库写入失败、工作区切换、资料格式不兼容和保护状态变化等原因；诊断记录保存对应的失败类别，便于继续排查偶发问题。",
+                "Android 2.23.2.36，versionCode 22305。保留原界面布局、退出动画、目录排序和编辑功能。本版说明记录已确认的代码问题，不将其表述为每次设备失败的唯一原因。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.35",
         updatedAt = "2026-10-15 15:36",
@@ -861,7 +881,7 @@ mod tests {
             .map(|version| version.trim_matches('"'))
             .collect::<Vec<_>>();
         assert_eq!(versions.first().copied(), Some(LATEST_VERSION));
-        assert_eq!(versions.get(1).copied(), Some("2.23.2.34"));
+        assert_eq!(versions.get(1).copied(), Some("2.23.2.35"));
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));
