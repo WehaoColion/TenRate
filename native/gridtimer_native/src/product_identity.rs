@@ -1,3 +1,4 @@
+// v2.23.2.37 Android - Preserve sticky-note source line breaks in Markdown previews.
 // v1.1.0.8 Windows - Complete desktop knowledge, Agent and legal workflow parity.
 // v2.23.2.35 Android - Bound redundant work while preserving durable exit saves.
 // v2.23.2.33 Android - Compact knowledge page controls.
@@ -103,8 +104,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.8";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.2.36";
-pub const ANDROID_VERSION_CODE: i32 = 22305;
+pub const ANDROID_APP_VERSION: &str = "2.23.2.37";
+pub const ANDROID_VERSION_CODE: i32 = 22306;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

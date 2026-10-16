@@ -1,3 +1,4 @@
+// v2.23.2.37 - Record preserved sticky-note line breaks in current and historical previews.
 // v2.23.2.36 - Record large snapshot reads and lossless final-save admission.
 // v2.23.2.35 - Record save queue cancellation and verified history reuse.
 // v2.23.2.34 - Record directory-only drag ordering.
@@ -36,7 +37,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.36";
+pub const LATEST_VERSION: &str = "2.23.2.37";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -66,6 +67,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.37",
+        updatedAt = "2026-10-17 04:26",
+        summary = "修复便签预览把原有换行挤成一段的问题",
+        sections = listOf(
+            AndroidUpdateSection("便签换行", listOf(
+                "便签原文中只按一次回车分开的内容，在排版预览中也按原来的行分开显示，不再把几条待办、说明或短句拼在同一段里。长句仍会按屏幕宽度自动折行。",
+                "这项处理同时用于当前便签和便签历史版本的Markdown预览。旧便签直接按原文显示，不需要逐条重新编辑或补空行。"
+            )),
+            AndroidUpdateSection("排版范围", listOf(
+                "只调整便签预览对单个换行的显示方式。标题、列表、粗体、引用、代码与公式继续沿用原有Markdown排版，原文编辑和复制继续使用完整的原始内容。",
+                "AI回答和知识页仍使用各自原有的默认排版规则。本次不改知识目录、页面布局、动效、原始正文、历史版本、附件或同步数据格式。"
+            )),
+            AndroidUpdateSection("版本与验收", listOf(
+                "Android 2.23.2.37，versionCode 22306；只递增第四段，沿用原应用包名与正式签名。历版更新说明继续保留，支持折叠、点按复制和整版复制。",
+                "本条记录说明本次源码修复范围。APK构建、签名核对和手机验收结果分别记录，不将源码修改直接表述为已完成手机验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.36",
         updatedAt = "2026-10-17 01:13",
