@@ -1,4 +1,4 @@
-v2.23.2.36（Android候选APK）- 修复大快照超过数据库游标窗口及队列暂满拒绝退出保存的问题，保留写入失败草稿并显示具体失败类别；versionCode22305。正式签名APK于2026-10-17 03:34（北京时间）按原流程构建交付，旧包已归档到old_apks；本版等待用户手机验收，PR保持未合并。详见[本版说明](documents/releases/android/release_notes_v2.23.2.36.md)。
+v2.23.2.36（Android已验收APK）- 修复大快照超过数据库游标窗口及队列暂满拒绝退出保存的问题，保留写入失败草稿并显示具体失败类别；versionCode22305。正式签名APK于2026-10-17 03:34（北京时间）按原流程构建交付，旧包已归档到old_apks；用户于2026-10-17 04:11（北京时间）授权合并本次交付版本。详见[本版说明](documents/releases/android/release_notes_v2.23.2.36.md)。
 
 v2.23.2.35（Android已验收APK）- 修复过期自动保存继续排队，减少保存时对历史快照的重复展开；versionCode22304。正式签名APK于2026-10-16 00:04（北京时间）按原流程构建交付，旧2.23.2.34已归档到old_apks；用户于2026-10-16 00:17（北京时间）确认本版可用。详见[本版说明](documents/releases/android/release_notes_v2.23.2.35.md)。
 
