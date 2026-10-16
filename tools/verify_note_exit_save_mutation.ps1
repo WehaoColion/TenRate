@@ -1,3 +1,4 @@
+# v0.0.3 - Mutate the actual failure presenter wording without matching obsolete copy.
 # v0.0.2 - Verify unmodified visits and retained document exit persistence boundaries.
 param([string]$Version)
 $ErrorActionPreference = 'Stop'
@@ -96,9 +97,14 @@ foreach ($case in @('baseline','cosmetic_only','removed_completion_ownership','a
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $production = $helper
     if ($case -eq 'cosmetic_only') {
-        $label = 'localizedToast(context, "'+(-join @([char]0x4fdd,[char]0x5b58,[char]0x5931,[char]0x8d25,[char]0xff0c,[char]0x7b14,[char]0x8bb0,[char]0x4ecd,[char]0x7559,[char]0x5728,[char]0x7f16,[char]0x8f91,[char]0x9875,[char]0x3002))+'", Toast.LENGTH_LONG)'
-        if (!$editor.Contains($label)) { throw 'Actual editor failure wording missing' }
-        $cosmeticEditor = $editor.Replace($label, 'localizedToast(context, "Save failed. The draft is still here.", Toast.LENGTH_LONG)')
+        $presenters = [regex]::Matches($editor, '(?ms)^private fun documentSaveFailureMessage\([^\r\n]*\): String \{\r?\n.*?^\}')
+        if ($presenters.Count -ne 1 -or !$editor.Contains('localizedToast(context, documentSaveFailureMessage(editorSession.lastSaveFailure.value), Toast.LENGTH_LONG)')) { throw 'Actual editor failure presenter is missing or ambiguous' }
+        $wording = [regex]::Matches($presenters[0].Value, '(?m)^(?<prefix>\s*null\s*->\s*)"(?:\\.|[^"\\])*"')
+        if ($wording.Count -ne 1) { throw 'Actual editor fallback failure wording is missing or ambiguous' }
+        $wordingOffset = $presenters[0].Index + $wording[0].Index
+        $replacement = $wording[0].Groups['prefix'].Value + '"Save failed. Keep the draft and retry."'
+        $cosmeticEditor = $editor.Remove($wordingOffset, $wording[0].Length).Insert($wordingOffset, $replacement)
+        if ($cosmeticEditor -ceq $editor) { throw 'Cosmetic mutation did not change the actual failure wording' }
         [IO.File]::WriteAllText((Join-Path $directory 'NoteDocumentEditor_wording.kt'), $cosmeticEditor, $utf8)
     }
     $mutations = @{

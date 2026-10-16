@@ -316,8 +316,11 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         val queuedAtNanos = System.nanoTime()
     }
 
-    private val queue = Channel<QueuedNoteMutation>(capacity = Channel.BUFFERED)
     private val lifecycleLock = Any()
+    private val queue = Channel<QueuedNoteMutation>(
+        capacity = Channel.BUFFERED,
+        onUndeliveredElement = { settle(it, queueUnavailableResult()) }
+    )
     // Only an adjacent, accepted, not-yet-started autosave can be replaced. This
     // reference is cleared by every explicit mutation and before execution starts.
     private var replaceableTail: QueuedNoteMutation? = null
@@ -344,7 +347,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 val started = System.nanoTime()
                 val result = execute(mutation, operation)
                 reportSlow("$kind.operation", started)
-                mutation.completions.forEach { it.complete(result) }
+                settle(mutation, result)
             }
         } finally {
             queue.close()
@@ -364,7 +367,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 NoteSaveFailure.QUEUE_UNAVAILABLE,
                 "The note mutation worker was cancelled."
             )
-            mutation.completions.forEach { it.complete(failed) }
+            settle(mutation, failed)
             throw cancellation
         } catch (throwable: Throwable) {
             reportFailure(throwable)
@@ -382,7 +385,35 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 NoteSaveFailure.QUEUE_UNAVAILABLE,
                 "The note mutation queue closed before this operation ran."
             )
-            abandoned.completions.forEach { it.complete(failed) }
+            settle(abandoned, failed)
+        }
+    }
+
+    private fun settle(mutation: QueuedNoteMutation, result: NoteSaveResult) {
+        val completions = synchronized(lifecycleLock) {
+            if (replaceableTail === mutation) replaceableTail = null
+            mutation.completions.toList()
+        }
+        completions.forEach { it.complete(result) }
+    }
+
+    // Called under lifecycleLock. UNDISPATCHED reaches send before returning,
+    // retaining the caller's order even when the bounded channel is full. Only
+    // this independent IO admission job suspends; the editor never blocks or
+    // drops an accepted final save because other notes are still being written.
+    private fun admit(mutation: QueuedNoteMutation) {
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            try {
+                queue.send(mutation)
+            } catch (cancellation: CancellationException) {
+                settle(mutation, queueUnavailableResult())
+                throw cancellation
+            } catch (_: kotlinx.coroutines.channels.ClosedSendChannelException) {
+                settle(mutation, queueUnavailableResult())
+            } catch (throwable: Throwable) {
+                settle(mutation, queueUnavailableResult())
+                reportFailure(throwable)
+            }
         }
     }
 
@@ -390,10 +421,11 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         val completion = CompletableDeferred<NoteSaveResult>()
         val queued = synchronized(lifecycleLock) {
             replaceableTail = null
-            val accepted = !shutdownRequested.get() && queue.trySend(
-                QueuedNoteMutation(operation = operation, completion = completion)
-            ).isSuccess
-            if (accepted) acceptedMutationEpoch += 1L
+            val accepted = !shutdownRequested.get() && worker.isActive
+            if (accepted) {
+                acceptedMutationEpoch += 1L
+                admit(QueuedNoteMutation(operation = operation, completion = completion))
+            }
             accepted
         }
         if (!queued) completion.complete(queueUnavailableResult())
@@ -408,7 +440,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         val completion = CompletableDeferred<NoteSaveResult>()
         val key = workspaceKey to noteId
         val accepted = synchronized(lifecycleLock) {
-            val admitted = if (shutdownRequested.get() || workspaceKey.isBlank() || noteId.isBlank()) {
+            val admitted = if (shutdownRequested.get() || !worker.isActive || workspaceKey.isBlank() || noteId.isBlank()) {
                 false
             } else {
                 val previous = replaceableTail
@@ -418,9 +450,9 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                     true
                 } else {
                     val candidate = QueuedNoteMutation(operation, completion, key)
-                    val queued = queue.trySend(candidate).isSuccess
-                    replaceableTail = candidate.takeIf { queued }
-                    queued
+                    replaceableTail = candidate
+                    admit(candidate)
+                    true
                 }
             }
             if (admitted) acceptedMutationEpoch += 1L
@@ -432,7 +464,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
 
     private fun queueUnavailableResult(): NoteSaveResult = NoteSaveResult.failed(
         NoteSaveFailure.QUEUE_UNAVAILABLE,
-        "The note mutation queue is full, closing, or closed."
+        "The note mutation queue is closing, closed, or cancelled."
     )
 
     private suspend fun finishShutdown(
@@ -447,7 +479,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         } catch (throwable: Throwable) {
             reportFailure(throwable)
         } finally {
-            withContext(NonCancellable) {
+            withContext(NonCancellable + Dispatchers.IO) {
                 queue.close()
                 worker.join()
                 runCatching(afterClosed).onFailure(reportFailure)
@@ -472,7 +504,18 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
             replaceableTail = null
             shutdownRequested.compareAndSet(false, true)
         }
-        if (shouldStart) scope.launch { finishShutdown(flushOperation, afterClosed) }
+        if (shouldStart) {
+            // Enter the cleanup try/finally even if the owner was already
+            // cancelled. Cleanup still waits for the worker before closing its
+            // repository; cancellation must never manufacture a successful flush.
+            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                finishShutdown(flushOperation, afterClosed)
+            }.invokeOnCompletion {
+                if (!shutdownCompletion.isCompleted) {
+                    shutdownCompletion.complete(queueUnavailableResult())
+                }
+            }
+        }
         return shutdownCompletion
     }
 
@@ -507,6 +550,110 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NoteSaveQueueTest {
+    @Test fun shutdownAfterOwnerCancellationClosesOnceAndReturnsFailure() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        scope.cancel()
+        val controller = NoteMutationDrainController(scope) { throw it }
+        var closes = 0
+        val shutdown = controller.shutdownAfterDrain(afterClosed = { closes++ }) {
+            fail("cancelled owner must not execute a flush"); NoteSaveResult.committed()
+        }
+        val result = withTimeout(5_000L) { shutdown.await() }
+        assertEquals(NoteSaveFailure.QUEUE_UNAVAILABLE, result.failure)
+        assertFalse(result.savedLocally)
+        assertEquals(1, closes)
+        assertSame(shutdown, controller.shutdownAfterDrain(afterClosed = {
+            fail("repository closed twice")
+        }) { fail("second shutdown flushed"); NoteSaveResult.committed() })
+        assertEquals(1, closes)
+    }
+
+    @Test fun saturatedBoundedQueuePreservesFinalSaveOrderAndShutdownBarrier() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val release = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val controller = NoteMutationDrainController(scope) { throw it }
+        try {
+            val running = controller.enqueue {
+                started.complete(Unit); release.await(); events += "running"
+                NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            // More than Channel.BUFFERED's 64 slots. Every request must wait,
+            // retain its position, and receive its actual storage result.
+            val preceding = (1..96).map { index -> controller.enqueue {
+                events += "prior-$index"; NoteSaveResult.committed()
+            } }
+            val superseded = controller.enqueueAutosave("workspace", "note") {
+                fail("superseded draft ran"); NoteSaveResult.committed()
+            }
+            val latest = controller.enqueueAutosave("workspace", "note") {
+                events += "latest-draft"; NoteSaveResult.committed()
+            }
+            val exit = controller.enqueue {
+                events += "exit"; NoteSaveResult.failed(NoteSaveFailure.STORAGE_FULL)
+            }
+            val shutdown = controller.shutdownAfterDrain {
+                events += "flush"; NoteSaveResult.committed()
+            }
+            val late = controller.enqueue {
+                fail("request accepted after shutdown"); NoteSaveResult.committed()
+            }
+            assertTrue(preceding.none { it.isCompleted })
+            assertFalse(superseded.isCompleted)
+            assertFalse(latest.isCompleted)
+            assertFalse(exit.isCompleted)
+            assertFalse(shutdown.isCompleted)
+            assertEquals(NoteSaveFailure.QUEUE_UNAVAILABLE, late.await().failure)
+            release.complete(Unit)
+            withTimeout(5_000L) {
+                assertTrue(running.await().committed)
+                preceding.forEach { assertTrue(it.await().committed) }
+                assertTrue(superseded.await().committed)
+                assertTrue(latest.await().committed)
+                assertEquals(NoteSaveFailure.STORAGE_FULL, exit.await().failure)
+                assertFalse(exit.await().savedLocally)
+                assertTrue(shutdown.await().committed)
+            }
+            assertEquals(listOf("running") + (1..96).map { "prior-$it" } +
+                listOf("latest-draft", "exit", "flush"), events)
+        } finally { release.complete(Unit); scope.cancel() }
+    }
+
+    @Test fun cancellingSaturatedQueueSettlesRunningBufferedAndAdmissionReceipts() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val release = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val controller = NoteMutationDrainController(scope) { throw it }
+        try {
+            val running = controller.enqueue {
+                started.complete(Unit); release.await(); NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            val pending = (1..96).map { controller.enqueue {
+                fail("cancelled queued operation ran"); NoteSaveResult.committed()
+            } }
+            val superseded = controller.enqueueAutosave("workspace", "note") {
+                fail("cancelled autosave ran"); NoteSaveResult.committed()
+            }
+            val latest = controller.enqueueAutosave("workspace", "note") {
+                fail("cancelled replacement ran"); NoteSaveResult.committed()
+            }
+            scope.cancel()
+            withTimeout(5_000L) {
+                (listOf(running) + pending + listOf(superseded, latest)).forEach { receipt ->
+                    val result = receipt.await()
+                    assertEquals(NoteSaveFailure.QUEUE_UNAVAILABLE, result.failure)
+                    assertFalse(result.savedLocally)
+                }
+            }
+            assertEquals(NoteSaveFailure.QUEUE_UNAVAILABLE,
+                controller.enqueue { fail("cancelled controller accepted a write"); NoteSaveResult.committed() }
+                    .await().failure)
+        } finally { scope.cancel() }
+    }
+
     @Test fun untouchedVisitDoesNotQueueBehindUnrelatedSlowWrite() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val blocker = CompletableDeferred<Unit>()
