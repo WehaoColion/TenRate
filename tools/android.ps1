@@ -1,3 +1,4 @@
+# v0.0.42 - Normalize source line endings before exact generated helper checks.
 # v0.0.41 - Gate bounded snapshot payload reads and final-save admission.
 # v0.0.40 - Gate cancellable snapshot admission and transaction-bound save preflight.
 # v0.0.39 - Gate isolated directory ordering and its real state mutations.
@@ -330,7 +331,7 @@ try {
         if(!$exitLiteral -or $exitCount -lt 12 -or [int]$exitResult.testsuite.tests -ne $exitCount -or [int]$exitResult.testsuite.failures -ne 0 -or [int]$exitResult.testsuite.errors -ne 0 -or [int]$exitResult.testsuite.skipped -ne 0){throw 'Retained editor save domain tests missing or failed'}
         $exitHelperPath = Join-Path $taskRoot 'app/build/generated/source/rustAndroid/main/com/ofairyo/gridtimer/ui/NoteEditorExitSaveGate.kt'
         $exitTestsPath = Join-Path $taskRoot 'app/build/generated/source/rustAndroid/test/com/ofairyo/gridtimer/ui/NoteEditorExitSaveGateTest.kt'
-        if([IO.File]::ReadAllText($exitHelperPath).Trim() -cne $exitLiteral.Trim()){throw 'Generated editor exit helper differs from tested production'}
+        if([IO.File]::ReadAllText($exitHelperPath).Replace("`r`n","`n").Trim() -cne $exitLiteral.Replace("`r`n","`n").Trim()){throw 'Generated editor exit helper differs from tested production'}
         $exitEditor = [IO.File]::ReadAllText((Join-Path $taskRoot 'app/build/generated/source/rustAndroid/main/com/ofairyo/gridtimer/ui/NoteDocumentEditor.kt'))
         foreach($hook in @('val exitSaveGate = NoteEditorExitSaveGate<NoteEntry>()','editorSession.exitSaveGate.beginPersistence(','editorSession.exitSaveGate.completePersistence(','val exitTicket = editorSession.exitSaveGate.begin() ?: return','editorSession.exitSaveGate.complete(','completion.deliver()')){
             if([regex]::Matches($exitEditor,[regex]::Escape($hook)).Count -ne 1){throw ('Retained editor save hook missing or duplicated: '+$hook)}
@@ -353,7 +354,7 @@ try {
         $navigationSource=[IO.File]::ReadAllText((Join-Path $taskCrate 'src/sourcegen/android_legal_integration.rs'))
         $navigationLiteral=[regex]::Match($navigationSource,'(?s)pub const HELPER_CONTENTS:\s*&str\s*=\s*r(?<hashes>#+)"(?<body>.*?)"\k<hashes>;').Groups['body'].Value
         $navigationHelper=[IO.File]::ReadAllText((Join-Path $taskRoot 'app/build/generated/source/rustAndroid/main/com/ofairyo/gridtimer/ui/NoteSelectionCheck.kt'))
-        if(!$navigationLiteral -or $navigationLiteral.Trim() -cne $navigationHelper.Trim()){throw 'Generated legal selection helper differs from tested production'}
+        if(!$navigationLiteral -or $navigationLiteral.Replace("`r`n","`n").Trim() -cne $navigationHelper.Replace("`r`n","`n").Trim()){throw 'Generated legal selection helper differs from tested production'}
         $navigationStudio=[IO.File]::ReadAllText((Join-Path $taskRoot 'app/build/generated/source/rustAndroid/main/com/ofairyo/gridtimer/ui/NoteStudioSheet.kt'))
         if([regex]::Matches($navigationStudio,'NoteSelectionCheck\(selectedNoteId, selectedNote\?\.id\)').Count -ne 2 -or [regex]::Matches($navigationStudio,'noteSelectionCheck\.shouldClear\(selectedNoteId\)').Count -ne 2 -or $navigationStudio.Contains('LaunchedEffect(selectedNoteId, selectedNote)')){throw 'Legal selection policy must be connected to both generated note editors'}
         $navigationReceipt=Get-Content -LiteralPath (Join-Path $taskEvidence 'legal_navigation_mutation/receipt.json') -Raw | ConvertFrom-Json
@@ -372,7 +373,7 @@ try {
         $upgradeHelper = Get-Content -LiteralPath (Join-Path $taskRoot 'app/build/generated/source/rustAndroid/main/com/ofairyo/gridtimer/ui/KnowledgeAiRequestBoundary.kt') -Raw
         $upgradeHelperSource = Get-Content -LiteralPath (Join-Path $taskCrate 'src/sourcegen/android_ai_workflow.rs') -Raw
         $upgradeLiteral = [regex]::Match($upgradeHelperSource,'(?s)pub const CONTENTS:\s*&str\s*=\s*r(?<hashes>#+)"(?<body>.*?)"\k<hashes>;').Groups['body'].Value
-        if($upgradeHelper.Trim() -cne $upgradeLiteral.Trim()){throw 'Tested Agent review helper differs from generated model'}
+        if($upgradeHelper.Replace("`r`n","`n").Trim() -cne $upgradeLiteral.Replace("`r`n","`n").Trim()){throw 'Tested Agent review helper differs from generated model'}
         $upgradeMutation = Get-Content -LiteralPath (Join-Path $taskEvidence 'agent_mutation/receipt.json') -Raw | ConvertFrom-Json
         $upgradeMutationExpected = if([version]$taskVersion -ge [version]'2.23.2.25'){9}elseif([version]$taskVersion -ge [version]'2.23.2.24'){6}else{5}
         if(!$upgradeMutation.passed -or !$upgradeMutation.productionUnchanged -or $upgradeMutation.cases.Count -ne $upgradeMutationExpected -or @($upgradeMutation.cases | Where-Object {!$_.passed}).Count -ne 0 -or $upgradeMutation.sourceSha256 -ne (Get-FileHash -LiteralPath (Join-Path $taskCrate 'src/sourcegen/android_ai_workflow.rs') -Algorithm SHA256).Hash.ToLowerInvariant()){throw 'Agent save authorization/review mutation receipt is missing or stale'}
