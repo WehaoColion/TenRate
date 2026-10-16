@@ -1,3 +1,4 @@
+# v0.0.43 - Permit hash-bound native reuse only for the current exit verifier repair.
 # v0.0.42 - Normalize source line endings before exact generated helper checks.
 # v0.0.41 - Gate bounded snapshot payload reads and final-save admission.
 # v0.0.40 - Gate cancellable snapshot admission and transaction-bound save preflight.
@@ -40,6 +41,7 @@ param(
     [ValidateSet('check','build')][string]$Mode = 'build',
     [switch]$ReuseNativeChecksForFixtureRepair,
     [switch]$ReuseNativeChecksForHierarchyUiRepair,
+    [switch]$ReuseNativeChecksForExitVerifierRepair,
     [ValidateRange(1024,4096)][int]$GradleHeapMiB = 2560,
     [ValidateRange(1,4)][int]$GradleWorkers = 2
 )
@@ -121,21 +123,38 @@ try {
     $taskJvmArgs = "-Dorg.gradle.jvmargs=-Xmx${GradleHeapMiB}m -Xms256m -XX:MaxMetaspaceSize=512m -XX:TieredStopAtLevel=1 -XX:ActiveProcessorCount=2 -Dfile.encoding=$taskNativeEncoding"
     $before = Get-TaskInputs
     $reusedNativeChecks = $false
-    if($ReuseNativeChecksForFixtureRepair -and $ReuseNativeChecksForHierarchyUiRepair){throw 'Select only one bounded native-check reuse mode'}
-    if($ReuseNativeChecksForFixtureRepair -or $ReuseNativeChecksForHierarchyUiRepair){
-        $priorSource = Get-Content -LiteralPath (Join-Path $taskEvidence 'android_source_provenance.json') -Raw | ConvertFrom-Json
+    if(@($ReuseNativeChecksForFixtureRepair,$ReuseNativeChecksForHierarchyUiRepair,$ReuseNativeChecksForExitVerifierRepair | Where-Object {$_}).Count -gt 1){throw 'Select only one bounded native-check reuse mode'}
+    if($ReuseNativeChecksForFixtureRepair -or $ReuseNativeChecksForHierarchyUiRepair -or $ReuseNativeChecksForExitVerifierRepair){
+        $priorSourcePath = Join-Path $taskEvidence 'android_source_provenance.json'
+        $priorSource = Get-Content -LiteralPath $priorSourcePath -Raw | ConvertFrom-Json
         if($ReuseNativeChecksForHierarchyUiRepair -and $taskVersion -ne '2.23.2.29'){throw 'Hierarchy UI-only retry is scoped to the current candidate'}
-        $allowedRepairs = if($ReuseNativeChecksForHierarchyUiRepair){@('tools/android.ps1','native/gridtimer_native/src/sourcegen/android_knowledge_hierarchy_ui.rs')}else{@('tools/android.ps1','native/gridtimer_native/src/sourcegen/android_jvm_test_sources.rs')}
+        if($ReuseNativeChecksForExitVerifierRepair -and $taskVersion -ne '2.23.2.36'){throw 'Exit verifier-only retry is scoped to Android 2.23.2.36'}
+        $allowedRepairs = if($ReuseNativeChecksForExitVerifierRepair){@('tools/android.ps1','tools/verify_note_exit_save_mutation.ps1')}elseif($ReuseNativeChecksForHierarchyUiRepair){@('tools/android.ps1','native/gridtimer_native/src/sourcegen/android_knowledge_hierarchy_ui.rs')}else{@('tools/android.ps1','native/gridtimer_native/src/sourcegen/android_jvm_test_sources.rs')}
+        if($ReuseNativeChecksForExitVerifierRepair){
+            if($priorSource.files.Count -ne 262 -or $before.files.Count -ne 262 -or @($priorSource.files.path | Sort-Object -Unique).Count -ne 262){throw 'Exit verifier retry requires the complete original 262-input inventory'}
+            $priorSourceBytes = [Text.Encoding]::UTF8.GetBytes(($priorSource.files | ConvertTo-Json -Depth 4 -Compress))
+            $priorSourceHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($priorSourceBytes)).ToLowerInvariant()
+            if($priorSourceHash -cne $priorSource.sha256){throw 'Exit verifier retry provenance digest is invalid'}
+            foreach($path in $allowedRepairs){if(@($priorSource.files | Where-Object path -eq $path).Count -ne 1 -or @($before.files | Where-Object path -eq $path).Count -ne 1){throw ('Exit verifier repair input is missing or ambiguous: '+$path)}}
+        }
         $priorInputs = @{}
         foreach($file in $priorSource.files){if($file.path -notin $allowedRepairs){$priorInputs[$file.path]=$file.sha256}}
         $currentInputs = @($before.files | Where-Object {$_.path -notin $allowedRepairs})
         if($priorInputs.Count -ne $currentInputs.Count){throw 'Bounded retry cannot reuse an altered source input set'}
+        if($ReuseNativeChecksForExitVerifierRepair -and $currentInputs.Count -ne 260){throw 'Exit verifier retry must compare all 260 unchanged application and native inputs'}
         foreach($file in $currentInputs){
             if(!$priorInputs.ContainsKey($file.path) -or $priorInputs[$file.path] -cne $file.sha256){throw "Bounded retry found changed source: $($file.path)"}
         }
         $nativeLog = Get-Content -LiteralPath (Join-Path $taskEvidence 'native_tests.log') -Raw
         if($nativeLog -notmatch 'test result: ok\. \d+ passed; 0 failed;'){throw 'No passed native checks available for bounded retry'}
-        Write-TaskJson 'native_checks_reuse.json' ([ordered]@{passed=$true;priorSourceSnapshotSha256=$priorSource.sha256;currentSourceSnapshotSha256=$before.sha256;unchangedApplicationAndNativeInputs=(!$ReuseNativeChecksForHierarchyUiRepair);unchangedNativeLibraryInputs=$true;sourcegenTestsRerun=$true;allowedChangedFiles=$allowedRepairs;reason=$(if($ReuseNativeChecksForHierarchyUiRepair){'Repair the Rust-only Android hierarchy UI emitter; every native library source and other input is byte-identical. Sourcegen tests and Android checks rerun.'}else{'Repair constructor-bypassing JVM fixture initialization; all native and application source inputs are byte-identical.'})})
+        if($ReuseNativeChecksForExitVerifierRepair){
+            $nativePassed = [regex]::Matches($nativeLog,'(?m)^test (?<name>\S+) \.\.\. ok\s*$')
+            $nativeSummary = [regex]::Matches($nativeLog,'(?m)^test result: ok\. 953 passed; 0 failed; 8 ignored; 0 measured; 4 filtered out; finished in [0-9.]+s\s*$')
+            if($nativePassed.Count -ne 953 -or @($nativePassed | ForEach-Object {$_.Groups['name'].Value} | Sort-Object -Unique).Count -ne 953 -or $nativeSummary.Count -ne 1 -or $nativeLog -match '(?m)^test result: FAILED|^test \S+ \.\.\. FAILED'){throw 'Exit verifier retry requires the completed 953-test native run with no failures'}
+        }
+        $reuseRecord = [ordered]@{passed=$true;priorSourceSnapshotSha256=$priorSource.sha256;currentSourceSnapshotSha256=$before.sha256;unchangedApplicationAndNativeInputs=(!$ReuseNativeChecksForHierarchyUiRepair);unchangedNativeLibraryInputs=$true;sourcegenTestsRerun=$true;allowedChangedFiles=$allowedRepairs;reason=$(if($ReuseNativeChecksForExitVerifierRepair){'Repair only build-verifier newline handling and the exit cosmetic wording anchor; all 260 application and native inputs are byte-identical. Reuse the completed 953-test native run; rerun sourcegen, packager, Gradle and every mutation gate.'}elseif($ReuseNativeChecksForHierarchyUiRepair){'Repair the Rust-only Android hierarchy UI emitter; every native library source and other input is byte-identical. Sourcegen tests and Android checks rerun.'}else{'Repair constructor-bypassing JVM fixture initialization; all native and application source inputs are byte-identical.'})}
+        if($ReuseNativeChecksForExitVerifierRepair){$reuseRecord['unchangedInputsCompared']=260;$reuseRecord['nativeTests']=953;$reuseRecord['nativeLogSha256']=(Get-FileHash -LiteralPath (Join-Path $taskEvidence 'native_tests.log')).Hash.ToLowerInvariant();$reuseRecord['priorProvenanceFileSha256']=(Get-FileHash -LiteralPath $priorSourcePath).Hash.ToLowerInvariant()}
+        Write-TaskJson 'native_checks_reuse.json' $reuseRecord
         $reusedNativeChecks = $true
     }
     Write-TaskJson 'android_source_provenance.json' $before
@@ -609,8 +628,9 @@ try {
 
     $result = [ordered]@{schemaVersion=1;version=$taskVersion;mode=$Mode;passed=$true;noDeviceOperations=$true;sourceSnapshotSha256=$before.sha256;editingTests=$expectedTests;nativeArgumentEncoding=$taskNativeEncoding;completed=(Get-Date).ToUniversalTime().ToString('o');checks=@('rust_format','native_tests','sourcegen_tests','packager_tests','android_source_audit','android_jvm_tests','android_lint')}
     $result['excludedNonAndroidTestSuites'] = $taskNonAndroidSuites
-    $result['nativeChecksReusedForFixtureOnlyRepair'] = $reusedNativeChecks -and !$ReuseNativeChecksForHierarchyUiRepair
+    $result['nativeChecksReusedForFixtureOnlyRepair'] = $reusedNativeChecks -and $ReuseNativeChecksForFixtureRepair
     $result['nativeChecksReusedForHierarchyUiOnlyRepair'] = $reusedNativeChecks -and $ReuseNativeChecksForHierarchyUiRepair
+    $result['nativeChecksReusedForExitVerifierOnlyRepair'] = $reusedNativeChecks -and $ReuseNativeChecksForExitVerifierRepair
     $result['gradleHeapMiB'] = $GradleHeapMiB
     $result['gradleWorkers'] = $GradleWorkers
     $result['canvasTests'] = $expectedCanvasTests
