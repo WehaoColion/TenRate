@@ -5,6 +5,7 @@ mod desktop_legal_workflow;
 include!("legal_report_store.rs");
 include!("legal_report_sync.rs");
 include!("legal_background.rs");
+include!("legal_navigation.rs");
 
 struct DesktopLegalScanOutcome {
     scope: String,
@@ -106,6 +107,7 @@ struct DesktopLegalRiskState {
     sync_message: String,
     sync_failures: u32,
     sync_retry_at: i64,
+    history_source: Option<(String, bool, String)>,
 }
 
 impl Default for DesktopLegalRiskState {
@@ -150,6 +152,7 @@ impl Default for DesktopLegalRiskState {
             sync_message: String::new(),
             sync_failures: 0,
             sync_retry_at: 0,
+            history_source: None,
         }
     }
 }
@@ -639,16 +642,19 @@ impl TimerWindowsClient {
                         serde_json::from_str::<DesktopAppData>(&raw).map_err(|e| e.to_string())?;
                     let attachments =
                         desktop_legal_attachment_inputs(&data, &unlocked, &identity, &active);
+                    let scan_raw = desktop_legal_current_scan_snapshot(&raw, &data)?;
                     drop(data);
                     let unlocked_values = unlocked
                         .iter()
                         .filter_map(|(id, note)| {
-                            serde_json::to_value(note).ok().and_then(|mut value| {
-                                value
-                                    .as_object_mut()?
-                                    .insert("noteId".into(), Value::String(id.clone()));
-                                Some(value)
-                            })
+                            desktop_legal_current_scan_note(note)
+                                .ok()
+                                .and_then(|mut value| {
+                                    value
+                                        .as_object_mut()?
+                                        .insert("noteId".into(), Value::String(id.clone()));
+                                    Some(value)
+                                })
                         })
                         .collect::<Vec<_>>();
                     let unlocked_json = json!(unlocked_values).to_string();
@@ -658,7 +664,7 @@ impl TimerWindowsClient {
                         return Err("扫描准备已取消".into());
                     }
                     let prepared = gridtimer_native::legal_scan::prepare_scan(
-                        &raw,
+                        &scan_raw,
                         &format!("{:x}", Sha256::digest(scope.as_bytes())),
                         now_millis(),
                         &unlocked_json,
@@ -926,68 +932,156 @@ impl TimerWindowsClient {
     }
 
     fn open_legal_evidence(&mut self, source_path: &str) {
-        let segments = source_path.split('/').collect::<Vec<_>>();
-        if matches!(
-            segments.as_slice(),
-            ["finance", "day", ..]
-                | ["finance", "month", ..]
-                | ["session", ..]
-                | ["archivedTask", ..]
-        ) && !legal_source_available_in_data(&self.data, source_path)
+        if self.workspace_edit_locked()
+            || !matches!(self.shutdown_state, ClientShutdownState::Running)
+            || self.desktop_ui.legal_risk.scope != self.legal_scope()
         {
-            self.desktop_ui.legal_risk.message =
-                "接收设备没有这条原记录，暂时无法回跳；报告仍保留原始引文".into();
+            self.desktop_ui.legal_risk.message = "工作区已变化或正在切换，请重新打开报告".into();
             return;
         }
-        match segments.as_slice() {
-            ["note", id, ..]
-                if self
-                    .data
-                    .notes
-                    .iter()
-                    .any(|note| note.id == *id && note.deleted_at_epoch_millis.is_none()) =>
-            {
-                let note = self.data.notes.iter().find(|note| note.id == *id).unwrap();
-                let document = note.kind.eq_ignore_ascii_case("DOCUMENT");
-                self.close_legal_risk();
-                if document {
-                    self.switch_tab(AppTab::Knowledge);
-                    self.open_knowledge_source(id);
-                } else {
-                    self.switch_tab(AppTab::Notes);
-                    self.selected_note_id = (*id).to_string();
-                    if segments.len() >= 4 && segments[2] == "versions" {
-                        let _ = self.open_note_version(segments[3]);
-                    }
-                }
-            }
-            ["slot", id] => {
-                if let Ok(id) = id.parse::<i32>() {
-                    if self.data.slots.iter().any(|slot| slot.id == id) {
-                        self.close_legal_risk();
-                        self.switch_tab(AppTab::Board);
-                        self.selected_slot_id = id;
-                        return;
-                    }
-                }
-                self.desktop_ui.legal_risk.message = "原任务已不可用，报告仍保留原始引文".into();
-            }
-            ["finance", "day", day, ..] => {
-                self.close_legal_risk();
-                self.finance_workbench.tab = 0;
-                self.finance_workbench.day_key = (*day).to_string();
-            }
-            ["finance", "month", month, ..] => {
-                self.close_legal_risk();
-                self.finance_workbench.tab = 1;
-                self.finance_workbench.month_key = (*month).to_string();
-            }
-            ["session", ..] | ["archivedTask", ..] => {
-                self.close_legal_risk();
-                self.switch_tab(AppTab::History);
-            }
-            _ => self.desktop_ui.legal_risk.message = "原记录已不可用，报告仍保留原始引文".into(),
+        if let Err(error) = self.flush_all_pending_saves() {
+            self.desktop_ui.legal_risk.message = format!("当前编辑尚未保存，未切换原记录：{error}");
+            return;
         }
+        let Some(destination) = desktop_legal_destination(&self.data, source_path) else {
+            self.desktop_ui.legal_risk.message =
+                "原记录、内容块或附件已不可用，报告仍保留原始引文".into();
+            return;
+        };
+        self.desktop_ui.legal_risk.history_source = None;
+        self.desktop_ui.history_summary_key.clear();
+        match destination {
+            DesktopLegalDestination::Note {
+                id,
+                block,
+                attachment,
+            } => {
+                let document = desktop_legal_live_note(&self.data, &id)
+                    .is_some_and(|note| desktop_note_kind(note) == DesktopNoteKind::Document);
+                self.switch_tab(if document {
+                    AppTab::Knowledge
+                } else {
+                    AppTab::Notes
+                });
+                if self.tab
+                    != if document {
+                        AppTab::Knowledge
+                    } else {
+                        AppTab::Notes
+                    }
+                {
+                    return;
+                }
+                if document {
+                    self.open_knowledge_source(&id);
+                } else {
+                    self.note_search_draft.clear();
+                    self.note_trash_mode = false;
+                    self.select_note_by_id(&id);
+                }
+                if self.selected_note_id != id {
+                    return;
+                }
+                self.selected_note_version_id.clear();
+                self.desktop_ui.navigation.editor_visible = true;
+                if document {
+                    self.close_knowledge_directory();
+                }
+                if let Some(block) = block {
+                    self.note_active_block_id = block.clone();
+                    self.desktop_ui.parity.outline_target = Some(block);
+                }
+                if let Some(attachment) = attachment {
+                    if let Some(block) = self
+                        .note_blocks_draft
+                        .iter()
+                        .find(|block| block.attachment_id.as_deref() == Some(&attachment))
+                    {
+                        self.note_active_block_id = block.id.clone();
+                        self.desktop_ui.parity.outline_target = Some(block.id.clone());
+                    }
+                }
+            }
+            DesktopLegalDestination::Slot(id) => {
+                self.switch_tab(AppTab::Board);
+                if self.tab != AppTab::Board {
+                    return;
+                }
+                self.open_slot_editor(id);
+            }
+            DesktopLegalDestination::History { archives, id } => {
+                self.switch_tab(AppTab::History);
+                if self.tab != AppTab::History {
+                    return;
+                }
+                self.desktop_ui.history_archives = archives;
+                self.desktop_ui.history_period = 0;
+                self.desktop_ui.history_query.clear();
+                self.desktop_ui.history_category.clear();
+                self.desktop_ui.history_slot = None;
+                self.desktop_ui.legal_risk.history_source =
+                    Some((self.background_job_workspace_fingerprint(), archives, id));
+                self.desktop_ui.history_summary_key.clear();
+            }
+            DesktopLegalDestination::Finance {
+                monthly,
+                period,
+                entry,
+            } => {
+                self.switch_tab(AppTab::Finance);
+                if self.tab != AppTab::Finance {
+                    return;
+                }
+                self.finance_workbench.tab = usize::from(monthly);
+                if monthly {
+                    self.finance_workbench.month_key = period.clone();
+                } else {
+                    self.finance_workbench.day_key = period.clone();
+                }
+                self.finance_workbench.pending_delete = None;
+                self.finance_workbench.money_drafts.focus = None;
+                if let Some((list, id, index)) = entry {
+                    self.finance_workbench.money_drafts.focus = Some(DesktopMoneyField::Row {
+                        monthly,
+                        period,
+                        list,
+                        id,
+                        index,
+                    });
+                }
+            }
+            DesktopLegalDestination::FinanceOverview => {
+                self.switch_tab(AppTab::Finance);
+                if self.tab != AppTab::Finance {
+                    return;
+                }
+                self.finance_workbench.tab = 5;
+            }
+            DesktopLegalDestination::Folder(id) => {
+                self.switch_tab(AppTab::Knowledge);
+                if self.tab != AppTab::Knowledge {
+                    return;
+                }
+                if !self.open_knowledge_directory(Some(id)) {
+                    return;
+                }
+            }
+            DesktopLegalDestination::Category(id) => {
+                self.switch_tab(AppTab::History);
+                if self.tab != AppTab::History {
+                    return;
+                }
+                self.desktop_ui.history_archives = false;
+                self.desktop_ui.history_period = 0;
+                self.desktop_ui.history_query.clear();
+                self.desktop_ui.history_category = id;
+                self.desktop_ui.history_slot = None;
+            }
+        }
+        let finance_tab = self.finance_workbench.tab;
+        self.close_legal_risk();
+        self.finance_workbench.tab = finance_tab;
+        self.status = "已打开报告所属的当前原记录；请同时核对报告中的扫描时原文".into();
     }
 
     fn ui_legal_risk(&mut self, ui: &mut egui::Ui) {
@@ -1388,8 +1482,17 @@ impl TimerWindowsClient {
                                     ("quote", index, quote_index),
                                     &quote.quote,
                                 );
-                                if ui.small_button("打开原记录").clicked() {
+                                let available =
+                                    desktop_legal_destination(&self.data, &quote.source_path)
+                                        .is_some();
+                                if ui
+                                    .add_enabled(available, egui::Button::new("打开原记录"))
+                                    .clicked()
+                                {
                                     self.open_legal_evidence(&quote.source_path);
+                                }
+                                if !available {
+                                    ui.label("当前设备没有可回跳的原记录，请核对上方摘录。");
                                 }
                             }
                             ui.label("仍缺少的事实");

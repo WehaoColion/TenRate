@@ -1,3 +1,28 @@
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DesktopFinanceRiskPage {
+    #[default]
+    Overview,
+    Review,
+    Forecast,
+}
+
+#[derive(Default)]
+struct DesktopFinanceRiskRoute {
+    scope: String,
+    month: String,
+    page: DesktopFinanceRiskPage,
+}
+
+impl DesktopFinanceRiskRoute {
+    fn reconcile(&mut self, scope: String, month: &str) {
+        if self.scope != scope || self.month != month {
+            self.scope = scope;
+            self.month = month.into();
+            self.page = DesktopFinanceRiskPage::Overview;
+        }
+    }
+}
+
 // v1.1.0.5 Windows - Bind finance calculations and review receipts to exact cents.
 // Windows finance reviews use the same Rust policy as Android. The review
 // receipt is local to an account workspace and never enters AppData or sync.
@@ -562,252 +587,391 @@ impl TimerWindowsClient {
         if self.finance_dirty {
             ui.label("账目尚未保存；点击核对时会先保存账目。");
         }
-        ui.add_space(8.0);
-        card_frame().show(ui, |ui| {
-            section_heading(ui, "已录事实");
-            let recorded = risk.recorded_days > 0;
-            finance_detail_row(
+        let scope = desktop_finance_review_scope(&self.state_path, &self.sync);
+        self.finance_workbench.risk_route.reconcile(scope, &month);
+        let remaining = [
+            risk.income_expense_verified,
+            risk.verified_cash.is_some(),
+            risk.verified_assets.is_some(),
+            risk.verified_liabilities.is_some(),
+        ]
+        .into_iter()
+        .filter(|verified| !verified)
+        .count();
+        ui.horizontal_wrapped(|ui| {
+            desktop_segment(
                 ui,
-                "收入",
-                &if recorded {
-                    money_label(risk.recorded_income)
+                &mut self.finance_workbench.risk_route.page,
+                DesktopFinanceRiskPage::Overview,
+                "总览",
+            );
+            desktop_segment(
+                ui,
+                &mut self.finance_workbench.risk_route.page,
+                DesktopFinanceRiskPage::Review,
+                &if remaining > 0 {
+                    format!("核对 {remaining}")
                 } else {
-                    "未记录".into()
+                    "核对".into()
                 },
             );
-            finance_detail_row(
+            desktop_segment(
                 ui,
-                "流出",
-                &if recorded {
-                    money_label(risk.recorded_outflow)
-                } else {
-                    "未记录".into()
-                },
-            );
-            finance_detail_row(
-                ui,
-                "净现金流",
-                &if recorded {
-                    money_label(risk.recorded_net_cashflow)
-                } else {
-                    "未记录".into()
-                },
-            );
-            finance_detail_row(
-                ui,
-                "记账天数",
-                &if recorded {
-                    format!("{} 天", risk.recorded_days)
-                } else {
-                    "未记录".into()
-                },
-            );
-            finance_detail_row(
-                ui,
-                "现金余额",
-                &desktop_finance_known_money(risk.recorded_cash, "未记录"),
-            );
-            finance_detail_row(
-                ui,
-                "资产",
-                &desktop_finance_known_money(risk.recorded_assets, "未记录"),
-            );
-            finance_detail_row(
-                ui,
-                "负债",
-                &desktop_finance_known_money(risk.recorded_liabilities, "未知"),
+                &mut self.finance_workbench.risk_route.page,
+                DesktopFinanceRiskPage::Forecast,
+                "预测",
             );
         });
-        ui.add_space(8.0);
-        card_frame().show(ui, |ui| {
-            section_heading(ui, "经核对的判断");
-            finance_detail_row(
-                ui,
-                "健康结论",
-                desktop_finance_risk_state_label(risk.risk_state),
-            );
-            ui.label(desktop_finance_risk_reason(&risk.reason_code));
-            let safe = match risk.safe_to_spend {
-                None => "待核对".into(),
-                Some(value) if value < 0 => format!("缺口 {}", money_label(value.saturating_abs())),
-                Some(value) => money_label(value),
-            };
-            finance_detail_row(ui, "安全可支配", &safe);
-            finance_detail_row(
-                ui,
-                "30 天余额",
-                &desktop_finance_known_money(risk.projected_balance30_days, "待核对"),
-            );
-            finance_detail_row(
-                ui,
-                "90 天余额",
-                &desktop_finance_known_money(risk.projected_balance90_days, "待核对"),
-            );
-            finance_detail_row(
-                ui,
-                "待付必要项",
-                &desktop_finance_known_money(risk.pending_essential_reserve, "待核对"),
-            );
-            finance_detail_row(
-                ui,
-                "保护配置",
-                &desktop_finance_known_money(risk.protected_allocation, "待核对"),
-            );
-            ui.label(if risk.forecast_available {
-                format!("预测基线：{}", risk.baseline_months.join("、"))
-            } else {
-                format!(
-                    "预测基线：还需核对 {} 个完整月份",
-                    3_usize.saturating_sub(risk.baseline_months.len())
-                )
-            });
-            if risk.forecast_available {
-                finance_detail_row(
-                    ui,
-                    "月收入基线",
-                    &desktop_finance_known_money(risk.monthly_income_baseline, "待核对"),
-                );
-                finance_detail_row(
-                    ui,
-                    "月流出基线",
-                    &desktop_finance_known_money(risk.monthly_outflow_baseline, "待核对"),
-                );
-            }
-        });
-        ui.add_space(8.0);
-        card_frame().show(ui, |ui| {
-            section_heading(ui, "核对所选月份");
-            ui.label("仅对所选月份生效。账目改变后，对应核对自动失效。");
-            ui.label(if month < current_month {
-                "完整月份经核对后才进入预测基线；无收支的月份需明确确认整月为零。"
-            } else {
-                "本月只核对截至今日的记录，月末后仍须核对整月。"
-            });
-            if load_error.is_none() && self.workspace_persistence_ready && money_inputs_ready {
-                desktop_finance_review_row(
-                    ui,
-                    "收支",
-                    risk.recorded_days > 0,
-                    risk.income_expense_verified,
-                    DesktopFinanceReviewLane::IncomeExpense,
-                    if month < current_month {
-                        "确认整月收支已记全"
-                    } else {
-                        "确认截至今日已记全"
-                    },
-                    if month < current_month {
-                        "确认整月无收支（0）"
-                    } else {
-                        "确认截至今日无收支（0）"
-                    },
-                    &mut action,
-                );
-                desktop_finance_review_row(
-                    ui,
-                    "现金余额",
-                    risk.recorded_cash.is_some(),
-                    risk.verified_cash.is_some(),
-                    DesktopFinanceReviewLane::Cash,
-                    "核对现金",
-                    "确认现金为零",
-                    &mut action,
-                );
-                desktop_finance_review_row(
-                    ui,
-                    "资产",
-                    risk.recorded_assets.is_some(),
-                    risk.verified_assets.is_some(),
-                    DesktopFinanceReviewLane::Assets,
-                    "核对资产",
-                    "确认资产为零",
-                    &mut action,
-                );
-                desktop_finance_review_row(
-                    ui,
-                    "负债",
-                    risk.recorded_liabilities.is_some(),
-                    risk.verified_liabilities.is_some(),
-                    DesktopFinanceReviewLane::Liabilities,
-                    "核对负债",
-                    "确认零负债",
-                    &mut action,
-                );
-                if ui.small_button("清除本月核对").clicked() {
-                    action = Some(DesktopFinanceReviewAction::ClearMonth);
-                }
-            } else if !money_inputs_ready {
-                ui.label("请先修正金额输入或恢复原金额，再核对账目。");
-            } else if load_error.is_none() {
-                ui.label("本地工作区只读，暂不能保存核对。");
-            }
-        });
-        ui.add_space(8.0);
-        card_frame().show(ui, |ui| {
-            section_heading(ui, "周期支出");
-            if risk.recurring_expenses.is_empty() {
-                ui.label("暂无稳定的跨月记录");
-            }
-            for item in &risk.recurring_expenses {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(format!(
-                        "{} · 每月约 {} · {}",
-                        item.name,
-                        money_label(item.monthly_amount),
-                        if item.paid_this_month {
-                            "本月已记"
-                        } else {
-                            "本月未记"
+        match self.finance_workbench.risk_route.page {
+            DesktopFinanceRiskPage::Overview => {
+                ui.add_space(8.0);
+                card_frame().show(ui, |ui| {
+                    section_heading(ui, desktop_finance_risk_state_label(risk.risk_state));
+                    ui.label(desktop_finance_risk_reason(&risk.reason_code));
+                    let safe = match risk.safe_to_spend {
+                        None => "待核对".into(),
+                        Some(value) if value < 0 => {
+                            format!("缺口 {}", money_label(value.saturating_abs()))
                         }
+                        Some(value) => money_label(value),
+                    };
+                    finance_detail_row(ui, "安全可支配", &safe);
+                    finance_detail_row(
+                        ui,
+                        "已核对现金",
+                        &desktop_finance_known_money(risk.verified_cash, "待核对"),
+                    );
+                    finance_detail_row(
+                        ui,
+                        "已录净现金流",
+                        &if risk.recorded_days > 0 {
+                            money_label(risk.recorded_net_cashflow)
+                        } else {
+                            "未记录".into()
+                        },
+                    );
+                    finance_detail_row(
+                        ui,
+                        "30 天预计余额",
+                        &desktop_finance_known_money(risk.projected_balance30_days, "待核对"),
+                    );
+                    ui.label(format!(
+                        "所选月已核对 {}/4 项 · 基线已核对 {} 个完整月",
+                        4 - remaining,
+                        risk.baseline_months.len()
                     ));
+                    if ui
+                        .button(if remaining > 0 {
+                            format!("核对剩余 {remaining} 项")
+                        } else {
+                            "查看所选月核对".into()
+                        })
+                        .clicked()
+                    {
+                        self.finance_workbench.risk_route.page = DesktopFinanceRiskPage::Review;
+                    }
+                    if ui.small_button("查看预测与依据").clicked() {
+                        self.finance_workbench.risk_route.page = DesktopFinanceRiskPage::Forecast;
+                    }
+                });
+                if !risk.duplicate_payments.is_empty() || risk.anomaly_amount.is_some() {
+                    ui.add_space(8.0);
+                    card_frame().show(ui, |ui| {
+                        section_heading(ui, "需要处理");
+                        if !risk.duplicate_payments.is_empty() {
+                            ui.label(format!(
+                                "{} 组疑似重复付款，尚未认定为重复扣款",
+                                risk.duplicate_payments.len()
+                            ));
+                            for item in risk.duplicate_payments.iter().take(3) {
+                                ui.label(format!(
+                                    "{} · {} · {}",
+                                    item.day_key,
+                                    item.name,
+                                    money_label(item.amount)
+                                ));
+                            }
+                        }
+                        if let (Some(day), Some(amount)) =
+                            (&risk.anomaly_day_key, risk.anomaly_amount)
+                        {
+                            ui.label(format!(
+                                "{day} 的非固定支出 {} 高于已核对基线，请检查记录",
+                                money_label(amount)
+                            ));
+                        }
+                        if ui.button("查看全部待核查记录").clicked() {
+                            self.finance_workbench.risk_route.page = DesktopFinanceRiskPage::Review;
+                        }
+                    });
+                }
+            }
+            DesktopFinanceRiskPage::Review => {
+                ui.add_space(8.0);
+                card_frame().show(ui, |ui| {
+                    section_heading(ui, "已录事实");
+                    let recorded = risk.recorded_days > 0;
+                    finance_detail_row(
+                        ui,
+                        "收入",
+                        &if recorded {
+                            money_label(risk.recorded_income)
+                        } else {
+                            "未记录".into()
+                        },
+                    );
+                    finance_detail_row(
+                        ui,
+                        "流出",
+                        &if recorded {
+                            money_label(risk.recorded_outflow)
+                        } else {
+                            "未记录".into()
+                        },
+                    );
+                    finance_detail_row(
+                        ui,
+                        "净现金流",
+                        &if recorded {
+                            money_label(risk.recorded_net_cashflow)
+                        } else {
+                            "未记录".into()
+                        },
+                    );
+                    finance_detail_row(
+                        ui,
+                        "记账天数",
+                        &if recorded {
+                            format!("{} 天", risk.recorded_days)
+                        } else {
+                            "未记录".into()
+                        },
+                    );
+                    finance_detail_row(
+                        ui,
+                        "现金余额",
+                        &desktop_finance_known_money(risk.recorded_cash, "未记录"),
+                    );
+                    finance_detail_row(
+                        ui,
+                        "资产",
+                        &desktop_finance_known_money(risk.recorded_assets, "未记录"),
+                    );
+                    finance_detail_row(
+                        ui,
+                        "负债",
+                        &desktop_finance_known_money(risk.recorded_liabilities, "未知"),
+                    );
+                });
+                ui.add_space(8.0);
+                card_frame().show(ui, |ui| {
+                    section_heading(ui, "核对所选月份");
+                    ui.label("仅对所选月份生效。账目改变后，对应核对自动失效。");
+                    ui.label(if month < current_month {
+                        "完整月份经核对后才进入预测基线；无收支的月份需明确确认整月为零。"
+                    } else {
+                        "本月只核对截至今日的记录，月末后仍须核对整月。"
+                    });
                     if load_error.is_none()
                         && self.workspace_persistence_ready
                         && money_inputs_ready
-                        && ui
-                            .small_button(if item.confirmed {
-                                "取消确认"
-                            } else {
-                                "确认周期项"
-                            })
-                            .clicked()
                     {
-                        action = Some(DesktopFinanceReviewAction::ToggleRecurring(
-                            item.key.clone(),
+                        desktop_finance_review_row(
+                            ui,
+                            "收支",
+                            risk.recorded_days > 0,
+                            risk.income_expense_verified,
+                            DesktopFinanceReviewLane::IncomeExpense,
+                            if month < current_month {
+                                "确认整月收支已记全"
+                            } else {
+                                "确认截至今日已记全"
+                            },
+                            if month < current_month {
+                                "确认整月无收支（0）"
+                            } else {
+                                "确认截至今日无收支（0）"
+                            },
+                            &mut action,
+                        );
+                        desktop_finance_review_row(
+                            ui,
+                            "现金余额",
+                            risk.recorded_cash.is_some(),
+                            risk.verified_cash.is_some(),
+                            DesktopFinanceReviewLane::Cash,
+                            "核对现金",
+                            "确认现金为零",
+                            &mut action,
+                        );
+                        desktop_finance_review_row(
+                            ui,
+                            "资产",
+                            risk.recorded_assets.is_some(),
+                            risk.verified_assets.is_some(),
+                            DesktopFinanceReviewLane::Assets,
+                            "核对资产",
+                            "确认资产为零",
+                            &mut action,
+                        );
+                        desktop_finance_review_row(
+                            ui,
+                            "负债",
+                            risk.recorded_liabilities.is_some(),
+                            risk.verified_liabilities.is_some(),
+                            DesktopFinanceReviewLane::Liabilities,
+                            "核对负债",
+                            "确认零负债",
+                            &mut action,
+                        );
+                        if ui.small_button("清除本月核对").clicked() {
+                            action = Some(DesktopFinanceReviewAction::ClearMonth);
+                        }
+                    } else if !money_inputs_ready {
+                        ui.label("请先修正金额输入或恢复原金额，再核对账目。");
+                    } else if load_error.is_none() {
+                        ui.label("本地工作区只读，暂不能保存核对。");
+                    }
+                });
+                ui.add_space(8.0);
+                card_frame().show(ui, |ui| {
+                    section_heading(ui, "周期支出");
+                    if risk.recurring_expenses.is_empty() {
+                        ui.label("暂无稳定的跨月记录");
+                    }
+                    for item in &risk.recurring_expenses {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!(
+                                "{} · 每月约 {} · {}",
+                                item.name,
+                                money_label(item.monthly_amount),
+                                if item.paid_this_month {
+                                    "本月已记"
+                                } else {
+                                    "本月未记"
+                                }
+                            ));
+                            if load_error.is_none()
+                                && self.workspace_persistence_ready
+                                && money_inputs_ready
+                                && ui
+                                    .small_button(if item.confirmed {
+                                        "取消确认"
+                                    } else {
+                                        "确认周期项"
+                                    })
+                                    .clicked()
+                            {
+                                action = Some(DesktopFinanceReviewAction::ToggleRecurring(
+                                    item.key.clone(),
+                                ));
+                            }
+                        });
+                    }
+                });
+                ui.add_space(8.0);
+                card_frame().show(ui, |ui| {
+                    section_heading(ui, "疑似重复付款");
+                    if risk.duplicate_payments.is_empty() {
+                        ui.label("未发现需要核对的同日同额记录");
+                    }
+                    for item in &risk.duplicate_payments {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!(
+                                "{} · {} · {} · {} 笔不同记录",
+                                item.day_key,
+                                item.name,
+                                money_label(item.amount),
+                                item.entry_ids.len()
+                            ));
+                            if ui.small_button("查看当日账目").clicked() {
+                                action =
+                                    Some(DesktopFinanceReviewAction::OpenDay(item.day_key.clone()));
+                            }
+                        });
+                    }
+                    if let (Some(day), Some(amount)) = (&risk.anomaly_day_key, risk.anomaly_amount)
+                    {
+                        ui.add_space(6.0);
+                        ui.label(format!(
+                            "异常支出提醒：{day} · {}。请核对原账目。",
+                            money_label(amount)
                         ));
+                        if ui.small_button("查看异常日账").clicked() {
+                            action = Some(DesktopFinanceReviewAction::OpenDay(day.clone()));
+                        }
                     }
                 });
             }
-        });
-        ui.add_space(8.0);
-        card_frame().show(ui, |ui| {
-            section_heading(ui, "疑似重复付款");
-            if risk.duplicate_payments.is_empty() {
-                ui.label("未发现需要核对的同日同额记录");
-            }
-            for item in &risk.duplicate_payments {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(format!(
-                        "{} · {} · {} · {} 笔不同记录",
-                        item.day_key,
-                        item.name,
-                        money_label(item.amount),
-                        item.entry_ids.len()
-                    ));
-                    if ui.small_button("查看当日账目").clicked() {
-                        action = Some(DesktopFinanceReviewAction::OpenDay(item.day_key.clone()));
+            DesktopFinanceRiskPage::Forecast => {
+                ui.label(if risk.forecast_available {
+                    "依据已核对基线推算，不是确定收益或余额。"
+                } else {
+                    "资料未核对齐全时不补造预测结果。"
+                });
+                ui.add_space(8.0);
+                card_frame().show(ui, |ui| {
+                    section_heading(ui, "经核对的判断");
+                    finance_detail_row(
+                        ui,
+                        "健康结论",
+                        desktop_finance_risk_state_label(risk.risk_state),
+                    );
+                    ui.label(desktop_finance_risk_reason(&risk.reason_code));
+                    let safe = match risk.safe_to_spend {
+                        None => "待核对".into(),
+                        Some(value) if value < 0 => {
+                            format!("缺口 {}", money_label(value.saturating_abs()))
+                        }
+                        Some(value) => money_label(value),
+                    };
+                    finance_detail_row(ui, "安全可支配", &safe);
+                    finance_detail_row(
+                        ui,
+                        "30 天余额",
+                        &desktop_finance_known_money(risk.projected_balance30_days, "待核对"),
+                    );
+                    finance_detail_row(
+                        ui,
+                        "90 天余额",
+                        &desktop_finance_known_money(risk.projected_balance90_days, "待核对"),
+                    );
+                    finance_detail_row(
+                        ui,
+                        "待付必要项",
+                        &desktop_finance_known_money(risk.pending_essential_reserve, "待核对"),
+                    );
+                    finance_detail_row(
+                        ui,
+                        "保护配置",
+                        &desktop_finance_known_money(risk.protected_allocation, "待核对"),
+                    );
+                    ui.label(if risk.forecast_available {
+                        format!("预测基线：{}", risk.baseline_months.join("、"))
+                    } else {
+                        format!(
+                            "预测基线：还需核对 {} 个完整月份",
+                            3_usize.saturating_sub(risk.baseline_months.len())
+                        )
+                    });
+                    if risk.forecast_available {
+                        finance_detail_row(
+                            ui,
+                            "月收入基线",
+                            &desktop_finance_known_money(risk.monthly_income_baseline, "待核对"),
+                        );
+                        finance_detail_row(
+                            ui,
+                            "月流出基线",
+                            &desktop_finance_known_money(risk.monthly_outflow_baseline, "待核对"),
+                        );
                     }
                 });
-            }
-            if let (Some(day), Some(amount)) = (&risk.anomaly_day_key, risk.anomaly_amount) {
-                ui.add_space(6.0);
-                ui.label(format!(
-                    "异常支出提醒：{day} · {}。请核对原账目。",
-                    money_label(amount)
-                ));
-                if ui.small_button("查看异常日账").clicked() {
-                    action = Some(DesktopFinanceReviewAction::OpenDay(day.clone()));
+                if !risk.forecast_available && ui.button("去核对数据").clicked() {
+                    self.finance_workbench.risk_route.page = DesktopFinanceRiskPage::Review;
                 }
             }
-        });
+        }
         if let Some(action) = action {
             self.desktop_finance_apply_review_action(action, &reference, &today);
         }
@@ -817,6 +981,20 @@ impl TimerWindowsClient {
 #[cfg(test)]
 mod desktop_finance_risk_v2_tests {
     use super::*;
+
+    #[test]
+    fn risk_route_keeps_current_step_but_restarts_for_another_month_or_workspace() {
+        let mut route = DesktopFinanceRiskRoute::default();
+        route.reconcile("workspace-a".into(), "2026-09");
+        route.page = DesktopFinanceRiskPage::Review;
+        route.reconcile("workspace-a".into(), "2026-09");
+        assert_eq!(route.page, DesktopFinanceRiskPage::Review);
+        route.reconcile("workspace-a".into(), "2026-10");
+        assert_eq!(route.page, DesktopFinanceRiskPage::Overview);
+        route.page = DesktopFinanceRiskPage::Forecast;
+        route.reconcile("workspace-b".into(), "2026-10");
+        assert_eq!(route.page, DesktopFinanceRiskPage::Overview);
+    }
 
     #[test]
     fn receipt_storage_is_scoped_and_fails_closed_on_corruption() {

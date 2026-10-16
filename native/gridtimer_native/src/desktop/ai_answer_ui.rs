@@ -23,9 +23,11 @@ struct DesktopAiProbeResult {
 #[derive(Default)]
 struct DesktopAiSession {
     last_workspace: Option<String>,
+    priority_note_id: Option<String>,
     mode: QueryMode,
     boundary: QueryBoundary,
     preview: Option<DesktopAiPreview>,
+    active_knowledge_scope: Option<(u64, std::collections::BTreeSet<String>)>,
     message: String,
     probe_rx: Option<mpsc::Receiver<DesktopAiProbeResult>>,
     probe_binding: Option<(String, String)>,
@@ -78,6 +80,8 @@ impl TimerWindowsClient {
     }
 
     fn invalidate_desktop_ai_configuration(&mut self) {
+        self.cancel_desktop_agent();
+        self.desktop_agent.draft = None;
         self.desktop_ai.preview = None;
         self.desktop_ai.probe_binding = None;
         self.desktop_ai.probe_message.clear();
@@ -89,6 +93,7 @@ impl TimerWindowsClient {
 
     fn cancel_desktop_ai_query(&mut self) {
         self.desktop_ai.preview = None;
+        self.desktop_ai.active_knowledge_scope = None;
         self.desktop_ai.boundary.cancel();
         self.task_supervisor
             .cancel_kinds(&[RuntimeTaskKind::KnowledgeAiRequest]);
@@ -109,6 +114,7 @@ impl TimerWindowsClient {
         {
             self.cancel_desktop_ai_query();
             self.knowledge_ai_question_draft.clear();
+            self.desktop_ai.priority_note_id = None;
             self.knowledge_ai_answer = None;
             self.desktop_ai.probe_binding = None;
             self.desktop_ai.probe_ok = false;
@@ -131,6 +137,21 @@ impl TimerWindowsClient {
             .active_scope_matches(&workspace, &configuration)
         {
             self.cancel_desktop_ai_query();
+        }
+        if !self.knowledge_ai_pending {
+            self.desktop_ai.active_knowledge_scope = None;
+        } else if self
+            .desktop_ai
+            .active_knowledge_scope
+            .as_ref()
+            .is_some_and(|(version, ids)| {
+                *version != self.notes_cache_version()
+                    || (self.note_dirty && ids.contains(&self.selected_note_id))
+            })
+        {
+            self.cancel_desktop_ai_query();
+            self.desktop_ai.message =
+                "来源资料已变化，正在等待在途请求结束；本次回答不会应用，可重新预览后发送".into();
         }
         if self
             .knowledge_ai_answer
@@ -169,6 +190,7 @@ impl TimerWindowsClient {
         if !self.background_work_is_allowed()
             || self.desktop_ai.boundary.busy()
             || self.knowledge_ai_pending
+            || self.desktop_agent.active.is_some()
         {
             return Err("上一条请求尚未结束，请稍后再试".into());
         }
@@ -206,14 +228,18 @@ impl TimerWindowsClient {
                     desktop_note_kind(note) == DesktopNoteKind::Document
                         && note.deleted_at_epoch_millis.is_none()
                         && note.encryption.is_none()
-                        && (self.knowledge_ai_scope_all
-                            || (selected.is_some() && note.folder_id.as_deref() == selected))
+                        && (if let Some(id) = self.desktop_ai.priority_note_id.as_deref() {
+                            note.id == id
+                        } else {
+                            self.knowledge_ai_scope_all
+                                || (selected.is_some() && note.folder_id.as_deref() == selected)
+                        })
                 })
                 .map(|note| {
                     (
                         note.id.clone(),
                         note.title.clone(),
-                        desktop_note_document_text(&note.content, &note.document),
+                        desktop_ai_current_note_text(&note.content, &note.document),
                         note.folder_id
                             .as_deref()
                             .and_then(|id| folders.get(id))
@@ -236,12 +262,18 @@ impl TimerWindowsClient {
                 .iter()
                 .map(|source| source.3.clone())
                 .collect::<Vec<_>>();
-            let ranked = gridtimer_native::rank_desktop_knowledge_sources(
-                &question,
-                &titles,
-                &bodies,
-                &folder_names,
-            );
+            let ranked = if self.desktop_ai.priority_note_id.is_some() {
+                // An explicitly selected page is already the scope. A general
+                // request such as “summarize this page” need not repeat its text.
+                (0..candidates.len()).collect()
+            } else {
+                gridtimer_native::rank_desktop_knowledge_sources(
+                    &question,
+                    &titles,
+                    &bodies,
+                    &folder_names,
+                )
+            };
             let mut remaining = 4500usize;
             for index in ranked.into_iter().take(5) {
                 let Some((id, title, body, folder)) = candidates.get(index) else {
@@ -293,6 +325,7 @@ impl TimerWindowsClient {
             && !self.workspace_edit_locked()
             && self.workspace_persistence_ready
             && !self.knowledge_ai_pending
+            && self.desktop_agent.active.is_none()
             && !self.note_dirty
             && desktop_ai_configured_recipient(&self.sync).is_ok()
             && (preview.mode == QueryMode::Direct
@@ -316,6 +349,8 @@ impl TimerWindowsClient {
             .iter()
             .map(|source| source.0.clone())
             .collect::<Vec<_>>();
+        self.desktop_ai.active_knowledge_scope = (mode == QueryMode::Knowledge)
+            .then(|| (preview.notes_version, source_ids.iter().cloned().collect()));
         let source_titles = preview
             .sources
             .iter()
@@ -372,6 +407,7 @@ impl TimerWindowsClient {
             self.desktop_ai.boundary.finish(request_id, "", "");
             self.knowledge_ai_pending = false;
             self.knowledge_ai_result_rx = None;
+            self.desktop_ai.active_knowledge_scope = None;
             self.desktop_ai.message = format!("AI 请求无法启动：{error}");
         }
     }
@@ -496,7 +532,31 @@ impl TimerWindowsClient {
         self.knowledge_view = KnowledgeCollectionView::Recent;
         self.knowledge_ai_panel_open = true;
         self.desktop_ai.mode = mode;
+        self.desktop_ai.priority_note_id = None;
         self.desktop_ai.preview = None;
+    }
+
+    fn open_desktop_document_ai(&mut self, note_id: &str) {
+        if self.flush_document_operation_drafts().is_err() {
+            return;
+        }
+        let readable = self.data.notes.iter().any(|note| {
+            note.id == note_id
+                && desktop_note_kind(note) == DesktopNoteKind::Document
+                && note.deleted_at_epoch_millis.is_none()
+                && note.encryption.is_none()
+                && !desktop_ai_current_note_text(&note.content, &note.document)
+                    .trim()
+                    .is_empty()
+        });
+        if !readable {
+            self.status = "当前文档不可读取；加密、空白或已删除的内容不纳入 AI".into();
+            return;
+        }
+        self.open_desktop_ai_entry(QueryMode::Knowledge);
+        self.desktop_ai.priority_note_id = Some(note_id.to_owned());
+        self.knowledge_ai_scope_all = true;
+        self.desktop_ai.message = "本次只依据当前文档最新内容回答，请输入问题后核对发送资料".into();
     }
 
     fn ui_desktop_ai_preview(&mut self, ctx: &egui::Context) {

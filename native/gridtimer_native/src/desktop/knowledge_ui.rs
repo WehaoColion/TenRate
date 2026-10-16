@@ -1,3 +1,4 @@
+// Windows - Expose the nested directory beside the existing collection and AI tools.
 // v1.1.0.7 Windows - Separate direct AI questions from source-only knowledge and show send scope.
 // v1.0.3.12 Windows - Index library folder names once per view instead of scanning per note.
 // v1.0.3.3 Windows - Add a dedicated canvas view to the knowledge workspace.
@@ -107,6 +108,9 @@ impl TimerWindowsClient {
             )
             .show_inside(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                if editing {
+                    self.ui_document_exit_wait(ui);
+                }
                 if canvas_visible {
                     self.ui_knowledge_canvas(ui);
                 } else {
@@ -172,6 +176,7 @@ impl TimerWindowsClient {
                         });
                 }
             });
+        self.ui_knowledge_directory(ui.ctx());
         let overlay_enabled = ui.is_enabled();
         if !navigator && self.desktop_ui.experience.navigator_drawer_open {
             let mut open = true;
@@ -215,6 +220,13 @@ impl TimerWindowsClient {
     fn ui_knowledge_collection_controls(&mut self, ui: &mut egui::Ui) {
         card_frame().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
+                if ui
+                    .button("知识目录")
+                    .on_hover_text("页面与文件夹，支持拖动排序")
+                    .clicked()
+                {
+                    self.open_knowledge_directory(None);
+                }
                 for view in [
                     KnowledgeCollectionView::Recent,
                     KnowledgeCollectionView::Board,
@@ -550,6 +562,9 @@ impl TimerWindowsClient {
         card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
                 section_heading(ui, "AI 问答");
+                if ui.button("Agent").clicked() {
+                    self.open_desktop_agent_entry(None);
+                }
                 if ui.button("关闭").clicked() {
                     self.cancel_desktop_ai_query();
                     self.knowledge_ai_panel_open = false;
@@ -572,20 +587,48 @@ impl TimerWindowsClient {
             });
             if self.desktop_ai.mode != old_mode {
                 self.desktop_ai.preview = None;
+                self.desktop_ai.priority_note_id = None;
             }
             if self.desktop_ai.mode == QueryMode::Knowledge {
-                let old_scope = self.knowledge_ai_scope_all;
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut self.knowledge_ai_scope_all, true, "全部知识页");
-                    ui.add_enabled_ui(
-                        self.data.note_preferences.selected_folder_id.is_some(),
-                        |ui| {
-                            ui.radio_value(&mut self.knowledge_ai_scope_all, false, "当前文件夹");
-                        },
-                    );
-                });
-                if old_scope != self.knowledge_ai_scope_all {
-                    self.desktop_ai.preview = None;
+                if let Some(id) = self.desktop_ai.priority_note_id.clone() {
+                    let title = self
+                        .data
+                        .notes
+                        .iter()
+                        .find(|note| {
+                            note.id == id
+                                && note.deleted_at_epoch_millis.is_none()
+                                && note.encryption.is_none()
+                        })
+                        .map(|note| note.title.as_str())
+                        .unwrap_or("来源已不可访问");
+                    ui.label(format!(
+                        "仅当前文档：{}",
+                        if title.is_empty() { "未命名" } else { title }
+                    ));
+                    if ui.small_button("改为全部知识页").clicked() {
+                        self.desktop_ai.priority_note_id = None;
+                        self.knowledge_ai_scope_all = true;
+                        self.desktop_ai.preview = None;
+                    }
+                } else {
+                    let old_scope = self.knowledge_ai_scope_all;
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut self.knowledge_ai_scope_all, true, "全部知识页");
+                        ui.add_enabled_ui(
+                            self.data.note_preferences.selected_folder_id.is_some(),
+                            |ui| {
+                                ui.radio_value(
+                                    &mut self.knowledge_ai_scope_all,
+                                    false,
+                                    "当前文件夹",
+                                );
+                            },
+                        );
+                    });
+                    if old_scope != self.knowledge_ai_scope_all {
+                        self.desktop_ai.preview = None;
+                    }
                 }
                 ui.label("发送相关知识页节选；答案依据本次来源。加密和已删除的内容不纳入。");
             } else {

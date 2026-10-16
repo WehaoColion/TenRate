@@ -280,7 +280,15 @@ impl TimerWindowsClient {
             }
             KnowledgeQuickChoice::NewPage => self.create_knowledge_page(None, false),
             KnowledgeQuickChoice::NewDatabase => self.create_knowledge_page(None, true),
-            KnowledgeQuickChoice::Home => self.return_to_document_list(),
+            KnowledgeQuickChoice::Home => {
+                let returned = self.return_to_document_list();
+                // An accepted background exit owns the return action. Close the
+                // picker so its overlay cannot hide the wait/cancel controls.
+                if returned || self.desktop_ui.navigation.pending_exit.is_some() {
+                    self.desktop_ui.experience.palette_open = false;
+                }
+                returned
+            }
             KnowledgeQuickChoice::Focus => {
                 self.desktop_ui.experience.focus_mode = !self.desktop_ui.experience.focus_mode;
                 true

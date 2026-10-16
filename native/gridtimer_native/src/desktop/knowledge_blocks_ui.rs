@@ -1,3 +1,4 @@
+// Windows - Reveal reference targets of every block type without editing saved toggle state.
 // v1.0.3 Windows - Keep backlink rows limited to page identifiers and titles.
 // v2.22.54 - Avoid discarded undo copies and full-library clones in child navigation.
 // v2.22.53 - Focused knowledge workspace, contextual controls and safe navigation.
@@ -86,6 +87,32 @@ fn knowledge_block_subtree(blocks: &[DesktopNoteBlock], root: &str) -> HashSet<S
         }
     }
     ids
+}
+
+fn knowledge_block_reveal_ancestors(blocks: &[DesktopNoteBlock], target: &str) -> HashSet<String> {
+    let parents = blocks
+        .iter()
+        .map(|block| {
+            (
+                block.id.as_str(),
+                block
+                    .knowledge
+                    .as_ref()
+                    .and_then(|meta| meta.parent_id.as_deref()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut result = HashSet::new();
+    let mut current = parents.get(target).copied().flatten();
+    let mut seen = HashSet::from([target]);
+    while let Some(parent) = current {
+        if !seen.insert(parent) {
+            break;
+        }
+        result.insert(parent.to_string());
+        current = parents.get(parent).copied().flatten();
+    }
+    result
 }
 
 impl TimerWindowsClient {
@@ -326,6 +353,15 @@ impl TimerWindowsClient {
     }
 
     fn ui_knowledge_blocks(&mut self, ui: &mut egui::Ui) {
+        if let Some(target) = self.desktop_ui.parity.outline_target.as_deref() {
+            self.desktop_ui
+                .knowledge
+                .revealed_blocks
+                .extend(knowledge_block_reveal_ancestors(
+                    &self.note_blocks_draft,
+                    target,
+                ));
+        }
         let locked = self.knowledge_page_locked();
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(!locked, |ui| {
@@ -385,6 +421,36 @@ impl TimerWindowsClient {
     }
 
     fn ui_knowledge_block(
+        &mut self,
+        ui: &mut egui::Ui,
+        block: &DesktopNoteBlock,
+        index: usize,
+        depth: usize,
+        locked: bool,
+    ) {
+        let targeted = self.desktop_ui.parity.outline_target.as_deref() == Some(&block.id);
+        let page = self.selected_note_id.clone();
+        let editor_epoch = self.desktop_ui.navigation.editor_epoch;
+        let response = ui
+            .scope(|ui| self.ui_knowledge_block_inner(ui, block, index, depth, locked))
+            .response;
+        if targeted
+            && page == self.selected_note_id
+            && editor_epoch == self.desktop_ui.navigation.editor_epoch
+            && self
+                .desktop_ui
+                .parity
+                .outline_target
+                .as_deref()
+                .is_none_or(|target| target == block.id)
+        {
+            response.scroll_to_me(Some(egui::Align::Center));
+            self.desktop_ui.parity.outline_target = None;
+            self.note_active_block_id = block.id.clone();
+        }
+    }
+
+    fn ui_knowledge_block_inner(
         &mut self,
         ui: &mut egui::Ui,
         block: &DesktopNoteBlock,
@@ -475,7 +541,7 @@ impl TimerWindowsClient {
                             },
                             _=>{
                                 ui.horizontal_top(|ui|{
-                                    if meta.kind==K::Todo{ui.checkbox(&mut meta.checked,"");}else if meta.kind==K::BulletedList{ui.label("•");}else if meta.kind==K::NumberedList{ui.label(format!("{}.", knowledge_numbered_position(&self.note_blocks_draft, block)));}else if meta.kind==K::Quote{ui.label(egui::RichText::new("▎").color(palette().muted));}else if meta.kind==K::Callout{ui.label("◈");}else if meta.kind==K::Toggle{if ui.small_button(if meta.collapsed{"▸"}else{"▾"}).clicked(){meta.collapsed=!meta.collapsed;}}
+                                    if meta.kind==K::Todo{ui.checkbox(&mut meta.checked,"");}else if meta.kind==K::BulletedList{ui.label("•");}else if meta.kind==K::NumberedList{ui.label(format!("{}.", knowledge_numbered_position(&self.note_blocks_draft, block)));}else if meta.kind==K::Quote{ui.label(egui::RichText::new("▎").color(palette().muted));}else if meta.kind==K::Callout{ui.label("◈");}else if meta.kind==K::Toggle{let revealed=self.desktop_ui.knowledge.revealed_blocks.contains(&block.id);if ui.small_button(if meta.collapsed&&!revealed{"▸"}else{"▾"}).clicked(){meta.collapsed=!(!meta.collapsed||revealed);self.desktop_ui.knowledge.revealed_blocks.remove(&block.id);}}
                                     let small=self.desktop_ui.knowledge.page.as_ref().is_some_and(|p|p.small_text);let size=match meta.kind{K::Heading1=>26.0,K::Heading2=>22.0,K::Heading3=>18.0,_=>if small{13.0}else{15.0}};
                                     let mut editor=egui::TextEdit::multiline(&mut edited.text).id(egui::Id::new(("knowledge_block_editor",self.desktop_ui.navigation.editor_epoch,&block.id))).desired_width(f32::INFINITY).desired_rows(1).font(egui::FontId::proportional(size)).text_color(text_color).frame(false).hint_text(if meta.kind==K::Code{"代码"}else if meta.kind==K::Equation{"LaTeX 公式"}else{"输入内容，或输入 / 选择块类型"});
                                     if matches!(meta.kind,K::Code|K::Equation){editor=editor.code_editor();}
@@ -603,7 +669,13 @@ impl TimerWindowsClient {
                 | knowledge::BlockKind::Columns
                 | knowledge::BlockKind::BulletedList
                 | knowledge::BlockKind::NumberedList
-        ) && !(meta.kind == knowledge::BlockKind::Toggle && meta.collapsed)
+        ) && !(meta.kind == knowledge::BlockKind::Toggle
+            && meta.collapsed
+            && !self
+                .desktop_ui
+                .knowledge
+                .revealed_blocks
+                .contains(&block.id))
         {
             if meta.kind == knowledge::BlockKind::Columns {
                 ui.columns(meta.columns as usize, |columns| {
