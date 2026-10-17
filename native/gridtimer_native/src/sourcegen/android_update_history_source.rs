@@ -37,7 +37,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.38";
+pub const LATEST_VERSION: &str = "2.23.2.39";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -67,6 +67,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.39",
+        updatedAt = "2026-10-17 20:37",
+        summary = "修复便签待办项之间多出的空行",
+        sections = listOf(
+            AndroidUpdateSection("待办列表", listOf(
+                "通过工具栏建立的待办项，预览时按连续列表排列，消除相邻复选框条目之间额外插入的空白段落。未完成与已完成的复选框均适用。",
+                "单条待办中已有的多行内容保留原样；列表结束后接普通正文时，继续保留段落间隔。明确输入的空行仍保留。"
+            )),
+            AndroidUpdateSection("版本说明", listOf(
+                "本次只修复预览中的段落连接规则，不改便签原文、历史记录、附件、同步格式、布局或动画。此前的普通换行修复和无公式便签加载优化继续保留。",
+                "Android 2.23.2.39，versionCode 22308；沿用原应用包名和正式签名，支持覆盖安装。历版说明继续保留，可折叠并点按复制。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.38",
         updatedAt = "2026-10-17 17:25",

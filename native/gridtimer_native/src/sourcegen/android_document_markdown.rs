@@ -87,6 +87,7 @@ private class DocumentMarkdownContext(private val allowedMathStarts: Set<Pair<In
     private var listQuoteDepth = 0
     private var indentedCode = false
     private var table = false
+    private var previousBlockNativeTodo = false
 
     fun continuesWith(nextBlock: String): Boolean {
         if (fence != null && fenceContent(nextBlock.lineSequence().firstOrNull().orEmpty()) != null) return true
@@ -98,6 +99,9 @@ private class DocumentMarkdownContext(private val allowedMathStarts: Set<Pair<In
         if (indentedCode && (next.isBlank() || isIndented(next))) return true
         if (previousQuoteDepth > 0 && nextQuoteDepth > 0) return true
         if (previousLine.isBlank() || next.isBlank()) return false
+        // The editor stores toolbar-created todo rows as native checkbox glyphs,
+        // not CommonMark "- [ ]" markers. Keep adjacent todo blocks list-tight.
+        if (previousBlockNativeTodo && NATIVE_TODO_ITEM.containsMatchIn(nextRaw)) return true
         val leftCells = tableCells(previousLine)
         val rightCells = tableCells(next)
         if (leftCells != null && rightCells != null &&
@@ -112,6 +116,7 @@ private class DocumentMarkdownContext(private val allowedMathStarts: Set<Pair<In
     }
 
     fun read(text: String) {
+        previousBlockNativeTodo = NATIVE_TODO_ITEM.containsMatchIn(text.lineSequence().firstOrNull().orEmpty())
         text.lineSequence().forEach { line ->
             currentLineNumber = lineNumber++
             val activeFence = fence
@@ -316,6 +321,7 @@ private class DocumentMarkdownContext(private val allowedMathStarts: Set<Pair<In
     companion object {
         private val TABLE_DELIMITER = Regex(":?-+:?")
         private val LIST_ITEM = Regex("^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \\t]+")
+        private val NATIVE_TODO_ITEM = Regex("^ {0,3}[□☐☑☒][ \\t]+")
         private val SETEXT = Regex(" {0,3}(?:=+|-+)[ \\t]*")
     }
 }
@@ -406,6 +412,27 @@ class DocumentMarkdownBlocksTest {
         for (items in listOf(listOf("1. 甲", "2. 乙"), listOf("- 甲", "- 乙"), listOf("- [ ] 甲", "- [x] 乙"))) {
             assertEquals(items.joinToString("\n") + "\n\n正文", documentMarkdownFromBlocks(items + "正文"))
         }
+    }
+    @Test fun nativeTodoBlocksStayTightWithoutCollapsingFollowingProse() {
+        for (marker in listOf("□", "☐", "☑", "☒")) {
+            assertEquals("$marker 第一项\n$marker 第二项\n\n正文",
+                documentMarkdownFromBlocks(listOf("$marker 第一项", "$marker 第二项", "正文")))
+            assertEquals("$marker 第一项\n\n\n\n$marker 第二项",
+                documentMarkdownFromBlocks(listOf("$marker 第一项", "", "$marker 第二项")))
+        }
+        assertEquals("普通段落\n\n□ 第一项", documentMarkdownFromBlocks(listOf("普通段落", "□ 第一项")))
+        val items = listOf(
+            "□ 更新一遍论文，有的论文可以重点更新",
+            "□ 第二件事，更新10条视频",
+            "□ 第三件事，整理长沙100套备选房源，调查20000套",
+            "□ 洗完所有的衣服。把房间卫生搞一遍",
+            "□ 发布所有的需要售卖的商品，照片都拍好",
+        )
+        assertEquals(items.joinToString("\n") + "\n\n正文", documentMarkdownFromBlocks(items + "正文"))
+        assertEquals(
+            "□ 第一项\n续行\n□ 第二项\n\n正文",
+            documentMarkdownFromBlocks(listOf("□ 第一项\n续行", "□ 第二项", "正文")),
+        )
     }
     @Test fun quoteAndIndentedCodeStayContiguousButEndBeforeProse() {
         assertEquals("> 甲\n> 乙\n\n正文", documentMarkdownFromBlocks(listOf("> 甲", "> 乙", "正文")))

@@ -1,3 +1,5 @@
+v2.23.2.39（Android已验收APK）- 修复相邻原生待办项预览中多出的空行；versionCode22308。正式签名APK于2026-10-17 21:20（北京时间）按原流程交付，三处哈希一致，旧2.23.2.38已归档到old_apks；用户于2026-10-17确认本版可用并授权合并PR #33。详见[本版说明](documents/releases/android/release_notes_v2.23.2.39.md)。
+
 v2.23.2.38（Android已验收APK）- 减少无公式便签预览加载开销；versionCode22307。正式签名APK于2026-10-17 19:02（北京时间）按原流程交付，三处哈希一致，旧2.23.2.37已归档到old_apks；用户于2026-10-17确认本版可用并授权合并PR #32。详见[本版说明](documents/releases/android/release_notes_v2.23.2.38.md)。
 
 v2.23.2.37（Android已验收APK）- 修复便签当前内容和历史版本的Markdown预览丢失单回车换行的问题；versionCode22306。正式签名APK于2026-10-17 06:47（北京时间）按原流程交付，三处哈希一致，旧2.23.2.36已归档到old_apks；用户于2026-10-17确认本版可用并授权合并PR #31。详见[本版说明](documents/releases/android/release_notes_v2.23.2.37.md)。
