@@ -195,6 +195,11 @@ fn run() -> io::Result<()> {
         )?;
         write_source(
             &unit_test_output_root,
+            android_document_exit_feedback::SHARE_RASTER_TEST_PATH,
+            android_document_exit_feedback::SHARE_RASTER_TESTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
             android_document_markdown::TEST_PATH,
             android_document_markdown::TEST_CONTENTS,
         )?;
