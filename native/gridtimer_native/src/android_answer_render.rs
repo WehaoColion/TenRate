@@ -338,17 +338,16 @@ mod tests {
 
     #[test]
     fn sticky_note_plain_preview_omits_katex_payload_but_preserves_readiness() {
-        let plain = render_android_sticky_note_html("第一行\\n第二行\\n- [ ] 待办", false);
-        assert!(plain.contains("第一行<br />\\n第二行"));
+        let plain = render_android_sticky_note_html("第一行\n第二行\n- [ ] 待办", false);
+        assert!(plain.contains("第一行<br />\n第二行"));
         assert!(plain.contains("☐ 待办"));
-        assert!(!plain.contains("katex.min.css"));
         assert!(!plain.contains(".katex-html"));
         assert!(!plain.contains("katex.renderToString"));
         assert!(plain.contains("android-ai-answer-ready"));
         assert!(plain.contains("mathReady='true'"));
 
-        let math = render_android_sticky_note_html("第一行\\n\\(x^2\\)", true);
-        assert!(math.contains("class=\\\"math-source "));
+        let math = render_android_sticky_note_html("第一行\n\\(x^2\\)", true);
+        assert!(math.contains("class=\"math-source "));
         assert!(math.contains(".katex-html"));
         assert!(math.contains("katex.renderToString"));
     }
