@@ -834,6 +834,11 @@ internal object NativeOptimizerBridge {
         return runCatching { nativeRenderAndroidAiAnswerHtml(content, darkTheme) }.getOrNull()
     }
 
+    fun renderAndroidStickyNoteHtml(content: String, darkTheme: Boolean): String? {
+        if (!nativeAvailable) return null
+        return runCatching { nativeRenderAndroidStickyNoteHtml(content, darkTheme) }.getOrNull()
+    }
+
     fun renderRichTextBody(
         content: String,
         markdownEnabled: Boolean
@@ -4518,6 +4523,12 @@ internal object NativeOptimizerBridge {
 
     @JvmStatic
     private external fun nativeRenderAndroidAiAnswerHtml(
+        content: String,
+        darkTheme: Boolean
+    ): String?
+
+    @JvmStatic
+    private external fun nativeRenderAndroidStickyNoteHtml(
         content: String,
         darkTheme: Boolean
     ): String?
@@ -57342,7 +57353,8 @@ internal fun SmartisanNoteEditorContent(
                         } else if (markdownPreview) {
                             AndroidRenderedMarkdown(
                                 content = bodyFieldValue.text,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth(),
+                                preserveLineBreaks = true
                             )
                         } else {
                             Box(
@@ -58332,7 +58344,7 @@ private fun HistoricalNoteVersionCard(
                     .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
             )
             if (version.document.markdownEnabled && !version.document.richTextEnabled) {
-                AndroidRenderedMarkdown(content = body, modifier = Modifier.fillMaxWidth())
+                AndroidRenderedMarkdown(content = body, modifier = Modifier.fillMaxWidth(), preserveLineBreaks = true)
             } else if (formattedHistory) {
                 SmartisanRichTextEditor(
                     html = historicalHtml,

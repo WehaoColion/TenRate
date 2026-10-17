@@ -1,3 +1,4 @@
+// v2.23.2.37 - Scope authored line breaks to sticky-note rendering and its view lifetime.
 // v2.23.2.7 - Load only the current offline document and finish from its real render state.
 // v2.23.2.6 - Render Android Markdown and formulas offline without changing stored answers.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidRenderedMarkdown.kt";
@@ -213,17 +214,18 @@ private const val MARKDOWN_RENDER_SNAPSHOT = """
 
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
-internal fun AndroidRenderedMarkdown(content: String, modifier: Modifier = Modifier) {
+internal fun AndroidRenderedMarkdown(content: String, modifier: Modifier = Modifier, preserveLineBreaks: Boolean = false) {
     val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.45f
     val fontScale = LocalDensity.current.fontScale
-    var attempt by remember(content, darkTheme) { mutableStateOf(0) }
-    var html by remember(content, darkTheme, attempt) { mutableStateOf<String?>(null) }
-    var renderingFailure by remember(content, darkTheme, attempt) { mutableStateOf<String?>(null) }
+    var attempt by remember(content, darkTheme, preserveLineBreaks) { mutableStateOf(0) }
+    var html by remember(content, darkTheme, preserveLineBreaks, attempt) { mutableStateOf<String?>(null) }
+    var renderingFailure by remember(content, darkTheme, preserveLineBreaks, attempt) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(content, darkTheme, attempt) {
+    LaunchedEffect(content, darkTheme, preserveLineBreaks, attempt) {
         Log.i(MARKDOWN_RENDER_LOG, "native_begin chars=${content.length} attempt=$attempt")
         val rendered = withContext(Dispatchers.IO) {
-            NativeOptimizerBridge.renderAndroidAiAnswerHtml(content, darkTheme)
+            if (preserveLineBreaks) NativeOptimizerBridge.renderAndroidStickyNoteHtml(content, darkTheme)
+            else NativeOptimizerBridge.renderAndroidAiAnswerHtml(content, darkTheme)
         }
         if (rendered.isNullOrBlank()) {
             Log.w(MARKDOWN_RENDER_LOG, "native_render_empty")
@@ -249,7 +251,7 @@ internal fun AndroidRenderedMarkdown(content: String, modifier: Modifier = Modif
         return
     }
 
-    key(content, darkTheme, attempt) {
+    key(content, darkTheme, preserveLineBreaks, attempt) {
         val holder = remember { AndroidMarkdownViewHolder() }
         val trustedDocument = remember(document, holder) {
             document.replaceFirst("<main id=\"android-ai-answer\">",

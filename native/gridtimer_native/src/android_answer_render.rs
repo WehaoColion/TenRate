@@ -1,3 +1,4 @@
+// v2.23.2.37 Android - Preserve authored sticky-note line breaks only in note previews.
 // v2.23.2.7 Android - Accept TeX whitespace while preserving dollar currency boundaries.
 // Android answer behavior stays independent; Windows can reuse the safe math parser.
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
@@ -10,7 +11,16 @@ const KATEX_JS: &str = include_str!("desktop/assets/katex_v0.18.7.min.js");
 /// Only this trusted shell is executable. Answer text is parsed into safe HTML;
 /// mathematical input reaches KaTeX as an escaped attribute, never JavaScript.
 pub fn render_android_ai_answer_html(content: &str, dark_theme: bool) -> String {
-    let body = render_answer_body(content);
+    render_markdown_html(render_answer_body(content), dark_theme)
+}
+
+/// Sticky-note Enter is an authored line boundary, including Unicode task rows.
+/// Keep the original text intact and reuse the same math and HTML safety policy.
+pub fn render_android_sticky_note_html(content: &str, dark_theme: bool) -> String {
+    render_markdown_html(render_markdown_body(content, true), dark_theme)
+}
+
+fn render_markdown_html(body: String, dark_theme: bool) -> String {
     let mut nonce_bytes = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce: String = nonce_bytes
@@ -215,6 +225,10 @@ fn text_with_formulas<'a>(text: &str, prefix: &str, formulas: &[Formula]) -> Vec
 }
 
 fn render_answer_body(content: &str) -> String {
+    render_markdown_body(content, false)
+}
+
+fn render_markdown_body(content: &str, preserve_line_breaks: bool) -> String {
     let (markdown, prefix, formulas) = tokenize_math(content);
     let events = Parser::new_ext(&markdown, markdown_options()).flat_map(|event| match event {
         Event::Html(text) | Event::InlineHtml(text) => {
@@ -226,6 +240,7 @@ fn render_answer_body(content: &str) -> String {
         Event::End(TagEnd::Image) => vec![Event::Html("</span>".into())],
         Event::TaskListMarker(done) => vec![Event::Text(if done { "☑ " } else { "☐ " }.into())],
         Event::Text(text) => text_with_formulas(&text, &prefix, &formulas),
+        Event::SoftBreak if preserve_line_breaks => vec![Event::HardBreak],
         other => vec![other],
     });
     let mut body = String::new();
@@ -314,6 +329,95 @@ fn escape_html(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sticky_note_preview_preserves_authored_lines_and_unicode_task_rows() {
+        let lines = [
+            "☐ 更新论文",
+            "□ 更新视频",
+            "☑ 整理房源",
+            "普通一行",
+            "下一行中文😀",
+        ];
+        for newline in ["\n", "\r\n"] {
+            let source = lines.join(newline);
+            let original = source.clone();
+            let body = render_markdown_body(&source, true);
+            assert_eq!(body.matches("<br />").count(), lines.len() - 1);
+            for pair in lines.windows(2) {
+                assert!(body.contains(&format!("{}<br />\n{}", pair[0], pair[1])));
+            }
+            assert_eq!(source, original);
+        }
+    }
+
+    #[test]
+    fn sticky_note_preview_keeps_list_code_and_explicit_break_boundaries() {
+        let body = render_markdown_body(
+            "- [ ] 第一项\n- [x] 第二项\n  - [ ] 子项\n\n- 普通列表\n- 另一项\n\n硬换行  \n下一行\n\n```text\n☐ 代码第一行\n☐ 代码第二行\n```",
+            true,
+        );
+        assert_eq!(body.matches("<li>").count(), 5);
+        assert!(body.contains("☐ 第一项"));
+        assert!(body.contains("☑ 第二项"));
+        assert!(body.contains("☐ 子项"));
+        assert_eq!(body.matches("<br />").count(), 1);
+        assert!(body.contains("硬换行<br />\n下一行"));
+        let code = body
+            .split("<pre><code")
+            .nth(1)
+            .unwrap()
+            .split("</code></pre>")
+            .next()
+            .unwrap();
+        assert!(code.contains("☐ 代码第一行\n☐ 代码第二行\n"));
+        assert!(!code.contains("<br"));
+    }
+
+    #[test]
+    fn sticky_note_preview_preserves_math_and_keeps_untrusted_html_inert() {
+        let source = "公式前一行\n公式前二行\n\n\\[\nA = P \\times (1+r)^n\n\\]\n\n公式后一行\n公式后二行\n<script>bad()</script>\n<img src='https://example.invalid/pixel'>";
+        let body = render_markdown_body(source, true);
+        assert!(body.contains("公式前一行<br />\n公式前二行"));
+        assert!(body.contains("公式后一行<br />\n公式后二行"));
+        assert_eq!(body.matches("class=\"math-source ").count(), 1);
+        assert_eq!(body.matches("data-display=\"true\"").count(), 1);
+        let formula = body
+            .split("data-latex=\"")
+            .nth(1)
+            .unwrap()
+            .split('\"')
+            .next()
+            .unwrap();
+        assert!(formula.contains("A = P \\times (1+r)^n"));
+        assert!(!formula.contains("<br"));
+        assert!(!body.contains("<script"));
+        assert!(!body.contains("<img"));
+        assert!(body.contains("&lt;script&gt;"));
+        assert!(body.contains("&lt;img"));
+    }
+
+    #[test]
+    fn sticky_note_line_break_policy_is_isolated_from_default_markdown() {
+        let source = "第一行\n第二行\n\n另一段";
+        for dark_theme in [false, true] {
+            let sticky = render_android_sticky_note_html(source, dark_theme);
+            let default = render_android_ai_answer_html(source, dark_theme);
+            let main = |html: String| {
+                html.split("<main id=\"android-ai-answer\">")
+                    .nth(1)
+                    .unwrap()
+                    .split("</main>")
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            };
+            assert!(main(sticky).contains("第一行<br />\n第二行"));
+            let default_body = main(default);
+            assert!(default_body.contains("第一行\n第二行"));
+            assert!(!default_body.contains("<br"));
+        }
+    }
 
     #[test]
     fn android_math_render_supports_all_delimiters_and_markdown() {
