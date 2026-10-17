@@ -1,3 +1,4 @@
+// v2.23.2.40 - Render share-image Markdown and formulas before rasterizing the knowledge page body.
 // v2.23.2.33 - Keep preview generation aligned with the compact editor prefix.
 //! v2.23.2.28 - Keep the document visible during a durable exit save.
 //! No repository, queue ordering, checkpoint or encryption changes.
@@ -77,7 +78,18 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         "}\n\nprivate fun NoteDocument.ensureEditableBlocks()",
         "    }\n}\n\nprivate fun NoteDocument.ensureEditableBlocks()",
     )?;
+
+    // The old long-image path paints note.plainContent() with StaticLayout, so
+    // Markdown and TeX delimiters are exported literally. Render the body with
+    // the same offline Markdown/KaTeX engine used by the on-screen preview, then
+    // composite that raster into the existing share card. If WebView rendering
+    // cannot complete, preserve the previous StaticLayout path as a safe fallback.
+    replace(&mut source, SHARE_BODY_LAYOUT_BEFORE, SHARE_BODY_LAYOUT_AFTER)?;
+    replace(&mut source, SHARE_TOTAL_HEIGHT_BEFORE, SHARE_TOTAL_HEIGHT_AFTER)?;
+    replace(&mut source, SHARE_BODY_DRAW_BEFORE, SHARE_BODY_DRAW_AFTER)?;
+
     source.push_str(PREVIEW_HELPER);
+    source.push_str(SHARE_IMAGE_HELPER);
     Ok(source)
 }
 
@@ -130,3 +142,245 @@ const SAVE_FEEDBACK: &str = r####"    // Block new edits after capturing the exi
 
     if (insertCommandsVisible) {
         DocumentInsertCommandDialog("####;
+
+const SHARE_BODY_LAYOUT_BEFORE: &str = r####"    val bodyLayout = buildStaticLayout(note.plainContent(), bodyPaint, contentWidth)"####;
+const SHARE_BODY_LAYOUT_AFTER: &str = r####"    val renderedBody = renderMarkdownShareBody(context, note.plainContent(), contentWidth)
+    val bodyLayout = renderedBody?.let { null } ?: buildStaticLayout(note.plainContent(), bodyPaint, contentWidth)
+    val bodyHeight = renderedBody?.height ?: bodyLayout!!.height"####;
+
+const SHARE_TOTAL_HEIGHT_BEFORE: &str = r####"    val totalHeight = padding + titleLayout.height + 28 + metaLayout.height + 36 + bodyLayout.height +
+        attachmentTopGap + attachmentHeights + 32 + footerLayout.height + padding"####;
+const SHARE_TOTAL_HEIGHT_AFTER: &str = r####"    val totalHeight = padding + titleLayout.height + 28 + metaLayout.height + 36 + bodyHeight +
+        attachmentTopGap + attachmentHeights + 32 + footerLayout.height + padding"####;
+
+const SHARE_BODY_DRAW_BEFORE: &str = r####"    canvas.save()
+    canvas.translate(padding.toFloat(), top)
+    bodyLayout.draw(canvas)
+    canvas.restore()
+    top += bodyLayout.height + 24f"####;
+const SHARE_BODY_DRAW_AFTER: &str = r####"    if (renderedBody != null) {
+        canvas.drawBitmap(renderedBody, padding.toFloat(), top, Paint(Paint.ANTI_ALIAS_FLAG))
+        renderedBody.recycle()
+    } else {
+        canvas.save()
+        canvas.translate(padding.toFloat(), top)
+        bodyLayout!!.draw(canvas)
+        canvas.restore()
+    }
+    top += bodyHeight + 24f"####;
+
+const SHARE_IMAGE_HELPER: &str = r####"
+
+private const val SHARE_MARKDOWN_SNAPSHOT = """
+(()=>{const root=document.getElementById('android-ai-answer');const formulas=root?root.querySelectorAll('.math-source[data-latex]'):[];return [String(location.href),document.readyState,!!root,root?root.dataset.renderSession:'',formulas.length,document.documentElement.dataset.mathReady==='true',root?root.querySelectorAll('[data-math-rendered=true]').length:0,root?root.querySelectorAll('[data-math-error=true]').length:0,Math.ceil(document.body.getBoundingClientRect().height),!document.fonts||document.fonts.status==='loaded'];})()
+"""
+
+@android.annotation.SuppressLint("SetJavaScriptEnabled")
+private suspend fun renderMarkdownShareBody(
+    context: android.content.Context,
+    content: String,
+    width: Int,
+): android.graphics.Bitmap? {
+    if (content.isBlank() || width <= 0) return null
+    val html = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        com.ofairyo.gridtimer.core.NativeOptimizerBridge.renderAndroidAiAnswerHtml(content, false)
+    }?.takeIf(String::isNotBlank) ?: return null
+
+    return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+        kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+            val token = java.util.UUID.randomUUID().toString().replace("-", "")
+            val documentUrl = ANDROID_MARKDOWN_DOCUMENT_PREFIX + token + "/index.html"
+            val document = html.replaceFirst(
+                "<main id=\"android-ai-answer\">",
+                "<main id=\"android-ai-answer\" data-render-session=\"$token\">",
+            )
+            val documentBytes = document.toByteArray(Charsets.UTF_8)
+            val view = android.webkit.WebView(context.applicationContext)
+            val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
+            var finished = false
+
+            fun finish(result: android.graphics.Bitmap?) {
+                if (finished) {
+                    result?.recycle()
+                    return
+                }
+                finished = true
+                view.stopLoading()
+                view.webViewClient = android.webkit.WebViewClient()
+                view.destroy()
+                if (continuation.isActive) continuation.resumeWith(Result.success(result))
+                else result?.recycle()
+            }
+
+            fun capture(attempt: Int) {
+                if (finished) return
+                view.evaluateJavascript(SHARE_MARKDOWN_SNAPSHOT) { raw ->
+                    if (finished) return@evaluateJavascript
+                    val state = runCatching { org.json.JSONArray(raw) }.getOrNull()
+                    val formulaCount = state?.optInt(4, -1) ?: -1
+                    val renderedCount = state?.optInt(6, -1) ?: -1
+                    val errorCount = state?.optInt(7, -1) ?: -1
+                    val ready = state != null &&
+                        state.optString(0) == documentUrl &&
+                        state.optString(1) == "complete" &&
+                        state.optBoolean(2) &&
+                        state.optString(3) == token &&
+                        formulaCount >= 0 && renderedCount >= 0 && errorCount >= 0 &&
+                        (formulaCount == 0 || (state.optBoolean(5) && renderedCount + errorCount == formulaCount)) &&
+                        state.optBoolean(9)
+                    if (!ready) {
+                        if (attempt < 40) view.postDelayed({ capture(attempt + 1) }, 50L) else finish(null)
+                        return@evaluateJavascript
+                    }
+                    val cssHeight = state.optDouble(8, Double.NaN)
+                    if (!cssHeight.isFinite() || cssHeight <= 0.0) {
+                        finish(null)
+                        return@evaluateJavascript
+                    }
+                    val pixelHeightLong = kotlin.math.ceil(cssHeight * density).toLong()
+                    if (pixelHeightLong <= 0L || pixelHeightLong > 80_000L) {
+                        finish(null)
+                        return@evaluateJavascript
+                    }
+                    val pixelHeight = pixelHeightLong.toInt()
+                    val widthSpec = android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY)
+                    val heightSpec = android.view.View.MeasureSpec.makeMeasureSpec(pixelHeight, android.view.View.MeasureSpec.EXACTLY)
+                    val bitmap = runCatching {
+                        view.measure(widthSpec, heightSpec)
+                        view.layout(0, 0, width, pixelHeight)
+                        android.graphics.Bitmap.createBitmap(width, pixelHeight, android.graphics.Bitmap.Config.ARGB_8888).also { output ->
+                            val canvas = android.graphics.Canvas(output)
+                            canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+                            view.draw(canvas)
+                        }
+                    }.getOrNull()
+                    finish(bitmap)
+                }
+            }
+
+            view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            view.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+            view.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = false
+                allowFileAccess = false
+                allowContentAccess = false
+                blockNetworkLoads = true
+                loadsImagesAutomatically = false
+                cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                setSupportMultipleWindows(false)
+                useWideViewPort = false
+                loadWithOverviewMode = false
+                textZoom = ((34f / (16f * density)) * 100f).roundToInt().coerceIn(50, 300)
+            }
+            view.webViewClient = object : android.webkit.WebViewClient() {
+                override fun shouldInterceptRequest(
+                    webView: android.webkit.WebView,
+                    request: android.webkit.WebResourceRequest,
+                ): android.webkit.WebResourceResponse? {
+                    val url = request.url.toString()
+                    if (request.isForMainFrame && androidMarkdownDocumentAllowed(url, documentUrl)) {
+                        return android.webkit.WebResourceResponse(
+                            "text/html",
+                            "utf-8",
+                            200,
+                            "OK",
+                            mapOf("Cache-Control" to "no-store"),
+                            java.io.ByteArrayInputStream(documentBytes),
+                        )
+                    }
+                    if (androidMarkdownResourceAllowed(url, documentUrl, request.isForMainFrame)) return null
+                    return android.webkit.WebResourceResponse(
+                        "text/plain",
+                        "utf-8",
+                        403,
+                        "Blocked",
+                        emptyMap(),
+                        java.io.ByteArrayInputStream(ByteArray(0)),
+                    )
+                }
+
+                override fun shouldOverrideUrlLoading(
+                    webView: android.webkit.WebView,
+                    request: android.webkit.WebResourceRequest,
+                ): Boolean = !(request.isForMainFrame && androidMarkdownDocumentAllowed(request.url.toString(), documentUrl))
+
+                override fun onPageFinished(webView: android.webkit.WebView, url: String?) {
+                    if (androidMarkdownDocumentAllowed(url, documentUrl)) capture(0) else finish(null)
+                }
+
+                override fun onReceivedError(
+                    webView: android.webkit.WebView,
+                    request: android.webkit.WebResourceRequest,
+                    error: android.webkit.WebResourceError,
+                ) {
+                    if (request.isForMainFrame) finish(null)
+                }
+
+                override fun onRenderProcessGone(
+                    webView: android.webkit.WebView,
+                    detail: android.webkit.RenderProcessGoneDetail,
+                ): Boolean {
+                    finish(null)
+                    return true
+                }
+            }
+            val widthSpec = android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY)
+            val initialHeightSpec = android.view.View.MeasureSpec.makeMeasureSpec(1, android.view.View.MeasureSpec.EXACTLY)
+            view.measure(widthSpec, initialHeightSpec)
+            view.layout(0, 0, width, 1)
+            continuation.invokeOnCancellation {
+                view.post {
+                    if (!finished) finish(null)
+                }
+            }
+            view.loadUrl(documentUrl)
+        }
+    }
+}
+"####;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn editor() -> &'static str {
+        super::super::kotlin_sources::SOURCES
+            .iter()
+            .find(|item| item.path == PATH)
+            .expect("real document editor template")
+            .contents
+    }
+
+    #[test]
+    fn share_image_routes_markdown_through_offline_formula_renderer() {
+        // android_document_exit_feedback runs after android_document_markdown in sourcegen,
+        // so reproduce that earlier transformation before applying this one.
+        let base = super::super::android_document_markdown::render(PATH, editor()).unwrap();
+        let rendered = render(PATH, &base).unwrap();
+        for marker in [
+            "renderMarkdownShareBody(context, note.plainContent(), contentWidth)",
+            "NativeOptimizerBridge.renderAndroidAiAnswerHtml(content, false)",
+            "ANDROID_MARKDOWN_DOCUMENT_PREFIX",
+            "androidMarkdownDocumentAllowed",
+            "androidMarkdownResourceAllowed",
+            "[data-math-rendered=true]",
+            "val bodyHeight = renderedBody?.height ?: bodyLayout!!.height",
+            "renderedBody.recycle()",
+        ] {
+            assert!(rendered.contains(marker), "missing {marker}");
+        }
+        assert!(!rendered.contains(SHARE_BODY_LAYOUT_BEFORE));
+        assert!(!rendered.contains(SHARE_TOTAL_HEIGHT_BEFORE));
+        assert!(!rendered.contains(SHARE_BODY_DRAW_BEFORE));
+    }
+
+    #[test]
+    fn share_image_patch_fails_closed_when_export_shape_drifts() {
+        let base = super::super::android_document_markdown::render(PATH, editor()).unwrap();
+        for anchor in [SHARE_BODY_LAYOUT_BEFORE, SHARE_TOTAL_HEIGHT_BEFORE, SHARE_BODY_DRAW_BEFORE] {
+            assert!(render(PATH, &base.replacen(anchor, "", 1)).is_err());
+        }
+    }
+}
