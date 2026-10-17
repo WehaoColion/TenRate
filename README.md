@@ -1,3 +1,5 @@
+v2.23.2.38（Android候选）- 减少无公式便签预览加载开销，详见[本版说明](documents/releases/android/release_notes_v2.23.2.38.md)。
+
 v2.23.2.37（Android已验收APK）- 修复便签当前内容和历史版本的Markdown预览丢失单回车换行的问题；versionCode22306。正式签名APK于2026-10-17 06:47（北京时间）按原流程交付，三处哈希一致，旧2.23.2.36已归档到old_apks；用户于2026-10-17确认本版可用并授权合并PR #31。详见[本版说明](documents/releases/android/release_notes_v2.23.2.37.md)。
 
 v2.23.2.36（Android已验收APK）- 修复大快照超过数据库游标窗口及队列暂满拒绝退出保存的问题，保留写入失败草稿并显示具体失败类别；versionCode22305。正式签名APK于2026-10-17 03:34（北京时间）按原流程构建交付，旧包已归档到old_apks；用户于2026-10-17 04:11（北京时间）授权合并本次交付版本。详见[本版说明](documents/releases/android/release_notes_v2.23.2.36.md)。

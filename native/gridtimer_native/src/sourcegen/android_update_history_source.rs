@@ -37,7 +37,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.37";
+pub const LATEST_VERSION: &str = "2.23.2.38";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -67,6 +67,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.38",
+        updatedAt = "2026-10-17 17:25",
+        summary = "减少无公式便签预览加载开销",
+        sections = listOf(
+            AndroidUpdateSection("便签预览", listOf(
+                "普通文字、待办与列表没有公式时，预览不再加载无需使用的公式排版脚本和字体样式，减少生成内容体积及浏览器解析开销。",
+                "当前便签和历史版本均使用此规则，保留原文换行、待办、深浅主题及预览完成提示。"
+            )),
+            AndroidUpdateSection("公式与数据", listOf(
+                "存在公式时仍加载完整离线公式资源；AI回答和知识页沿用原有排版规则。",
+                "不改正文、历史数据、同步格式、界面布局和动画。沿用原包名及正式签名，支持覆盖安装。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.37",
         updatedAt = "2026-10-17 04:26",

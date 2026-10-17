@@ -1,3 +1,4 @@
+// v2.23.2.38 Android - Skip math resources only for formula-free sticky notes.
 // v2.23.2.37 Android - Preserve authored sticky-note line breaks only in note previews.
 // v2.23.2.7 Android - Accept TeX whitespace while preserving dollar currency boundaries.
 // Android answer behavior stays independent; Windows can reuse the safe math parser.
@@ -11,16 +12,16 @@ const KATEX_JS: &str = include_str!("desktop/assets/katex_v0.18.7.min.js");
 /// Only this trusted shell is executable. Answer text is parsed into safe HTML;
 /// mathematical input reaches KaTeX as an escaped attribute, never JavaScript.
 pub fn render_android_ai_answer_html(content: &str, dark_theme: bool) -> String {
-    render_markdown_html(render_answer_body(content), dark_theme)
+    render_markdown_html(render_answer_body(content), dark_theme, false)
 }
 
 /// Sticky-note Enter is an authored line boundary, including Unicode task rows.
 /// Keep the original text intact and reuse the same math and HTML safety policy.
 pub fn render_android_sticky_note_html(content: &str, dark_theme: bool) -> String {
-    render_markdown_html(render_markdown_body(content, true), dark_theme)
+    render_markdown_html(render_markdown_body(content, true), dark_theme, true)
 }
 
-fn render_markdown_html(body: String, dark_theme: bool) -> String {
+fn render_markdown_html(body: String, dark_theme: bool, omit_unused_math: bool) -> String {
     let mut nonce_bytes = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce: String = nonce_bytes
@@ -31,7 +32,7 @@ fn render_markdown_html(body: String, dark_theme: bool) -> String {
     // Most sticky notes contain no math. Avoid injecting and parsing the large
     // KaTeX CSS/JavaScript payload on every WebView preview in that case.
     // This check is against our generated, escaped HTML, not user input.
-    let has_math = body.contains("class=\"math-source ");
+    let has_math = !omit_unused_math || body.contains("class=\"math-source ");
     let katex_css = if has_math { KATEX_CSS } else { "" };
     let katex_js = if has_math { KATEX_JS } else { "" };
     format!(
