@@ -342,15 +342,15 @@ mod tests {
         let plain = render_android_sticky_note_html("第一行\n第二行\n- [ ] 待办", false);
         assert!(plain.contains("第一行<br />\n第二行"));
         assert!(plain.contains("☐ 待办"));
-        assert!(!plain.contains(".katex-html"));
-        assert!(!plain.contains("katex.renderToString"));
+        assert!(!plain.contains(KATEX_CSS));
+        assert!(!plain.contains(KATEX_JS));
         assert!(plain.contains("android-ai-answer-ready"));
         assert!(plain.contains("mathReady='true'"));
 
         let math = render_android_sticky_note_html("第一行\n\\(x^2\\)", true);
         assert!(math.contains("class=\"math-source "));
-        assert!(math.contains(".katex-html"));
-        assert!(math.contains("katex.renderToString"));
+        assert!(math.contains(KATEX_CSS));
+        assert!(math.contains(KATEX_JS));
     }
 
     #[test]
