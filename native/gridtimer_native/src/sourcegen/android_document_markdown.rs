@@ -414,6 +414,13 @@ class DocumentMarkdownBlocksTest {
         }
     }
     @Test fun nativeTodoBlocksStayTightWithoutCollapsingFollowingProse() {
+        for (marker in listOf("□", "☐", "☑", "☒")) {
+            assertEquals("$marker 第一项\n$marker 第二项\n\n正文",
+                documentMarkdownFromBlocks(listOf("$marker 第一项", "$marker 第二项", "正文")))
+            assertEquals("$marker 第一项\n\n\n\n$marker 第二项",
+                documentMarkdownFromBlocks(listOf("$marker 第一项", "", "$marker 第二项")))
+        }
+        assertEquals("普通段落\n\n□ 第一项", documentMarkdownFromBlocks(listOf("普通段落", "□ 第一项")))
         val items = listOf(
             "□ 更新一遍论文，有的论文可以重点更新",
             "□ 第二件事，更新10条视频",
