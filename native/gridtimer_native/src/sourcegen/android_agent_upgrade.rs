@@ -182,11 +182,11 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     replace_once(
         &mut rendered,
         r####"        knowledgeAiSourcesForMode(queryMode) {
-            buildKnowledgeSourceCandidates(appData, question, selectedFolderId, searchScope, priorityNoteId)
+            buildKnowledgeSourceCandidates(appData, listOfNotNull(conversation.lastOrNull()?.turn?.question, question).joinToString(" "), selectedFolderId, searchScope, priorityNoteId)
         }"####,
         r####"        knowledgeAiSourcesForMode(queryMode) {
             runCatching {
-                buildKnowledgeSourceCandidates(appData, question, selectedFolderId, searchScope, priorityNoteId)
+                buildKnowledgeSourceCandidates(appData, listOfNotNull(conversation.lastOrNull()?.turn?.question, question).joinToString(" "), selectedFolderId, searchScope, priorityNoteId)
             }.getOrElse { emptyList() }
         }"####,
     )?;

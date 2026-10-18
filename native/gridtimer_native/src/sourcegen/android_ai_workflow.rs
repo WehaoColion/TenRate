@@ -12,6 +12,18 @@ pub const TEST_PATH: &str = "com/ofairyo/gridtimer/ui/KnowledgeAiRequestBoundary
 
 pub const CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
 
+internal data class KnowledgeConversationTurn(val question: String, val answer: String)
+internal fun knowledgeConversationContext(turns: List<KnowledgeConversationTurn>): List<KnowledgeConversationTurn> {
+    val selected = mutableListOf<KnowledgeConversationTurn>()
+    var chars = 0
+    for (turn in turns.takeLast(8).asReversed()) {
+        val size = turn.question.length + turn.answer.length
+        if (size > 24000 - chars) break
+        selected.add(turn); chars += size
+    }
+    return selected.asReversed()
+}
+
 internal data class KnowledgeAiOutcome(val ok: Boolean, val text: String, val message: String)
 
 internal data class KnowledgeAgentDraft(
@@ -224,6 +236,25 @@ class KnowledgeAiRequestBoundaryTest {
         val state = KnowledgeAiRequestBoundary()
         assertNotNull(state.begin(true, true, "总结", 2))
         assertNull(state.begin(true, true, "总结", 2))
+    }
+    @Test fun consecutiveQuestionsKeepSuccessfulContextAndCanContinueAfterFailure() {
+        val state = KnowledgeAiRequestBoundary(KnowledgeAiMode.DIRECT)
+        val turns = mutableListOf<KnowledgeConversationTurn>()
+        val first = state.begin(true, true, "我叫小李", 0)!!
+        val firstResult = state.finish(first, true, true, "你好，小李。", "")!!
+        turns.add(KnowledgeConversationTurn("我叫小李", firstResult.text))
+        val second = state.begin(true, true, "我叫什么", 0)!!
+        assertEquals("我叫小李", knowledgeConversationContext(turns).single().question)
+        assertFalse(state.finish(second, true, false, "", "断网")!!.ok)
+        assertEquals(1, turns.size)
+        assertNotNull(state.begin(true, true, "再试一次", 0))
+    }
+    @Test fun contextKeepsRecentWholeTurnsWithinBudget() {
+        val turns = (1..12).map { KnowledgeConversationTurn("问题$it", "回答$it") }
+        assertEquals((5..12).map { "问题$it" }, knowledgeConversationContext(turns).map { it.question })
+        val oversized = KnowledgeConversationTurn("问题", "文".repeat(24000))
+        assertTrue(knowledgeConversationContext(turns + oversized).isEmpty())
+        assertEquals(turns, turns.toList())
     }
     @Test fun emptyOrFailedOutputCannotBecomeAnswer() {
         for ((ok, output) in listOf(true to " ", false to "残留文字")) {
@@ -542,6 +573,90 @@ fn render_legacy_sticky_source_fixes(source: &mut String) -> Result<(), String> 
 pub fn render(path: &str, source: &str) -> Result<String, String> {
     let mut source = source.to_owned();
     match path {
+        "com/ofairyo/gridtimer/core/NativeOptimizerBridge.kt" => {
+            replace(
+                &mut source,
+                r####"    fun completeAndroidAiQuery(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>
+    ): Array<String>? {
+        if (!nativeAvailable) return null
+        return runCatching {
+            nativeCompleteAndroidAiQuery(apiKey, baseUrl, model, mode, question,
+                sourceTitles, sourceFolders, sourceExcerpts)
+        }.getOrNull()?.takeIf { it.size >= 3 }
+    }
+
+"####,
+                r####"    fun completeAndroidAiQuery(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>,
+        historyJson: String = "[]"
+    ): Array<String>? {
+        if (!nativeAvailable) return null
+        return runCatching {
+            nativeCompleteAndroidAiConversation(apiKey, baseUrl, model, mode, question,
+                sourceTitles, sourceFolders, sourceExcerpts, historyJson)
+        }.getOrNull()?.takeIf { it.size >= 3 }
+    }
+
+"####,
+            )?;
+            replace(
+                &mut source,
+                r####"    @JvmStatic
+    private external fun nativeCompleteAndroidAiQuery(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>
+    ): Array<String>?
+
+"####,
+                r####"    @JvmStatic
+    private external fun nativeCompleteAndroidAiQuery(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>
+    ): Array<String>?
+
+    @JvmStatic
+    private external fun nativeCompleteAndroidAiConversation(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>,
+        historyJson: String
+    ): Array<String>?
+
+"####,
+            )?;
+        }
         "com/ofairyo/gridtimer/ui/GridTimerScreen.kt" => {
             replace(&mut source,
                 "    var selectedDestination by rememberSaveable { mutableStateOf(HomeNavigationDestination.BOARD) }",
@@ -582,6 +697,10 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         "com/ofairyo/gridtimer/ui/NoteStudioSheet.kt" => {
             for import in [
                 "androidx.compose.foundation.clickable",
+                "androidx.compose.foundation.layout.fillMaxHeight",
+                "androidx.compose.foundation.layout.fillMaxSize",
+                "androidx.compose.foundation.layout.heightIn",
+                "androidx.compose.foundation.lazy.rememberLazyListState",
                 "androidx.compose.foundation.interaction.PressInteraction",
                 "androidx.compose.foundation.layout.ime",
                 "androidx.compose.foundation.layout.imePadding",
@@ -652,6 +771,11 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
                 "请先在“我的”里填写 OpenAI API Key",
                 "请先在“我的 → AI”中配置密钥、接口和模型。",
             );
+            source = source.replace(
+                "直接提问，或依据 $sourceCount 个知识页回答",
+                "连续追问 · 保留本轮问答记录",
+            );
+            source = source.replace("label = \"提问\"", "label = \"开始对话\"");
             render_legacy_sticky_source_fixes(&mut source)?;
         }
         "com/ofairyo/gridtimer/ui/SmartisanNoteUi.kt" => {
@@ -721,6 +845,12 @@ const KNOWLEDGE_DIALOG: &str = r####"private fun buildKnowledgeAgentDraftNote(
     )
 }
 
+private data class KnowledgeConversationEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val turn: KnowledgeConversationTurn,
+    val sources: List<KnowledgeSourceCandidate>
+)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun KnowledgeAiDialog(
@@ -754,11 +884,20 @@ private fun KnowledgeAiDialog(
     var searchScope by rememberSaveable(workspaceKey, priorityNoteId, selectedFolderId) {
         mutableStateOf(if (selectedFolderId == null) KnowledgeSearchScope.ALL else KnowledgeSearchScope.CURRENT_FOLDER)
     }
+    val conversation = remember(workspaceKey, identity, priorityNoteId, queryMode, configuration, searchScope, agentMode) {
+        mutableStateListOf<KnowledgeConversationEntry>()
+    }
+    val messageListState = rememberLazyListState()
     var answer by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf("") }
     var answerQuestion by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf("") }
     var answerSources by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf<List<KnowledgeSourceCandidate>>(emptyList()) }
     var statusText by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf("") }
     var busy by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
+    LaunchedEffect(conversation.size, busy) {
+        withFrameNanos { }
+        val last = messageListState.layoutInfo.totalItemsCount - 1
+        if (!agentMode && last >= 0) messageListState.animateScrollToItem(last)
+    }
     var cancelling by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
     var agentBusy by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
     var agentCancelling by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
@@ -775,9 +914,9 @@ private fun KnowledgeAiDialog(
     val agentSelectedIds = rememberSaveable(workspaceKey, identity, selectedFolderId) { mutableStateListOf<String>() }
     var showSendingContent by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
     val selectedFolderName = appData.findNoteFolder(selectedFolderId)?.name
-    val sourceCandidates = if (agentMode) emptyList() else remember(queryMode, appData.notes, appData.noteFolders, question, searchScope, selectedFolderId, priorityNoteId) {
+    val sourceCandidates = if (agentMode) emptyList() else remember(queryMode, appData.notes, appData.noteFolders, question, conversation.lastOrNull()?.turn?.question, searchScope, selectedFolderId, priorityNoteId) {
         knowledgeAiSourcesForMode(queryMode) {
-            buildKnowledgeSourceCandidates(appData, question, selectedFolderId, searchScope, priorityNoteId)
+            buildKnowledgeSourceCandidates(appData, listOfNotNull(conversation.lastOrNull()?.turn?.question, question).joinToString(" "), selectedFolderId, searchScope, priorityNoteId)
         }
     }
     val agentAvailableDocuments = remember(appData.notes, appData.noteFolders, selectedFolderId, searchScope) {
@@ -892,6 +1031,10 @@ private fun KnowledgeAiDialog(
         if (agentMode || agentBusy) return
         val safeQuestion = question.trim()
         val sources = sourceCandidates.toList()
+        val previousTurns = knowledgeConversationContext(conversation.map { it.turn })
+        val historyJson = JSONArray().apply {
+            previousTurns.forEach { put(JSONObject().put("question", it.question).put("answer", it.answer)) }
+        }.toString()
         observedSources = sourceSignature
         observedConfiguration = configuration
         val ticket = boundary.begin(true, configuration.testable, safeQuestion, sources.size) ?: return
@@ -915,7 +1058,8 @@ private fun KnowledgeAiDialog(
                         question = safeQuestion,
                         sourceTitles = sources.map { it.note.displayTitle() }.toTypedArray(),
                         sourceFolders = sources.map(KnowledgeSourceCandidate::folderName).toTypedArray(),
-                        sourceExcerpts = sources.map(KnowledgeSourceCandidate::excerpt).toTypedArray()
+                        sourceExcerpts = sources.map(KnowledgeSourceCandidate::excerpt).toTypedArray(),
+                        historyJson = historyJson
                     )
                 }
                 val current = latestBoundary === boundary && latestIdentity == requestIdentity && latestConfiguration == requestConfiguration &&
@@ -926,6 +1070,8 @@ private fun KnowledgeAiDialog(
                 if (outcome != null && latestBoundary === boundary) {
                     if (outcome.ok) {
                         answer = outcome.text; answerQuestion = safeQuestion; answerSources = sources
+                        conversation.add(KnowledgeConversationEntry(turn = KnowledgeConversationTurn(safeQuestion, outcome.text), sources = sources))
+                        question = ""
                         statusText = if (requestMode == KnowledgeAiMode.DIRECT) "AI 回答完成" else "回答完成 · ${sources.size} 个来源"
                     } else statusText = outcome.message
                 }
@@ -1074,28 +1220,24 @@ private fun KnowledgeAiDialog(
         }
     }
 
-    Dialog(onDismissRequest = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }, properties = DialogProperties(decorFitsSystemWindows = false)) {
-        Box(modifier = Modifier.fillMaxWidth().imePadding().navigationBarsPadding()
+    Dialog(onDismissRequest = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Box(modifier = Modifier.fillMaxSize().padding(8.dp).imePadding().navigationBarsPadding()
             .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))) {
-        Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = flowusPanelBackground(), border = BorderStroke(1.dp, flowusBorderColor())) {
-            LazyColumn(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item {
+        Surface(modifier = Modifier.fillMaxWidth().fillMaxHeight(), shape = RoundedCornerShape(24.dp), color = flowusPanelBackground(), border = BorderStroke(1.dp, flowusBorderColor())) {
+          Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text(if (agentMode) "AI Agent" else "AI 问答", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                        CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() })
-                    }
-                }
-                item {
-                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(if (configuration.testable) "${configuration.model} · ${configuration.recipientHost}" else "AI 尚未配置完整", fontWeight = FontWeight.SemiBold)
-                            Text(when {
-                                agentMode -> "使用本机工具检索你选择的便签和知识页，生成可编辑的新页草稿；不会自动修改或保存。"
-                                queryMode == KnowledgeAiMode.DIRECT -> "直接向 AI 提问，仅发送你的问题。"
-                                else -> "依据所选知识页节选回答，并列出来源。"
-                            }, style = MaterialTheme.typography.bodySmall)
-                            TextButton(onClick = { boundary.invalidate(); onDismiss(); onOpenAiSettings() }) { Text(if (configuration.testable) "更改 AI 设置" else "配置 DeepSeek / 其他 AI") }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (!agentMode) TextButton(enabled = !busy, onClick = {
+                                boundary.invalidate(); conversation.clear(); invalidateAnswer(); question = ""; statusText = ""
+                            }) { Text("新对话") }
+                            CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() })
                         }
+                    }
+            LazyColumn(state = messageListState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    TextButton(onClick = { boundary.invalidate(); onDismiss(); onOpenAiSettings() }) {
+                        Text(if (configuration.testable) "${configuration.model} · ${configuration.recipientHost} · 设置" else "配置 DeepSeek / 其他 AI", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 item {
@@ -1144,12 +1286,12 @@ private fun KnowledgeAiDialog(
                         }
                     }
                 }
-                item(key = "knowledge-question") {
+                if (agentMode) item(key = "knowledge-question") {
                     KnowledgeQuestionField(question = question,
                         hint = when { agentMode -> "例如：梳理项目进展，整理未完成事项并生成新页面"; queryMode == KnowledgeAiMode.DIRECT -> "例如：一加一等于几"; else -> "例如：总结这些记录里需要我处理的事情" },
                         onQuestionChange = { stopAgent("任务目标已改变"); invalidateAnswer(); question = it })
                 }
-                if (question.isBlank()) item {
+                if (question.isBlank() && conversation.isEmpty()) item {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (example in when { agentMode -> listOf("整理项目进展并列出待办", "归纳这组知识页的共同结论", "草拟一份复盘页面"); queryMode == KnowledgeAiMode.DIRECT -> listOf("一加一等于几", "解释复利是怎么计算的"); else -> listOf("总结最近的记录", "找出待办和未解决的问题", "整理主要观点") }) {
                             TextButton(onClick = { stopAgent("任务目标已改变"); invalidateAnswer(); question = example }) { Text(example) }
@@ -1160,8 +1302,8 @@ private fun KnowledgeAiDialog(
                     val selectedChars = selectedAgentDocuments.sumOf { it.content.length }
                     Text(when {
                         agentMode -> "接收方：${configuration.recipientHost.ifBlank { "未配置" }} · 模型：${configuration.model.ifBlank { "未配置" }} · 已选 ${selectedAgentDocuments.size} 条资料，正文共 $selectedChars 字符；先发问题和工具说明，再按需发送读取片段，最多 6 次请求。"
-                        queryMode == KnowledgeAiMode.DIRECT -> "将发送：仅你的问题"
-                        else -> "将发送：你的问题 + ${sourceCandidates.size} 个知识页节选"
+                        queryMode == KnowledgeAiMode.DIRECT -> "发送问题及最近 ${knowledgeConversationContext(conversation.map { it.turn }).size} 轮对话，不读取应用资料。"
+                        else -> "发送问题、最近 ${knowledgeConversationContext(conversation.map { it.turn }).size} 轮对话及本轮 ${sourceCandidates.size} 个知识页节选。"
                     }, style = MaterialTheme.typography.bodySmall)
                     if (agentMode) Text("每轮会携带此前的工具记录，资料读取累计上限 32,000 字符；请求设置 store:false，但自定义服务的留存规则由服务商决定。", style = MaterialTheme.typography.bodySmall)
                     if (agentMode) Text("请展开完整预览并核对接收方、模型和所选资料；预览末尾勾选授权后才能启动。草稿仍需检查、编辑并再次确认才会保存。", style = MaterialTheme.typography.bodySmall)
@@ -1173,11 +1315,13 @@ private fun KnowledgeAiDialog(
                         showSendingContent = !showSendingContent
                         agentPreviewAcknowledged = false
                     }) { Text(if (showSendingContent) "收起发送内容" else "查看将发送的资料") }
+                    if (agentMode) {
                     PhysicalButton(label = when { agentMode && agentBusy -> if (agentCancelling) "正在停止后续步骤" else "Agent 正在执行"; agentMode -> "授权本次范围并运行 Agent"; busy -> if (cancelling) "等待本次请求结束" else "AI 正在回答"; else -> "发送问题" }, icon = Icons.Rounded.Title,
                         accent = if (agentMode) accentFor("green") else notesAccentColor, filled = true,
                         enabled = if (agentMode) !agentBusy && !agentSaving && showSendingContent && agentPreviewAcknowledged && configuration.testable && question.isNotBlank() && selectedAgentDocuments.isNotEmpty()
                             else !busy && !agentBusy && configuration.testable && question.isNotBlank() && (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
                         modifier = Modifier.fillMaxWidth(), onClick = if (agentMode) ::requestAgent else ::requestAnswer)
+                    }
                 }
                 if (busy) item {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1194,21 +1338,34 @@ private fun KnowledgeAiDialog(
                 if (statusText.isNotBlank()) item {
                     Text(statusText, style = MaterialTheme.typography.bodyMedium, color = if (answer.isBlank() && !busy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
                 }
-                if (answer.isNotBlank()) {
-                    item {
-                        FlowusPanel(accent = notesAccentColor) { AndroidRenderedMarkdown(answer, modifier = Modifier.padding(14.dp)) }
-                        TextButton(onClick = {
-                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("AI 回答", answer))
-                            Toast.makeText(context, "已复制回答原文", Toast.LENGTH_SHORT).show()
-                        }) { Text("复制回答原文") }
-                        if (!agentMode) {
-                            PhysicalButton(label = "保存回答为知识页", icon = Icons.Rounded.SaveAlt, accent = accentFor("green"), filled = false, enabled = !busy && !agentBusy,
-                                modifier = Modifier.fillMaxWidth(), onClick = { onSaveAnswer(answerQuestion, answer, answerSources) })
+                if (!agentMode) {
+                    items(conversation, key = { "turn-${it.id}" }) { entry ->
+                        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(shape = RoundedCornerShape(16.dp), color = notesAccentColor.copy(alpha = 0.10f)) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                                    Text("你", style = MaterialTheme.typography.labelSmall, color = notesAccentColor)
+                                    Text(entry.turn.question, style = MaterialTheme.typography.bodyLarge)
+                                }
+                            }
+                            Text("AI", style = MaterialTheme.typography.labelSmall)
+                            AndroidRenderedMarkdown(entry.turn.answer, modifier = Modifier.fillMaxWidth())
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("AI 回答", entry.turn.answer))
+                                    Toast.makeText(context, "已复制回答原文", Toast.LENGTH_SHORT).show()
+                                }) { Text("复制回答") }
+                                TextButton(enabled = !busy && !agentBusy, onClick = { onSaveAnswer(entry.turn.question, entry.turn.answer, entry.sources) }) { Text("保存为知识页") }
+                            }
+                            entry.sources.forEachIndexed { index, source ->
+                                KnowledgeSourceCard(source, index + 1) { onOpenSource(source) }
+                            }
                         }
                     }
-                    if (answerSources.isNotEmpty()) item { Text("回答依据 ${answerSources.size}", fontWeight = FontWeight.SemiBold) }
-                    items(answerSources, key = { "answer-${it.note.id}" }) { source -> KnowledgeSourceCard(source, answerSources.indexOf(source) + 1) { onOpenSource(source) } }
+                    if (busy) item(key = "pending-question") {
+                        Text("你：$question", style = MaterialTheme.typography.bodyLarge)
+                        Text("AI 正在回答…", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 if (agentMode && agentDraft != null) {
                     item {
@@ -1233,6 +1390,9 @@ private fun KnowledgeAiDialog(
                 if (showSendingContent) {
                     item { Text(if (agentMode) "本次授权范围与正文预览" else "待发送的问题", fontWeight = FontWeight.SemiBold); Text(question.ifBlank { "尚未输入问题" }) }
                     if (agentMode) item { Text("授权 ${selectedAgentDocuments.size} 条资料 · 总计 ${selectedAgentDocuments.sumOf { it.content.length }} 字符，模型按需检索和读取", fontWeight = FontWeight.Medium) }
+                    if (!agentMode) items(knowledgeConversationContext(conversation.map { it.turn })) { turn ->
+                        Text("你：${turn.question}\nAI：${turn.answer}", style = MaterialTheme.typography.bodySmall)
+                    }
                     if (!agentMode && queryMode == KnowledgeAiMode.KNOWLEDGE) item { Text("待发送的来源节选 ${sourceCandidates.size}", fontWeight = FontWeight.SemiBold) }
                     if (agentMode) items(selectedAgentDocuments, key = { "agent-preview-${it.id}" }) { document ->
                         FlowusPanel(accent = accentFor("blue")) {
@@ -1260,6 +1420,26 @@ private fun KnowledgeAiDialog(
                     }
                 }
             }
+            if (!agentMode) {
+                if (busy) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("正在回答…", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        TextButton(enabled = !cancelling, onClick = { boundary.invalidate(); cancelling = true; statusText = "已取消，结束前不能发起重复请求。" }) { Text(if (cancelling) "正在停止" else "停止回答") }
+                    }
+                } else {
+                    KnowledgeQuestionField(question = question,
+                        hint = if (conversation.isEmpty()) "输入问题" else "继续追问，AI 会参考最近的对话",
+                        onQuestionChange = { if (!busy) { question = it; statusText = "" } })
+                }
+                PhysicalButton(label = if (busy) "正在回答" else if (conversation.isEmpty()) "发送" else "继续提问",
+                    icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
+                    enabled = !busy && !agentBusy && configuration.testable && question.isNotBlank() &&
+                        (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
+                    modifier = Modifier.fillMaxWidth(), onClick = ::requestAnswer)
+                Text("当前面板内保留问答；每次携带最近最多 8 轮、24,000 字符。", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
+            }
+          }
         }
         }
     }
@@ -1315,8 +1495,8 @@ private fun KnowledgeQuestionField(question: String, hint: String, onQuestionCha
     LaunchedEffect(imeBottom, fieldFocused) {
         if (imeBottom > 0 && fieldFocused) bringIntoView.bringIntoView()
     }
-    SmartisanTextField(value = question, onValueChange = onQuestionChange, label = "你的问题",
-        hint = hint, maxLength = 1000, minLines = 2, maxLines = 5,
+    SmartisanTextField(value = question, onValueChange = onQuestionChange, label = "消息",
+        hint = hint, maxLength = 1000, minLines = 1, maxLines = 3,
         modifier = Modifier.fillMaxWidth(),
         fieldModifier = Modifier.focusRequester(focusRequester).bringIntoViewRequester(bringIntoView),
         interactionSource = interactions,
