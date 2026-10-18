@@ -1,4 +1,4 @@
-v2.23.2.42（Android源码候选）- 优化格子快捷操作面板的顶部留白、标题与关闭入口，小屏和大字体下支持滚动。versionCode22311，正式签名APK尚未构建交付。详见[本版说明](documents/releases/android/release_notes_v2.23.2.42.md)。
+v2.23.2.42（Android正式签名候选APK）- 优化格子快捷操作面板的顶部留白、标题与关闭入口，小屏和大字体下支持滚动。versionCode22311，已通过GitHub Actions构建并交付，真机界面与账户同步待验收。详见[本版说明](documents/releases/android/release_notes_v2.23.2.42.md)。
 
 v2.23.2.41（Android已验收APK）- 修复保存图片时正文空白：等待实际绘制帧，拒绝空白图片并回退正文；versionCode22310。承接已交付2.23.2.40，正式签名APK已于2026-10-18 05:18（北京时间）按原流程交付，三处哈希一致；用户于2026-10-18确认本版可用并授权合并PR #35。详见[本版说明](documents/releases/android/release_notes_v2.23.2.41.md)。
 
