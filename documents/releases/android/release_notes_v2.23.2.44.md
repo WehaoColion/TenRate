@@ -10,6 +10,19 @@ versionCode 22313。Android 独立版本只递增第四段，Windows 版本不�
 
 保存后可直接开始新任务。新任务使用独立边界，旧请求、旧草稿和已关闭的保存状态不能沿用；运行和保存未结束前禁止重置。失败可保留任务目标、资料选择和复核选项重试。退出或重做未保存草稿前确认放弃。
 
-本地完整源生成变换链与58项模板和数据保护检查通过。云端Kotlin编译、JVM测试、lint和签名APK构建结果在交付后补记。未完成真机键盘、实际模型任务及账户同步验收。
+本地完整源生成变换链与58项模板和数据保护检查通过。云端147项源生成测试、2项版本身份测试、2项对话上下文测试通过，Kotlin与Java编译、release打包成功；486项JVM测试全部通过，失败、错误和跳过均为0，包含新增的搜索选择与连续任务边界检查。lint为0错误、21项警告。未完成真机键盘、实际模型任务及账户同步验收。
 
 本轮在云端操作，未核对原Windows电脑后台任务和本地、公网服务健康，没有修改同步发现身份或服务配置。
+
+交付包为PR #39合并前测试版，构建提交`1ae7d8cfbee93cdea9732f1a3b04c4bc4d1e740b`。
+
+- [构建与检查记录](https://github.com/WehaoColion/TenRate/actions/runs/39171887015)
+- [GitHub Release](https://github.com/WehaoColion/TenRate/releases/tag/v2.23.2.44)
+- [下载APK](https://github.com/WehaoColion/TenRate/releases/download/v2.23.2.44/tenfold_v2.23.2.44.apk)
+- [SHA256文件](https://github.com/WehaoColion/TenRate/releases/download/v2.23.2.44/tenfold_v2.23.2.44.apk.sha256)
+
+APK大小25,096,877字节，SHA256：`2d2f671893330071914ded15ec31d877e46e3badf309c34af111b5878a72f0e1`。根目录、APK目录和release输出目录三份哈希一致。
+
+包名`com.ofairyo.gridtimer`，版本2.23.2.44 / 22313；原证书SHA256为`4ac7b86a600bbb3215a6187018c1442efcf3ffb25cdbeea0082cab81ef4d605f`，v2/v3签名存在，CI已通过apksigner核验。下载后再次核对证书、版本、arm64-v8a/armeabi-v7a/x86_64三个原生库及新版工作区标记；同步发现公钥、主题、协议与引导地址沿用既有基线。
+
+交付时间：2026-10-19 06:45（北京时间）。GitHub已公开预发布APK及SHA256，发布资产摘要与经过验证的构建产物一致。

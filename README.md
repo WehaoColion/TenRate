@@ -1,4 +1,4 @@
-v2.23.2.44（Android候选）- 任务助手采用分步工作区，先写任务再选资料，核对授权后执行；底部固定主要操作，草稿默认预览，支持直接新建和保留输入重试。versionCode22313。详见[本版说明](documents/releases/android/release_notes_v2.23.2.44.md)。
+v2.23.2.44（Android候选APK）- 任务助手采用分步工作区，先写任务再选资料，核对授权后执行；底部固定主要操作，草稿默认预览，支持直接新建和保留输入重试。versionCode22313。原签名APK已上传[GitHub Release](https://github.com/WehaoColion/TenRate/releases/tag/v2.23.2.44)，486项JVM测试通过。详见[本版说明](documents/releases/android/release_notes_v2.23.2.44.md)。
 
 v2.23.2.43（Android候选APK）- AI问答支持连续追问，保留多轮消息，底部输入区发送后自动清空；versionCode22312。原证书签名APK已上传[GitHub Release](https://github.com/WehaoColion/TenRate/releases/tag/v2.23.2.43)，484项JVM测试通过。详见[本版说明](documents/releases/android/release_notes_v2.23.2.43.md)。
 
