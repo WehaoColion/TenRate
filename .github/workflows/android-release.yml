@@ -30,12 +30,25 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+          cache-read-only: false
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Restore Rust build cache
+        id: rust-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-ndk.exe
+            C:\gt\gridtimer-build
+          key: ${{ runner.os }}-android-v1-${{ hashFiles('native/gridtimer_native/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-android-v1-${{ hashFiles('native/gridtimer_native/Cargo.lock') }}-
       - name: Prepare Rust and Android tools
         run: |
           $ErrorActionPreference = 'Stop'
@@ -50,8 +63,10 @@ jobs:
           rustup default stable
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
           if ($LASTEXITCODE -ne 0) { throw 'Android Rust targets unavailable' }
-          cargo install cargo-ndk --locked
-          if ($LASTEXITCODE -ne 0) { throw 'cargo-ndk installation failed' }
+          if (!(Test-Path "$env:USERPROFILE\.cargo\bin\cargo-ndk.exe")) {
+            cargo install cargo-ndk --locked
+            if ($LASTEXITCODE -ne 0) { throw 'cargo-ndk installation failed' }
+          }
           cargo fetch --locked --manifest-path native/gridtimer_native/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw 'Cargo dependency fetch failed' }
           rustc --version
@@ -133,6 +148,16 @@ jobs:
             app/build/test-results/
           if-no-files-found: ignore
           retention-days: 14
+      - name: Save Rust build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-ndk.exe
+            C:\gt\gridtimer-build
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Remove signing inputs
         if: always()
         run: |
