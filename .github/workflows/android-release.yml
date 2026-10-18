@@ -1,0 +1,166 @@
+name: Android signed APK
+
+on:
+  push:
+    branches: [main, fix/android-slot-sheet-header-20261018]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # Public metadata recovered from the user-supplied, formally signed v2.23 APK.
+      # Never generate a replacement desktop service identity on a CI runner.
+      GRID_TIMER_ANDROID_RENDEZVOUS_PUBLIC_KEY: B_bNXMMqkLjbwJeFouOFQyODcdzRtjL-ApRdtVEFx14
+      GRID_TIMER_PUBLIC_SERVER_URL_FILE: C:\gt\sync_public_server_url.txt
+      CARGO_TARGET_DIR: C:\gt\gridtimer-build\sourcegen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+          cache-read-only: false
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Restore Rust build cache
+        id: rust-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-ndk.exe
+            C:\gt\gridtimer-build
+          key: ${{ runner.os }}-android-v1-${{ hashFiles('native/gridtimer_native/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-android-v1-${{ hashFiles('native/gridtimer_native/Cargo.lock') }}-
+      - name: Prepare Rust and Android tools
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force C:\gt | Out-Null
+          [IO.File]::WriteAllText($env:GRID_TIMER_PUBLIC_SERVER_URL_FILE, 'https://lasting-multi-indirect-belong.trycloudflare.com')
+          "GRID_TIMER_NATIVE_LIB_PATH=$env:LIB" >> $env:GITHUB_ENV
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.1.12297006'
+          if ($LASTEXITCODE -ne 0) { throw 'Android SDK installation failed' }
+          "GRID_TIMER_NDK_DIR=$env:ANDROID_HOME\ndk\27.1.12297006" >> $env:GITHUB_ENV
+          rustup toolchain install stable --profile minimal --component rustfmt
+          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
+          rustup default stable
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          if ($LASTEXITCODE -ne 0) { throw 'Android Rust targets unavailable' }
+          if (!(Test-Path "$env:USERPROFILE\.cargo\bin\cargo-ndk.exe")) {
+            cargo install cargo-ndk --locked
+            if ($LASTEXITCODE -ne 0) { throw 'cargo-ndk installation failed' }
+          }
+          cargo fetch --locked --manifest-path native/gridtimer_native/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo dependency fetch failed' }
+          rustc --version
+          java -version
+      - name: Verify generator and product identity
+        run: |
+          cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --bin gridtimer_sourcegen
+          if ($LASTEXITCODE -ne 0) { throw 'Source generator tests failed' }
+          cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib product_identity::tests
+          if ($LASTEXITCODE -ne 0) { throw 'Product identity tests failed' }
+      - name: Restore signing inputs and verify original certificate
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in 'ANDROID_KEYSTORE_BASE64','ANDROID_STORE_PASSWORD','ANDROID_KEY_ALIAS','ANDROID_KEY_PASSWORD') {
+            if ([string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($name))) { throw "Missing signing secret: $name" }
+          }
+          $store = Join-Path $env:RUNNER_TEMP 'tenrate-release.jks'
+          [IO.File]::WriteAllBytes($store, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
+          $cert = Join-Path $env:RUNNER_TEMP 'tenrate-release.der'
+          & "$env:JAVA_HOME\bin\keytool.exe" -exportcert -keystore $store -alias $env:ANDROID_KEY_ALIAS -storepass:env ANDROID_STORE_PASSWORD -file $cert
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot export signing certificate' }
+          if ((Get-FileHash $cert -Algorithm SHA256).Hash.ToLowerInvariant() -cne '4ac7b86a600bbb3215a6187018c1442efcf3ffb25cdbeea0082cab81ef4d605f') {
+            throw 'Signing certificate differs from the original APK. Refusing to package.'
+          }
+          function Escape-Property([string]$value) {
+            return -join ($value.ToCharArray() | ForEach-Object { '\u{0:x4}' -f [int]$_ })
+          }
+          $lines = @(
+            'storeFile=' + (Escape-Property $store)
+            'storePassword=' + (Escape-Property $env:ANDROID_STORE_PASSWORD)
+            'keyAlias=' + (Escape-Property $env:ANDROID_KEY_ALIAS)
+            'keyPassword=' + (Escape-Property $env:ANDROID_KEY_PASSWORD)
+          )
+          [IO.File]::WriteAllLines((Join-Path $env:GITHUB_WORKSPACE 'release_signing.properties'), $lines, [Text.Encoding]::ASCII)
+      - name: Build and check release APK
+        run: |
+          gradle --no-daemon --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8' :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease
+          if ($LASTEXITCODE -ne 0) { throw 'Release build or checks failed' }
+          $version = [regex]::Match((Get-Content app/build.gradle -Raw), "versionName '([^']+)'").Groups[1].Value
+          $apk = "app/build/outputs/apk/release/tenfold_v$version.apk"
+          $verification = & "$env:ANDROID_HOME\build-tools\35.0.0\apksigner.bat" verify --verbose --print-certs $apk
+          if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
+          $verification | Write-Output
+          if (($verification -join "`n") -notmatch 'Signer #1 certificate SHA-256 digest: 4ac7b86a600bbb3215a6187018c1442efcf3ffb25cdbeea0082cab81ef4d605f') {
+            throw 'Packaged APK certificate differs from the original APK'
+          }
+          $source = Get-Content app/build/generated/source/rustAndroid/main/com/ofairyo/gridtimer/data/SyncRemoteRendezvous.kt -Raw
+          if (!$source.Contains($env:GRID_TIMER_ANDROID_RENDEZVOUS_PUBLIC_KEY) -or !$source.Contains('2b91568570d864be134fb6392e68d135cde0ea3a60f85166bc1e9d015adfaa49')) {
+            throw 'Generated sync discovery configuration changed'
+          }
+          $hash = (Get-FileHash $apk -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  tenfold_v$version.apk" | Set-Content "$apk.sha256" -Encoding ascii
+          Copy-Item $apk "tenfold_v$version.apk"
+          New-Item -ItemType Directory -Force APK | Out-Null
+          Copy-Item $apk "APK/tenfold_v$version.apk"
+          "Built Android $version from $env:GITHUB_SHA; SHA256 $hash" >> $env:GITHUB_STEP_SUMMARY
+          'Device installation, UI appearance and live account synchronization have not been verified by this workflow.' >> $env:GITHUB_STEP_SUMMARY
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/release/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-check-reports
+          path: |
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Save Rust build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-ndk.exe
+            C:\gt\gridtimer-build
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+      - name: Remove signing inputs
+        if: always()
+        run: |
+          Remove-Item -Force -ErrorAction SilentlyContinue release_signing.properties
+          Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.jks')
+          Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.der')

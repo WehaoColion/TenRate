@@ -1,0 +1,97 @@
+name: Publish Android APK
+
+on:
+  workflow_run:
+    workflows: [Android signed APK]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Android signed APK workflow run ID
+        required: true
+        default: '39128283968'
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-android-apk
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      APK_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+    steps:
+      - name: Verify and publish the existing signed APK
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess
+
+          def gh(*args, check=True):
+              return subprocess.run(['gh', *args], check=check, capture_output=True, text=True)
+
+          repo = os.environ['GH_REPO']
+          run_id = os.environ['APK_RUN_ID']
+          if not run_id.isdecimal():
+              raise SystemExit('Invalid workflow run ID')
+          run = json.loads(gh('api', f'repos/{repo}/actions/runs/{run_id}').stdout)
+          if (run.get('conclusion') != 'success'
+              or run.get('path') != '.github/workflows/android-release.yml'
+              or run.get('head_repository', {}).get('full_name') != repo):
+              raise SystemExit('Only a successful signed APK build from this repository can be published')
+          commit = run['head_sha']
+          default_branch = json.loads(gh('api', f'repos/{repo}').stdout)['default_branch']
+          comparison = json.loads(gh('api', f'repos/{repo}/compare/{commit}...{default_branch}').stdout)
+          merged = comparison['merge_base_commit']['sha'] == commit
+          gh('run', 'download', run_id, '--repo', repo, '--name', 'tenrate-signed-apk', '--dir', 'package')
+          apks = list(pathlib.Path('package').glob('*.apk'))
+          if len(apks) != 1:
+              raise SystemExit('Expected one release APK')
+          apk = apks[0]
+          match = re.fullmatch(r'tenfold_v(\d+(?:\.\d+){2,3})\.apk', apk.name)
+          if not match:
+              raise SystemExit('Unexpected APK filename')
+          version = match.group(1)
+          checksum = apk.with_name(apk.name + '.sha256')
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          if checksum.read_text().split() != [digest, apk.name]:
+              raise SystemExit('APK checksum verification failed')
+          tag = 'v' + version
+          release = gh('api', f'repos/{repo}/releases/tags/{tag}', check=False)
+          if release.returncode:
+              if '404' not in release.stderr:
+                  raise SystemExit(release.stderr)
+              notes = pathlib.Path('release_notes.md')
+              notes.write_text(f'Android {version} 正式签名 APK。\n\n构建提交：`{commit}`\n\nSHA256：`{digest}`\n\n[构建与检查记录]({run["html_url"]})\n')
+              gh('release', 'create', tag, '--repo', repo, '--target', commit,
+                 '--title', f'Android {version}', '--draft', '--notes-file', str(notes))
+              metadata = {'assets': []}
+          else:
+              metadata = json.loads(release.stdout)
+          names = {a['name'] for a in metadata['assets']}
+          for file in [apk, checksum]:
+              if file.name in names:
+                  gh('release', 'download', tag, '--repo', repo, '--pattern', file.name, '--dir', 'existing')
+                  if pathlib.Path('existing', file.name).read_bytes() != file.read_bytes():
+                      raise SystemExit('An existing release asset differs; refusing to overwrite it')
+              else:
+                  gh('release', 'upload', tag, str(file), '--repo', repo)
+          gh('release', 'edit', tag, '--repo', repo, '--draft=false',
+             '--prerelease=' + str(not merged).lower(), '--latest=' + str(merged).lower())
+          published = json.loads(gh('api', f'repos/{repo}/releases/tags/{tag}').stdout)
+          asset = next(a for a in published['assets'] if a['name'] == apk.name)
+          if asset['size'] != apk.stat().st_size:
+              raise SystemExit('Published asset size differs')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'[{apk.name}]({asset["browser_download_url"]})\n\nSHA256: `{digest}`\n')
+          print(published['html_url'])
+          PY

@@ -27,3 +27,9 @@ Android 更新说明写入 `documents/releases/android/`，Windows 更新说明�
 私人论文、旧诊断、审查上下文、Word 报告及历史一次性补丁保存在 `local_archive/`，不得提交或上传。工作临时文件继续放 `tmp/`，缓存保留既有路径。
 
 APK 交付保持项目根目录、`APK/` 和 `app/build/outputs/apk/release/`；旧 APK 仍放 `old_apks/`。正式 Windows 程序、发布清单、稳定桌面入口和签名配置沿用现有路径。两个独立应用 `r2_clock/`、`r2_calendar/` 依赖父目录签名配置，未经依赖核对不得移动。
+
+## Android APK GitHub 交付
+
+每次完成 Android 更新，必须将已构建、通过检查的最新正式签名 APK 及 SHA256 校验文件上传到 GitHub Releases，并向用户提供版本页或 APK 下载链接；不能只交付聊天附件或短期 Actions 产物。沿用原签名证书与同步发现身份，不得上传密钥库、密码或签名配置。
+
+主分支的成功 Android 构建由 `Publish Android APK` 工作流自动发布；已有构建使用该工作流的 `run_id` 手动发布，复用经过验证的原始产物。未合并版本标为预发布，合并后发布为正式版本。已存在的同名资产须字节一致，不得静默覆盖不同 APK。用户仅确认 APK 可用时，不推断所有设备与同步场景已验收；合并按用户明确指令执行。

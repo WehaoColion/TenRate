@@ -153,8 +153,7 @@ fn run() -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing output directory"))?;
     let android_test_output_root = env::args_os().nth(2).map(PathBuf::from);
     let unit_test_output_root = env::args_os().nth(3).map(PathBuf::from);
-    let rendezvous_identity = gridtimer_native::sync_rendezvous::ensure_local_rendezvous_identity()
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let rendezvous_identity = read_android_discovery_identity()?;
     let bootstrap_public_sync_server_url = read_bootstrap_public_sync_server_url()?;
 
     if output_root.exists() {
@@ -609,9 +608,40 @@ fn run() -> io::Result<()> {
     Ok(())
 }
 
+// Android only embeds public discovery metadata. CI must never generate a new
+// desktop identity or need the desktop service's private signing key.
+struct AndroidDiscoveryIdentity {
+    public_key_base64: String,
+    topic: String,
+}
+
+fn public_discovery_identity(key: String) -> io::Result<AndroidDiscoveryIdentity> {
+    let topic = gridtimer_native::sync_rendezvous::topic_from_public_key_base64(&key)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    Ok(AndroidDiscoveryIdentity {
+        public_key_base64: key,
+        topic,
+    })
+}
+
+fn read_android_discovery_identity() -> io::Result<AndroidDiscoveryIdentity> {
+    match env::var("GRID_TIMER_ANDROID_RENDEZVOUS_PUBLIC_KEY") {
+        Ok(key) => public_discovery_identity(key),
+        Err(env::VarError::NotPresent) if env::var_os("CI").is_none() => {
+            let identity = gridtimer_native::sync_rendezvous::ensure_local_rendezvous_identity()
+                .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+            public_discovery_identity(identity.public_key_base64.clone())
+        }
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "CI requires the existing Android discovery public key",
+        )),
+    }
+}
+
 fn render_source(
     contents: &str,
-    identity: &gridtimer_native::sync_rendezvous::LocalRendezvousIdentity,
+    identity: &AndroidDiscoveryIdentity,
     bootstrap_public_sync_server_url: &str,
 ) -> io::Result<String> {
     let bootstrap_url_literal = kotlin_string_literal(bootstrap_public_sync_server_url);
@@ -755,6 +785,38 @@ fn source_destination(output_root: &Path, relative_path: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn public_android_discovery_preserves_the_existing_key_and_topic() {
+        let key = "B_bNXMMqkLjbwJeFouOFQyODcdzRtjL-ApRdtVEFx14";
+        let identity = super::public_discovery_identity(key.to_string()).unwrap();
+        assert_eq!(identity.public_key_base64, key);
+        assert_eq!(
+            identity.topic,
+            "2b91568570d864be134fb6392e68d135cde0ea3a60f85166bc1e9d015adfaa49"
+        );
+        let source = super::render_source(
+            "__GRIDTIMER_RENDEZVOUS_PUBLIC_KEY_BASE64__ __GRIDTIMER_RENDEZVOUS_TOPIC__ __GRIDTIMER_BOOTSTRAP_PUBLIC_SYNC_SERVER_URL_LITERAL__",
+            &identity,
+            "https://example.com",
+        ).unwrap();
+        assert!(source.contains(key));
+        assert!(source.contains(&identity.topic));
+        assert!(source.ends_with("\"https://example.com\""));
+        assert!(!source.contains("__GRIDTIMER_"));
+    }
+
+    #[test]
+    fn public_android_discovery_rejects_missing_malformed_or_noncanonical_keys() {
+        for key in [
+            "",
+            "invalid",
+            "B_bNXMMqkLjbwJeFouOFQyODcdzRtjL-ApRdtVEFx14=",
+            " B_bNXMMqkLjbwJeFouOFQyODcdzRtjL-ApRdtVEFx14",
+        ] {
+            assert!(super::public_discovery_identity(key.to_string()).is_err());
+        }
+    }
+
     #[test]
     fn android_update_history_starts_with_the_release_version() {
         let release_version = gridtimer_native::product_identity::ANDROID_APP_VERSION;

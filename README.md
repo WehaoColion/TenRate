@@ -1,3 +1,5 @@
+v2.23.2.42（Android用户确认可用APK）- 优化格子快捷操作面板的顶部留白、标题与关闭入口，小屏和大字体下支持滚动。versionCode22311，已通过GitHub Actions构建并交付，用户于2026-10-18确认可用并授权合并PR #36；具体设备与同步场景仍按实际验证记录。详见[本版说明](documents/releases/android/release_notes_v2.23.2.42.md)。
+
 v2.23.2.41（Android已验收APK）- 修复保存图片时正文空白：等待实际绘制帧，拒绝空白图片并回退正文；versionCode22310。承接已交付2.23.2.40，正式签名APK已于2026-10-18 05:18（北京时间）按原流程交付，三处哈希一致；用户于2026-10-18确认本版可用并授权合并PR #35。详见[本版说明](documents/releases/android/release_notes_v2.23.2.41.md)。
 
 v2.23.2.39（Android已验收APK）- 修复相邻原生待办项预览中多出的空行；versionCode22308。正式签名APK于2026-10-17 21:20（北京时间）按原流程交付，三处哈希一致，旧2.23.2.38已归档到old_apks；用户于2026-10-17确认本版可用并授权合并PR #33。详见[本版说明](documents/releases/android/release_notes_v2.23.2.39.md)。

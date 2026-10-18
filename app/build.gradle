@@ -1,3 +1,4 @@
+// v2.23.2.42 - Give the slot command sheet a balanced, scrollable header.
 // v2.23.2.35 - Cancel stale persistence waiters and reuse verified save preflight.
 // v2.23.2.33 - Compact knowledge navigation and editor controls.
 // v2.23.2.32 - Unify knowledge document location and move entry.
@@ -92,8 +93,8 @@ def rustupHome = rustupHomeFile.absolutePath
 def cargo = new File(rustupHomeFile, "toolchains/${rustToolchain}/bin/cargo.exe").absolutePath
 def cargoHome = System.getenv('CARGO_HOME') ?: new File(userHome, '.cargo').absolutePath
 def rustLinker = new File(rustupHomeFile, "toolchains/${rustToolchain}/lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe").absolutePath
-def ndkDir = file('C:\\tools\\android-sdk\\ndk\\27.1.12297006')
-def libPath = [
+def ndkDir = file(System.getenv('GRID_TIMER_NDK_DIR') ?: 'C:\\tools\\android-sdk\\ndk\\27.1.12297006')
+def libPath = System.getenv('GRID_TIMER_NATIVE_LIB_PATH') ?: [
     'C:\\tools\\xwin\\crt\\lib\\x86_64',
     'C:\\tools\\xwin\\sdk\\lib\\ucrt\\x86_64',
     'C:\\tools\\xwin\\sdk\\lib\\um\\x86_64'
@@ -155,8 +156,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22310
-        versionName '2.23.2.41'
+        versionCode 22311
+        versionName '2.23.2.42'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

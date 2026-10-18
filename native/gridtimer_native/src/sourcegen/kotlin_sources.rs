@@ -33667,6 +33667,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
@@ -33810,6 +33812,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -39342,6 +39345,7 @@ internal fun SectionCard(
 internal fun InAppBottomSheetOverlay(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    topCornerRadius: Dp = 34.dp,
     content: @Composable () -> Unit
 ) {
     val scrimInteractionSource = remember { MutableInteractionSource() }
@@ -39399,7 +39403,7 @@ internal fun InAppBottomSheetOverlay(
                     .fillMaxWidth()
                     .navigationBarsPadding()
                     .imePadding(),
-                shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+                shape = RoundedCornerShape(topStart = topCornerRadius, topEnd = topCornerRadius),
                 color = MaterialTheme.colorScheme.background
             ) {
                 content()
@@ -39488,19 +39492,43 @@ private fun SlotCommandSheet(
     }
     val canReset = slot.runningSinceEpochMillis != null || slot.accumulatedMillis > 0L
 
-    InAppBottomSheetOverlay(onDismiss = onDismiss) {
+    val closeDescription = localizedUiText("关闭")
+    val maxSheetHeight = LocalConfiguration.current.screenHeightDp.dp * 0.86f
+
+    InAppBottomSheetOverlay(onDismiss = onDismiss, topCornerRadius = 24.dp) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("slot_command_sheet")
-                .padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 28.dp),
+                .heightIn(max = maxSheetHeight)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "格子 ${slot.id.toString().padStart(2, '0')} 快捷操作",
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "格子 ${slot.id.toString().padStart(2, '0')} 快捷操作",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                    ChromeIconButton(
+                        icon = Icons.Rounded.Close,
+                        accent = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = closeDescription
+                            },
+                        testTag = "slot_command_close",
+                        onClick = onDismiss
+                    )
+                }
                 Text(
                     text = "可以在这里查看最近记录、恢复归档任务，或清理不再需要的旧记录。",
                     style = MaterialTheme.typography.bodySmall.copy(

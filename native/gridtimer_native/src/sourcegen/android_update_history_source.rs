@@ -1,3 +1,4 @@
+// v2.23.2.42 - Record the slot command sheet header refinement.
 // v2.23.2.37 - Record preserved sticky-note line breaks in current and historical previews.
 // v2.23.2.36 - Record large snapshot reads and lossless final-save admission.
 // v2.23.2.35 - Record save queue cancellation and verified history reuse.
@@ -37,7 +38,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.41";
+pub const LATEST_VERSION: &str = "2.23.2.42";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -67,6 +68,17 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.42",
+        updatedAt = "2026-10-18 19:51",
+        summary = "优化格子快捷操作面板的顶部布局",
+        sections = listOf(
+            AndroidUpdateSection("快捷操作", listOf(
+                "标题与顶部圆角之间增加留白，调整标题字号和左右间距，补充关闭按钮。",
+                "面板保持适度高度，小屏或大字体下可以滚动查看完整内容。原有计时、记录、归档入口和动效保留。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.41",
         updatedAt = "2026-10-18 03:27",
