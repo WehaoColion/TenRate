@@ -37,7 +37,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.39";
+pub const LATEST_VERSION: &str = "2.23.2.41";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -67,6 +67,37 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.41",
+        updatedAt = "2026-10-18 03:27",
+        summary = "修复保存图片时正文可能空白的问题",
+        sections = listOf(
+            AndroidUpdateSection("正文图片导出", listOf(
+                "公式与Markdown排版完成后，继续等待实际绘制帧；不再将网页加载完成当作图片已经绘制完成。",
+                "检查正文图片中的可见文字像素，透明、纯白、纯色或异常尺寸的图片不作为成功结果；绘制失败时使用原正文生成图片。",
+                "导出过程设置总超时，并在完成、失败和取消时移除临时渲染视图。"
+            )),
+            AndroidUpdateSection("版本说明", listOf(
+                "Android 2.23.2.41，versionCode 22310。保留2.23.2.40的公式导出功能、原文和同步格式。",
+                "此版本为修复候选，实际手机导出效果需要安装后验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "2.23.2.40",
+        updatedAt = "2026-10-18 01:17",
+        summary = "修复知识页分享长图中的公式排版",
+        sections = listOf(
+            AndroidUpdateSection("分享与保存长图", listOf(
+                "分享图片、保存长图时，正文复用离线Markdown与KaTeX排版，避免公式和Markdown标记直接显示为源码。",
+                "等待正文、公式与字体完成排版后生成图片；渲染失败、超时或尺寸异常时回退原有文字绘制路径。"
+            )),
+            AndroidUpdateSection("版本说明", listOf(
+                "Android 2.23.2.40，versionCode 22309；沿用原包名和正式签名。保留原文、历史记录与同步格式。",
+                "本次构建基于PR #34。分享长图的设备实际效果仍需真机确认。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.39",
         updatedAt = "2026-10-17 20:37",
