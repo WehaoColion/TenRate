@@ -1,3 +1,4 @@
+// v2.23.2.44 - Guide Agent tasks through scope, authorization and result review.
 // v2.23.2.43 - Support consecutive AI questions in a conversation panel.
 // v2.23.2.42 - Give the slot command sheet a balanced, scrollable header.
 // v2.23.2.35 - Cancel stale persistence waiters and reuse verified save preflight.
@@ -157,8 +158,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22312
-        versionName '2.23.2.43'
+        versionCode 22313
+        versionName '2.23.2.44'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
