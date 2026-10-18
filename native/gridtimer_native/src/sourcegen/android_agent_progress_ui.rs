@@ -284,12 +284,7 @@ pub fn render(source: &str) -> Result<String, String> {
                     }
                 }
             }
-        }
-        }
-    }
-}
-
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)"####,
+            if (!agentMode) {"####,
         r####"                            )
                         }
                         PhysicalButton(label = if (agentSaved) "本任务已保存" else if (agentBusy) "Agent 正在执行" else "授权并开始执行",
@@ -301,12 +296,7 @@ pub fn render(source: &str) -> Result<String, String> {
                     }
                 }
             }
-        }
-        }
-    }
-}
-
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)"####,
+            if (!agentMode) {"####,
     )?;
     replace_once(
         &mut rendered,

@@ -147,6 +147,30 @@ pub fn complete_android_query(
     source_folders: &[String],
     source_excerpts: &[String],
 ) -> AiCompletionResult {
+    complete_android_conversation(
+        api_key,
+        base_url,
+        model,
+        mode,
+        question,
+        source_titles,
+        source_folders,
+        source_excerpts,
+        "[]",
+    )
+}
+
+pub fn complete_android_conversation(
+    api_key: &str,
+    base_url: &str,
+    model: &str,
+    mode: &str,
+    question: &str,
+    source_titles: &[String],
+    source_folders: &[String],
+    source_excerpts: &[String],
+    history_json: &str,
+) -> AiCompletionResult {
     let api_key = api_key.trim();
     if api_key.is_empty() {
         return AiCompletionResult::error("请先填写 AI API Key");
@@ -166,6 +190,11 @@ pub fn complete_android_query(
         Ok(value) => value,
         Err(message) => return AiCompletionResult::error(message),
     };
+    let request_body =
+        match crate::android_ai_conversation::with_history(request_body, history_json) {
+            Ok(body) => body,
+            Err(message) => return AiCompletionResult::error(message),
+        };
     execute_response_request(api_key, &base_url, request_body)
 }
 

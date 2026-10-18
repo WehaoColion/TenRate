@@ -24,6 +24,7 @@ mod android_agent_progress;
 #[cfg(any(target_os = "android", test))]
 mod android_agent_registry;
 mod android_agent_upgrade;
+mod android_ai_conversation;
 #[cfg(target_os = "android")]
 mod android_ai_session;
 pub mod android_answer_render;
@@ -2638,6 +2639,53 @@ pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nat
         &source_titles,
         &source_folders,
         &source_excerpts,
+    );
+    let ok = if result.ok { "true" } else { "false" };
+    let values = [ok, result.message.as_str(), result.content.as_str()];
+    string_array_from_slice(&mut env, &values)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeCompleteAndroidAiConversation(
+    mut env: JNIEnv,
+    _class: JClass,
+    api_key: JString,
+    base_url: JString,
+    model: JString,
+    mode: JString,
+    question: JString,
+    source_titles: JObjectArray,
+    source_folders: JObjectArray,
+    source_excerpts: JObjectArray,
+    history_json: JString,
+) -> jobjectArray {
+    let api_key = string_from_jstring(&mut env, &api_key);
+    let base_url = string_from_jstring(&mut env, &base_url);
+    let model = string_from_jstring(&mut env, &model);
+    let mode = string_from_jstring(&mut env, &mode);
+    let question = string_from_jstring(&mut env, &question);
+    let history_json = string_from_jstring(&mut env, &history_json);
+    // General questions neither read nor forward knowledge arrays. The Rust
+    // request builder independently enforces the same separation.
+    let (source_titles, source_folders, source_excerpts) = if mode == "direct" {
+        (Vec::new(), Vec::new(), Vec::new())
+    } else {
+        (
+            string_array_values(&mut env, &source_titles).unwrap_or_default(),
+            string_array_values(&mut env, &source_folders).unwrap_or_default(),
+            string_array_values(&mut env, &source_excerpts).unwrap_or_default(),
+        )
+    };
+    let result = ai_client::complete_android_conversation(
+        &api_key,
+        &base_url,
+        &model,
+        &mode,
+        &question,
+        &source_titles,
+        &source_folders,
+        &source_excerpts,
+        &history_json,
     );
     let ok = if result.ok { "true" } else { "false" };
     let values = [ok, result.message.as_str(), result.content.as_str()];

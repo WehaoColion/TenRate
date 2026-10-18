@@ -38,7 +38,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.42";
+pub const LATEST_VERSION: &str = "2.23.2.43";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -68,6 +68,22 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.43",
+        updatedAt = "2026-10-19 04:18",
+        summary = "AI 问答支持连续追问，底部输入区发送后自动清空",
+        sections = listOf(
+            AndroidUpdateSection("连续对话", listOf(
+                "保留当前面板内的多轮问答，继续输入不再删除上一条回答；每条回答可复制或保存为知识页。",
+                "追问携带最近最多8轮、24000字符的完整问答。切换模式、资料范围或AI配置后开始新的上下文。",
+                "发送失败或取消后保留问题，结束后可直接重试；新对话入口可清空当前面板的问答。"
+            )),
+            AndroidUpdateSection("提问界面", listOf(
+                "采用接近全屏的对话面板，输入和发送固定在底部，配置入口收为一行，键盘弹出时保持输入可见。",
+                "任务Agent保留原有资料选择、发送预览和授权流程。当前对话在面板关闭后不持久保存。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.42",
         updatedAt = "2026-10-18 19:51",
