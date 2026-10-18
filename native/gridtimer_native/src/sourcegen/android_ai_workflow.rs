@@ -758,6 +758,30 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
             replace(&mut source,
                 "Toast.makeText(context, \"知识页尚未确认保存：\" + (result.failure?.name ?: result.detail), Toast.LENGTH_LONG).show()",
                 "val message = \"知识页尚未确认保存：\" + (result.failure?.name ?: result.detail)\n                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()\n                            onComplete(false, message)")?;
+            let entry_start = source.find("@Composable\nprivate fun KnowledgeAskEntryCard(").ok_or("missing conversation entry")?;
+            let entry_end = source[entry_start..].find("@OptIn(ExperimentalLayoutApi::class)\n@Composable\nprivate fun KnowledgeAiDialog(").map(|offset| entry_start + offset).ok_or("missing conversation entry end")?;
+            source.replace_range(entry_start..entry_end, r####"@Composable
+private fun KnowledgeAskEntryCard(
+    accent: Color,
+    sourceCount: Int,
+    selectedFolderName: String?,
+    onAskKnowledge: () -> Unit
+) {
+    FlowusPanel(accent = accent, modifier = Modifier.fillMaxWidth()
+        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onAskKnowledge)) {
+        Row(modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("AI 对话", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("连续追问，保留本轮问答", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.64f))
+            }
+            Text("开始对话", style = MaterialTheme.typography.labelLarge, color = accent)
+        }
+    }
+}
+
+"####);
             let start = source
                 .find("@Composable\nprivate fun KnowledgeAiDialog(")
                 .ok_or("missing knowledge AI dialog")?;
