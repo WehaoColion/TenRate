@@ -52,9 +52,21 @@ jobs:
               or run.get('head_repository', {}).get('full_name') != repo):
               raise SystemExit('Only a successful signed APK build from this repository can be published')
           commit = run['head_sha']
+          tag_target = commit
           default_branch = json.loads(gh('api', f'repos/{repo}').stdout)['default_branch']
           comparison = json.loads(gh('api', f'repos/{repo}/compare/{commit}...{default_branch}').stdout)
           merged = comparison['merge_base_commit']['sha'] == commit
+          # A GITHUB_TOKEN can be restricted when creating a new tag on an older
+          # commit that changed workflows. Use this workflow's main commit only
+          # when all intervening differences are CI or documentation.
+          publisher_commit = os.environ['GITHUB_SHA']
+          delta = json.loads(gh('api', f'repos/{repo}/compare/{commit}...{publisher_commit}').stdout)
+          files = delta.get('files', [])
+          def publication_only(path):
+              return path in ('AGENTS.md', 'README.md') or path.startswith(('documents/', '.github/'))
+          if (merged and delta['merge_base_commit']['sha'] == commit and len(files) < 300
+              and all(publication_only(f['filename']) and publication_only(f.get('previous_filename', f['filename'])) for f in files)):
+              tag_target = publisher_commit
           gh('run', 'download', run_id, '--repo', repo, '--name', 'tenrate-signed-apk', '--dir', 'package')
           apks = list(pathlib.Path('package').glob('*.apk'))
           if len(apks) != 1:
@@ -75,7 +87,7 @@ jobs:
                   raise SystemExit(release.stderr)
               notes = pathlib.Path('release_notes.md')
               notes.write_text(f'Android {version} 正式签名 APK。\n\n构建提交：`{commit}`\n\nSHA256：`{digest}`\n\n[构建与检查记录]({run["html_url"]})\n')
-              gh('release', 'create', tag, '--repo', repo, '--target', commit,
+              gh('release', 'create', tag, '--repo', repo, '--target', tag_target,
                  '--title', f'Android {version}', '--draft', '--notes-file', str(notes))
               metadata = {'assets': []}
           else:
