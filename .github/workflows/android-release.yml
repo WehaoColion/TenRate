@@ -2,7 +2,7 @@ name: Android signed APK
 
 on:
   push:
-    branches: [fix/android-slot-sheet-header-20261018]
+    branches: [main, fix/android-slot-sheet-header-20261018]
   workflow_dispatch:
 
 permissions:
