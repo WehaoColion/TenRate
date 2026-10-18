@@ -23,6 +23,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         return Ok(source.to_owned());
     }
     let mut source = source.to_owned();
+    replace(&mut source, "import androidx.compose.material.icons.rounded.Title", "import androidx.compose.material.icons.rounded.PlayArrow\nimport androidx.compose.material.icons.rounded.Title")?;
     replace(&mut source,
         "    val agentBoundary = remember(workspaceKey, identity, priorityNoteId) { KnowledgeAgentRequestBoundary() }",
         "    var agentWorkspaceEpoch by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(0) }\n    val agentBoundary = remember(workspaceKey, identity, priorityNoteId, agentWorkspaceEpoch) { KnowledgeAgentRequestBoundary() }")?;
@@ -325,24 +326,24 @@ const WORKSPACE: &str = r####"            if (agentMode) {
                 when (agentWorkspaceStep) {
                     0 -> {
                         if (!configuration.testable) Text("先配置 AI，再选择资料。", style = MaterialTheme.typography.bodySmall)
-                        PhysicalButton(label = "下一步：选择资料", icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
+                        PhysicalButton(label = "下一步：选择资料", icon = Icons.Rounded.Folder, accent = notesAccentColor, filled = true,
                             enabled = canPrepare && configuration.testable && question.isNotBlank(), modifier = Modifier.fillMaxWidth(),
                             onClick = { agentPreviewAcknowledged = false; showSendingContent = false; agentWorkspaceStep = 1 })
                     }
                     1 -> {
                         if (agentSelectedIds.size > selectedAgentDocuments.size) Text("${agentSelectedIds.size - selectedAgentDocuments.size} 条所选资料正文不可用，不会发送。", style = MaterialTheme.typography.bodySmall)
-                        PhysicalButton(label = "下一步：核对发送内容", icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
+                        PhysicalButton(label = "下一步：核对发送内容", icon = Icons.Rounded.CheckBox, accent = notesAccentColor, filled = true,
                         enabled = canPrepare && selectedAgentDocuments.isNotEmpty() && question.isNotBlank() && configuration.testable,
                         modifier = Modifier.fillMaxWidth(), onClick = { showSendingContent = true; agentPreviewAcknowledged = false; agentWorkspaceStep = 2 })
                     }
-                    2 -> PhysicalButton(label = "授权并开始执行", icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
+                    2 -> PhysicalButton(label = "授权并开始执行", icon = Icons.Rounded.PlayArrow, accent = notesAccentColor, filled = true,
                         enabled = knowledgeAgentLaunchAction(locked, agentSaving, !agentSaved && configuration.testable && question.isNotBlank() && selectedAgentDocuments.isNotEmpty(), showSendingContent, agentPreviewAcknowledged) == KnowledgeAgentLaunchAction.START,
                         modifier = Modifier.fillMaxWidth(), onClick = ::requestAgent)
                     else -> when {
                         agentBusy -> PhysicalButton(label = if (agentCancelling) "正在停止后续步骤" else "停止本次任务", icon = Icons.Rounded.Close, accent = notesAccentColor, filled = false,
                             enabled = !agentCancelling, modifier = Modifier.fillMaxWidth(), onClick = { stopAgent("已取消任务") })
                         agentSaving -> PhysicalButton(label = "正在确认保存…", icon = Icons.Rounded.SaveAlt, accent = notesAccentColor, filled = true, enabled = false, modifier = Modifier.fillMaxWidth(), onClick = {})
-                        agentSaved -> PhysicalButton(label = "开始新任务", icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
+                        agentSaved -> PhysicalButton(label = "开始新任务", icon = Icons.Rounded.Add, accent = notesAccentColor, filled = true,
                             modifier = Modifier.fillMaxWidth(), onClick = { requestAgentWorkspaceReset(false) })
                         agentDraft != null -> {
                             val saveState = currentAgentSaveState()
@@ -351,7 +352,7 @@ const WORKSPACE: &str = r####"            if (agentMode) {
                                 enabled = saveState == KnowledgeAgentSaveState.READY && !locked, modifier = Modifier.fillMaxWidth(), onClick = ::saveAgentDraft)
                             TextButton(enabled = !locked, onClick = { requestAgentWorkspaceReset(true) }) { Text("调整任务后重新执行") }
                         }
-                        else -> PhysicalButton(label = "调整任务并重试", icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
+                        else -> PhysicalButton(label = "调整任务并重试", icon = Icons.AutoMirrored.Rounded.Redo, accent = notesAccentColor, filled = true,
                             enabled = !locked, modifier = Modifier.fillMaxWidth(), onClick = { requestAgentWorkspaceReset(true) })
                     }
                 }
