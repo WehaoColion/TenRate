@@ -30,7 +30,8 @@ jobs:
           rustup default 1.95.0
       - name: Build shared core and iPhone app
         run: bash ios/build.sh
-      - name: Test on iOS 27 iPhone simulator
+      - name: Boot one iOS 27 iPhone simulator
+        timeout-minutes: 8
         run: |
           set -euo pipefail
           xcrun simctl list devices available --json > ios/build/devices.json
@@ -42,13 +43,23 @@ jobs:
           print(matches[0]['udid'])
           PY
           )
+          echo "TENRATE_SIMULATOR_ID=$SIMULATOR_ID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIMULATOR_ID"
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+      - name: Test on iOS 27 iPhone simulator
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
           xcodebuild -project ios/TenRate.xcodeproj -scheme TenRate -configuration Debug \
-            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath ios/build/simulator \
+            -destination "platform=iOS Simulator,id=$TENRATE_SIMULATOR_ID" -derivedDataPath ios/build/simulator \
+            -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
             -resultBundlePath ios/build/Tests.xcresult CODE_SIGNING_ALLOWED=NO test
-          xcrun simctl launch "$SIMULATOR_ID" com.ofairyo.tenrate.ios
-          xcrun simctl io "$SIMULATOR_ID" screenshot ios/build/iPhone-light.png
-          xcrun simctl ui "$SIMULATOR_ID" appearance dark
-          xcrun simctl io "$SIMULATOR_ID" screenshot ios/build/iPhone-dark.png
+          xcrun simctl launch "$TENRATE_SIMULATOR_ID" com.ofairyo.tenrate.ios
+          sleep 2
+          xcrun simctl io "$TENRATE_SIMULATOR_ID" screenshot ios/build/iPhone-light.png
+          xcrun simctl ui "$TENRATE_SIMULATOR_ID" appearance dark
+          sleep 2
+          xcrun simctl io "$TENRATE_SIMULATOR_ID" screenshot ios/build/iPhone-dark.png
       - name: Package unsigned device IPA
         run: |
           set -euo pipefail
@@ -58,6 +69,7 @@ jobs:
           plutil -p ios/build/package/Payload/TenRate.app/Info.plist
           cp ios/README.md ios/build/delivery/INSTALL.md
           cp ios/build/iPhone-*.png ios/build/delivery/
+          xcrun xcresulttool export attachments --path ios/build/Tests.xcresult --output-path ios/build/delivery/test-screenshots
           (cd ios/build/package && ditto -c -k --sequesterRsrc --keepParent Payload ../delivery/TenRate-iOS-1.0.0.1-unsigned.ipa)
           (cd ios/build/delivery && shasum -a 256 *.ipa > SHA256SUMS.txt)
           printf 'Source commit: %s\nSigning: unsigned, requires re-signing before installation\n' "$GITHUB_SHA" > ios/build/delivery/BUILD.txt

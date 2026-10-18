@@ -211,6 +211,8 @@ v2.22.49 - 逐行读取历史快照并复用校验缓冲区，记录主界面完
 
 TenRate is a personal time, notes, and life-record system built with Rust for Android and Windows.
 
+An initial native iPhone client is being added in [PR #37](https://github.com/WehaoColion/TenRate/pull/37): local timers and plain-text notes, sharing the existing Rust core. See [iOS build and installation notes](ios/README.md) for its feature and signing limits.
+
 It is designed for people who want one place to hold the shape of a day: focused work sessions, quick notes, longer records, useful documents, sync state, and the small traces that are easy to lose when they are scattered across separate apps. The timer is the entry point, but the larger goal is a private operating desk for personal rhythm, memory, and review.
 
 The Android app is generated from the Rust source tree, uses native Rust logic through JNI, and includes focus timing, note management, finance records, sync support, notification effects, and Xiaomi HyperOS notification experiments.
@@ -218,6 +220,7 @@ The Android app is generated from the Rust source tree, uses native Rust logic t
 ## Project layout
 
 - `app/` contains the Android Gradle project and static Android resources.
+- `ios/` contains the SwiftUI iPhone client, a narrow C ABI for the shared Rust modules, and the XcodeGen project definition.
 - `native/gridtimer_native/` contains the Rust crate, JNI bridge, generated Android source emitters, desktop client, sync server, launcher, packaging helpers, and source audit tools.
 - `release_artifacts/current/` publishes the release manifest and the Cloudflared runtime dependency. Signed application installers remain local pending a decision about embedded workstation build paths. `release_artifacts/desktop_entry/` publishes the icon generator and icon assets; all stable launcher sources are included under `native/`.
 - `old_apks/` and `old_exes/` are local archives; they are not included in this baseline.
