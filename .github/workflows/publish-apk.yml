@@ -37,7 +37,10 @@ jobs:
           import hashlib, json, os, pathlib, re, subprocess
 
           def gh(*args, check=True):
-              return subprocess.run(['gh', *args], check=check, capture_output=True, text=True)
+              result = subprocess.run(['gh', *args], capture_output=True, text=True)
+              if check and result.returncode:
+                  raise SystemExit(result.stderr or result.stdout)
+              return result
 
           repo = os.environ['GH_REPO']
           run_id = os.environ['APK_RUN_ID']
