@@ -1,0 +1,98 @@
+name: iOS client
+on:
+  push:
+    branches: [main, feat/ios-client-20261018]
+    paths: ['ios/**', 'native/gridtimer_native/src/**', '.github/workflows/ios-client.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Apple toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version | tee /tmp/tenrate-xcode-version.txt
+          grep -E '^Xcode 27\.' /tmp/tenrate-xcode-version.txt
+          xcodebuild -showsdks
+          xcrun --sdk iphoneos --show-sdk-version | grep -E '^27\.'
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+      - name: Build shared core and iPhone app
+        run: bash ios/build.sh
+      - name: Test on iOS 27 iPhone simulator
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available --json > ios/build/devices.json
+          SIMULATOR_ID=$(python3 - <<'PY'
+          import json
+          data = json.load(open('ios/build/devices.json'))['devices']
+          matches = [d for runtime, devices in data.items() if 'iOS-27' in runtime for d in devices if d['isAvailable'] and 'iPhone' in d['name']]
+          if not matches: raise SystemExit('An iOS 27 iPhone simulator is required')
+          print(matches[0]['udid'])
+          PY
+          )
+          xcodebuild -project ios/TenRate.xcodeproj -scheme TenRate -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath ios/build/simulator \
+            -resultBundlePath ios/build/Tests.xcresult CODE_SIGNING_ALLOWED=NO test
+          xcrun simctl launch "$SIMULATOR_ID" com.ofairyo.tenrate.ios
+          xcrun simctl io "$SIMULATOR_ID" screenshot ios/build/iPhone-light.png
+          xcrun simctl ui "$SIMULATOR_ID" appearance dark
+          xcrun simctl io "$SIMULATOR_ID" screenshot ios/build/iPhone-dark.png
+      - name: Package unsigned device IPA
+        run: |
+          set -euo pipefail
+          mkdir -p ios/build/package/Payload ios/build/delivery
+          cp -R ios/build/device/Build/Products/Release-iphoneos/TenRate.app ios/build/package/Payload/
+          file ios/build/package/Payload/TenRate.app/TenRate | grep arm64
+          plutil -p ios/build/package/Payload/TenRate.app/Info.plist
+          cp ios/README.md ios/build/delivery/INSTALL.md
+          cp ios/build/iPhone-*.png ios/build/delivery/
+          (cd ios/build/package && ditto -c -k --sequesterRsrc --keepParent Payload ../delivery/TenRate-iOS-1.0.0.1-unsigned.ipa)
+          (cd ios/build/delivery && shasum -a 256 *.ipa > SHA256SUMS.txt)
+          printf 'Source commit: %s\nSigning: unsigned, requires re-signing before installation\n' "$GITHUB_SHA" > ios/build/delivery/BUILD.txt
+          xcodebuild -version >> ios/build/delivery/BUILD.txt
+          xcrun --sdk iphoneos --show-sdk-version >> ios/build/delivery/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenrate-ios-1.0.0.1-unsigned
+          path: ios/build/delivery/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-test-results
+          path: ios/build/Tests.xcresult
+          retention-days: 7
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tenrate-ios-1.0.0.1-unsigned
+          path: delivery
+      - name: Publish iOS preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          TAG="ios-v1.0.0.1-build-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" delivery/* --target "$SOURCE_SHA" --prerelease \
+            --title 'TenRate iOS 1.0.0.1 · unsigned preview' \
+            --notes '原生 iPhone 首版，计时与纯文本便签。未签名 IPA，安装前必须重新签名；不是可直接安装的正式包。尚未接入账户同步、财务、AI、知识画布与附件。见随包 INSTALL.md。'

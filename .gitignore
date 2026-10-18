@@ -107,3 +107,13 @@ release_artifacts/current/tools/*
 # Independent applications outside the TenRate build
 /r2_clock/
 /r2_calendar/
+
+# Generated iOS projects and build products
+/ios/build/
+/ios/native/target/
+/ios/Native/iphoneos/
+/ios/Native/iphonesimulator/
+/ios/TenRate.xcodeproj/
+*.ipa
+*.mobileprovision
+*.p12
