@@ -339,9 +339,9 @@ const WORKSPACE: &str = r####"            if (agentMode) {
                         enabled = knowledgeAgentLaunchAction(locked, agentSaving, !agentSaved && configuration.testable && question.isNotBlank() && selectedAgentDocuments.isNotEmpty(), showSendingContent, agentPreviewAcknowledged) == KnowledgeAgentLaunchAction.START,
                         modifier = Modifier.fillMaxWidth(), onClick = ::requestAgent)
                     else -> when {
-                        agentBusy -> PhysicalButton(label = if (agentCancelling) "正在停止后续步骤" else "停止本次任务", icon = Icons.Rounded.Close, accent = notesAccentColor,
+                        agentBusy -> PhysicalButton(label = if (agentCancelling) "正在停止后续步骤" else "停止本次任务", icon = Icons.Rounded.Close, accent = notesAccentColor, filled = false,
                             enabled = !agentCancelling, modifier = Modifier.fillMaxWidth(), onClick = { stopAgent("已取消任务") })
-                        agentSaving -> PhysicalButton(label = "正在确认保存…", icon = Icons.Rounded.SaveAlt, accent = notesAccentColor, enabled = false, modifier = Modifier.fillMaxWidth(), onClick = {})
+                        agentSaving -> PhysicalButton(label = "正在确认保存…", icon = Icons.Rounded.SaveAlt, accent = notesAccentColor, filled = true, enabled = false, modifier = Modifier.fillMaxWidth(), onClick = {})
                         agentSaved -> PhysicalButton(label = "开始新任务", icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
                             modifier = Modifier.fillMaxWidth(), onClick = { requestAgentWorkspaceReset(false) })
                         agentDraft != null -> {
