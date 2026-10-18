@@ -3,6 +3,25 @@ import XCTest
 
 @MainActor
 final class WorkspaceTests: XCTestCase {
+    func testPlainNoteRemainsEditableAfterSaveAndRelaunch() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("workspace.json")
+        let store = WorkspaceStore(url: url)
+        await store.load()
+        let created = await store.mutate(["action": "saveNote", "note": ["id": "plain", "kind": "STICKY", "content": "First note"]])
+        XCTAssertTrue(created)
+        let note = try XCTUnwrap(store.notes.first)
+        XCTAssertTrue(note.editable)
+        var updated = note.value
+        updated["content"] = "Edited note"
+        let saved = await store.mutate(["action": "saveNote", "note": updated])
+        XCTAssertTrue(saved)
+        let reopened = WorkspaceStore(url: url)
+        await reopened.load()
+        XCTAssertEqual(reopened.notes.first?.content, "Edited note")
+        XCTAssertEqual(reopened.notes.first?.editable, true)
+    }
     func testRelaunchRetainsNamedTimer() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

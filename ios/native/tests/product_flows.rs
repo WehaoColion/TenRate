@@ -59,3 +59,31 @@ fn malformed_command_never_replaces_state() {
     assert!(apply("broken", "{}", 1).is_none());
     assert!(apply("{}", r#"{"action":"start","slotId":999}"#, 1).is_none());
 }
+
+#[test]
+fn saved_plain_note_can_be_edited_without_flattening_other_documents() {
+    let base = action("", json!({"action":"default"}), 1000);
+    let saved = action(
+        &base,
+        json!({"action":"saveNote","note":{"id":"plain","content":"first","kind":"STICKY"}}),
+        2000,
+    );
+    let mut note = serde_json::from_str::<Value>(&saved).unwrap()["notes"][0].clone();
+    assert_eq!(note["document"]["blocks"][0]["id"], "legacy-text");
+    note["content"] = json!("second\n第二次");
+    let updated = action(&saved, json!({"action":"saveNote","note":note}), 3000);
+    let updated: Value = serde_json::from_str(&updated).unwrap();
+    assert_eq!(updated["notes"][0]["content"], "second\n第二次");
+    assert_eq!(
+        updated["notes"][0]["document"]["blocks"][0]["text"],
+        "second\n第二次"
+    );
+    let mut structured = updated["notes"][0].clone();
+    structured["document"]["blocks"][0]["id"] = json!("structured-block");
+    assert!(apply(
+        &saved,
+        &json!({"action":"saveNote","note":structured}).to_string(),
+        4000
+    )
+    .is_none());
+}

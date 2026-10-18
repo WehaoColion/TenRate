@@ -69,7 +69,8 @@ jobs:
           plutil -p ios/build/package/Payload/TenRate.app/Info.plist
           cp ios/README.md ios/build/delivery/INSTALL.md
           cp ios/build/iPhone-*.png ios/build/delivery/
-          xcrun xcresulttool export attachments --path ios/build/Tests.xcresult --output-path ios/build/delivery/test-screenshots
+          xcrun xcresulttool export attachments --path ios/build/Tests.xcresult --output-path ios/build/test-screenshots
+          ditto -c -k --keepParent ios/build/test-screenshots ios/build/delivery/UITest-screenshots.zip
           (cd ios/build/package && ditto -c -k --sequesterRsrc --keepParent Payload ../delivery/TenRate-iOS-1.0.0.1-unsigned.ipa)
           (cd ios/build/delivery && shasum -a 256 *.ipa > SHA256SUMS.txt)
           printf 'Source commit: %s\nSigning: unsigned, requires re-signing before installation\n' "$GITHUB_SHA" > ios/build/delivery/BUILD.txt

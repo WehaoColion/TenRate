@@ -24,10 +24,13 @@ final class SmokeTests: XCTestCase {
         editor.tap()
         editor.typeText("First iPhone note")
         app.buttons["保存"].tap()
-        XCTAssertTrue(app.staticTexts["First iPhone note"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["First iPhone note"].firstMatch.waitForExistence(timeout: 5))
         app.terminate()
         app.launch()
         app.tabBars.buttons["便签"].tap()
-        XCTAssertTrue(app.staticTexts["First iPhone note"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["First iPhone note"].firstMatch.waitForExistence(timeout: 5))
+        app.staticTexts["First iPhone note"].firstMatch.tap()
+        XCTAssertTrue(app.textViews["便签正文"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["保存"].isEnabled)
     }
 }

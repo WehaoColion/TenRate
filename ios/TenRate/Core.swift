@@ -67,9 +67,15 @@ struct Note: Identifiable {
     var deleted: Bool { value["deletedAtEpochMillis"] is NSNumber }
     var editable: Bool {
         let document = value["document"] as? [String: Any] ?? [:]
+        let blocks = document["blocks"] as? [[String: Any]] ?? []
+        let plainBlocks = blocks.isEmpty || (blocks.count == 1
+            && blocks[0]["id"] as? String == "legacy-text"
+            && blocks[0]["type"] as? String == "TEXT"
+            && (blocks[0]["knowledge"] == nil || blocks[0]["knowledge"] is NSNull)
+            && (blocks[0]["attachmentId"] == nil || blocks[0]["attachmentId"] is NSNull))
         return (value["encryption"] == nil || value["encryption"] is NSNull)
             && (value["kind"] as? String ?? "STICKY") == "STICKY"
-            && (document["blocks"] as? [Any] ?? []).isEmpty
+            && plainBlocks && (value["attachments"] as? [Any] ?? []).isEmpty
             && (document["richTextEnabled"] as? Bool != true)
             && (document["knowledge"] == nil || document["knowledge"] is NSNull)
     }

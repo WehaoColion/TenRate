@@ -45,7 +45,7 @@ pub fn apply(raw: &str, command: &str, now: i64) -> Option<String> {
         "saveNote" => {
             // Only plain text notes are editable in this first iOS release.
             // Reject protected/structured documents rather than flattening them.
-            let note = c.get("note")?;
+            let mut note = c.get("note")?.clone();
             let data: Value = serde_json::from_str(raw).ok()?;
             let note_id = note.get("id")?.as_str()?;
             let existing = data
@@ -53,7 +53,7 @@ pub fn apply(raw: &str, command: &str, now: i64) -> Option<String> {
                 .as_array()?
                 .iter()
                 .find(|n| n.get("id").and_then(Value::as_str) == Some(note_id));
-            for item in existing.into_iter().chain(std::iter::once(note)) {
+            for item in existing.into_iter().chain(std::iter::once(&note)) {
                 if item.get("encryption").is_some_and(|v| !v.is_null())
                     || item
                         .get("kind")
@@ -61,6 +61,10 @@ pub fn apply(raw: &str, command: &str, now: i64) -> Option<String> {
                         .is_some_and(|v| v != "STICKY")
                     || item
                         .pointer("/document/blocks")
+                        .and_then(Value::as_array)
+                        .is_some_and(|v| !plain_blocks(v))
+                    || item
+                        .get("attachments")
                         .and_then(Value::as_array)
                         .is_some_and(|v| !v.is_empty())
                     || item
@@ -74,12 +78,31 @@ pub fn apply(raw: &str, command: &str, now: i64) -> Option<String> {
                     return None;
                 }
             }
+            // The shared core turns legacy plain text into one canonical text
+            // block. Update that block together with content on later saves.
+            let content = note
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if let Some(block) = note.pointer_mut("/document/blocks/0") {
+                block["text"] = Value::String(content);
+            }
             app_data::upsert_note_app_data_json(raw, &note.to_string(), now)
         }
         "deleteNote" => app_data::delete_note_app_data_json(raw, text, now),
         "restoreNote" => app_data::restore_note_app_data_json(raw, text, now),
         _ => None,
     }
+}
+
+fn plain_blocks(blocks: &[Value]) -> bool {
+    blocks.is_empty()
+        || (blocks.len() == 1
+            && blocks[0].get("id").and_then(Value::as_str) == Some("legacy-text")
+            && blocks[0].get("type").and_then(Value::as_str) == Some("TEXT")
+            && blocks[0].get("knowledge").is_none_or(Value::is_null)
+            && blocks[0].get("attachmentId").is_none_or(Value::is_null))
 }
 
 /// All strings are UTF-8; returned ownership is released with tenrate_string_free.
