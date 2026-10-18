@@ -211,7 +211,7 @@ v2.22.49 - 逐行读取历史快照并复用校验缓冲区，记录主界面完
 
 TenRate is a personal time, notes, and life-record system built with Rust for Android and Windows.
 
-An initial native iPhone client is being added in [PR #37](https://github.com/WehaoColion/TenRate/pull/37): local timers and plain-text notes, sharing the existing Rust core. See [iOS build and installation notes](ios/README.md) for its feature and signing limits.
+An initial native iPhone client is available as an [unsigned iOS 1.0.0.1 preview](https://github.com/WehaoColion/TenRate/releases/tag/ios-v1.0.0.1-build-3), tracked in [PR #37](https://github.com/WehaoColion/TenRate/pull/37): local timers and plain-text notes, sharing the existing Rust core. Xcode 27 builds and iOS 27 simulator checks passed. See [iOS build and installation notes](ios/README.md) for its feature and signing limits; re-signing is required before device installation.
 
 It is designed for people who want one place to hold the shape of a day: focused work sessions, quick notes, longer records, useful documents, sync state, and the small traces that are easy to lose when they are scattered across separate apps. The timer is the entry point, but the larger goal is a private operating desk for personal rhythm, memory, and review.
 
