@@ -1,4 +1,4 @@
-v2.23.2.45（Android候选）- 风控默认打开日账，顶部固定记支出、记收入；风险分析与更多工具独立进入，统计预算按需展开。versionCode22314。详见[本版说明](documents/releases/android/release_notes_v2.23.2.45.md)。
+v2.23.2.45（Android候选APK）- 风控默认打开日账，顶部固定记支出、记收入；风险分析与更多工具独立进入，统计预算按需展开。versionCode22314。原签名APK已上传[GitHub Release](https://github.com/WehaoColion/TenRate/releases/tag/v2.23.2.45)，489项JVM测试通过。详见[本版说明](documents/releases/android/release_notes_v2.23.2.45.md)。
 
 v2.23.2.44（Android候选APK）- 任务助手采用分步工作区，先写任务再选资料，核对授权后执行；底部固定主要操作，草稿默认预览，支持直接新建和保留输入重试。versionCode22313。原签名APK已上传[GitHub Release](https://github.com/WehaoColion/TenRate/releases/tag/v2.23.2.44)，486项JVM测试通过。详见[本版说明](documents/releases/android/release_notes_v2.23.2.44.md)。
 

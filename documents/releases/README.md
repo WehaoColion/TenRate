@@ -64,7 +64,7 @@ v0.0.10 - 纳入安卓2.23.2.20候选说明与回退记录。
 
 | 版本 | 更新说明 |
 | --- | --- |
-| 2.23.2.45 | [记账优先与固定快捷入口](android/release_notes_v2.23.2.45.md) |
+| 2.23.2.45 | [记账优先与固定快捷入口候选APK](android/release_notes_v2.23.2.45.md) |
 | 2.23.2.44 | [任务助手分步工作区候选APK](android/release_notes_v2.23.2.44.md) |
 | 2.23.2.43 | [连续AI对话与底部提问输入区候选APK](android/release_notes_v2.23.2.43.md) |
 | 2.23.2.42 | [快捷操作面板顶部布局及签名APK交付](android/release_notes_v2.23.2.42.md) |
