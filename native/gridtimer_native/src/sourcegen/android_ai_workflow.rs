@@ -81,6 +81,12 @@ internal fun acceptKnowledgeAgentProgress(
          (previous.terminal != "running" && incoming.terminal == "running"))) return previous
     return incoming
 }
+internal fun canResetKnowledgeAgentWorkspace(running: Boolean, saving: Boolean, answerBusy: Boolean): Boolean = !running && !saving && !answerBusy
+internal fun knowledgeAgentSourceMatches(query: String, title: String, folder: String): Boolean =
+    query.trim().split(Regex("\\s+")).filter(String::isNotBlank).all { title.contains(it, ignoreCase = true) || folder.contains(it, ignoreCase = true) }
+internal fun addKnowledgeAgentVisibleSources(selected: Set<String>, visible: List<String>): Set<String> =
+    (selected.asSequence() + visible.asSequence()).filter(String::isNotBlank).distinct().take(30).toSet()
+
 internal enum class KnowledgeAgentLaunchAction { WAIT, PREVIEW, START }
 internal fun knowledgeAgentLaunchAction(
     busy: Boolean, saving: Boolean, inputsReady: Boolean, previewVisible: Boolean, authorized: Boolean
@@ -226,6 +232,28 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class KnowledgeAiRequestBoundaryTest {
+    @Test fun agentSelectionAddsSearchResultsWithoutDroppingExistingSourcesOrExceedingLimit() {
+        val current = linkedSetOf("pinned", "other")
+        val next = addKnowledgeAgentVisibleSources(current, listOf("", "pinned") + (1..50).map { "source$it" })
+        assertEquals(30, next.size); assertTrue(next.containsAll(current)); assertFalse(next.contains(""))
+        assertEquals(current, addKnowledgeAgentVisibleSources(current, emptyList()))
+        assertTrue(knowledgeAgentSourceMatches(" 项目  WORK ", "项目进展", "Work"))
+        assertFalse(knowledgeAgentSourceMatches("项目 missing", "项目进展", "Work"))
+    }
+    @Test fun newAgentTaskRequiresPreviousRunAndSaveToFinish() {
+        assertTrue(canResetKnowledgeAgentWorkspace(false, false, false))
+        assertFalse(canResetKnowledgeAgentWorkspace(true, false, false))
+        assertFalse(canResetKnowledgeAgentWorkspace(false, true, false))
+        assertFalse(canResetKnowledgeAgentWorkspace(false, false, true))
+        val previous = KnowledgeAgentRequestBoundary()
+        val ticket = previous.begin(true, true, "old", 1)!!
+        assertTrue(previous.finish(ticket, true, true))
+        assertTrue(previous.beginSave(true, true, true, true)); previous.finishSave(true)
+        assertNull(previous.begin(true, true, "new", 1))
+        val next = KnowledgeAgentRequestBoundary()
+        val nextTicket = next.begin(true, true, "new", 1)!!
+        assertTrue(next.isCurrent(nextTicket)); assertFalse(previous.isCurrent(ticket))
+    }
     @Test fun noAuthorizationOrInputCannotSend() {
         for (input in listOf(Triple(false, true, 1), Triple(true, false, 1), Triple(true, true, 0))) {
             assertNull(KnowledgeAiRequestBoundary().begin(input.first, input.second, "问题", input.third))
