@@ -42,6 +42,8 @@ mod android_document_markdown;
 mod android_document_transition;
 #[path = "../sourcegen/android_finance_workspace.rs"]
 mod android_finance_workspace;
+#[path = "../sourcegen/android_finance_navigation.rs"]
+mod android_finance_navigation;
 #[path = "../sourcegen/android_history_storage.rs"]
 mod android_history_storage;
 #[path = "../sourcegen/android_jvm_test_sources.rs"]
@@ -208,6 +210,11 @@ fn run() -> io::Result<()> {
             &unit_test_output_root,
             android_finance_workspace::TEST_PATH,
             android_finance_workspace::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
+            android_finance_navigation::TEST_PATH,
+            android_finance_navigation::TEST_CONTENTS,
         )?;
         write_source(
             &unit_test_output_root,
@@ -771,6 +778,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_snapshot_row_read::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_agent_workspace_ui::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_finance_navigation::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = contents
         .replace("十倍率", "tenfold")

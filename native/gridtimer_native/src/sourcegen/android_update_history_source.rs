@@ -1,3 +1,4 @@
+// v2.23.2.45 - Record bookkeeping-first finance navigation.
 // v2.23.2.42 - Record the slot command sheet header refinement.
 // v2.23.2.37 - Record preserved sticky-note line breaks in current and historical previews.
 // v2.23.2.36 - Record large snapshot reads and lossless final-save admission.
@@ -38,7 +39,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.44";
+pub const LATEST_VERSION: &str = "2.23.2.45";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -68,6 +69,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.45",
+        updatedAt = "2026-10-19 10:05",
+        summary = "记账入口固定在顶部，打开风控直接查看日账",
+        sections = listOf(
+            AndroidUpdateSection("记账优先", listOf("顶部固定记支出、记收入，快捷记录当天账目；日账、月快照、季度和年度仍可切换。", "新增收支在独立面板填写，明确显示记入日期；返回时确认放弃未保存的内容。")),
+            AndroidUpdateSection("风险与工具", listOf("财务核对、预测及法律分析收进风险分析入口；备份、恢复与个人计划从更多进入。", "当日统计与预算、分类目标设置按需展开，保留原有金额精度、核对失效规则、同步身份及写入回执。"))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.44",
         updatedAt = "2026-10-19 06:10",
