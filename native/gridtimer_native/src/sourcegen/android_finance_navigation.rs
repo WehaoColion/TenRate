@@ -71,6 +71,8 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
             .replace("__BACKUP__", bodies[4])
             .replace("__PLAN__", bodies[5]);
         output.replace_range(start..end, &new_content);
+        replace(&mut output, "                                    restoreFinanceLauncher.launch(arrayOf(\"application/json\", \"text/plain\"))",
+            "                                    showFinanceTools = false\n                                    restoreFinanceLauncher.launch(arrayOf(\"application/json\", \"text/plain\"))")?;
         replace(
             &mut output,
             "    val financeListState = rememberLazyListState()",

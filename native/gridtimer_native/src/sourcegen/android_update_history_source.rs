@@ -71,7 +71,7 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
     AndroidUpdateEntry(
         version = "2.23.2.45",
-        updatedAt = "2026-10-19 10:05",
+        updatedAt = "2026-10-19 09:36",
         summary = "记账入口固定在顶部，打开风控直接查看日账",
         sections = listOf(
             AndroidUpdateSection("记账优先", listOf("顶部固定记支出、记收入，快捷记录当天账目；日账、月快照、季度和年度仍可切换。", "新增收支在独立面板填写，明确显示记入日期；返回时确认放弃未保存的内容。")),
