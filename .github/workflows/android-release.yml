@@ -200,7 +200,7 @@ jobs:
           if len(assets) != 1:
               raise SystemExit('Exactly one signed APK is required')
           apk = assets[0]
-          match = re.fullmatch(r'tenfold_v(\\d+(?:\\.\\d+){3})\\.apk', apk.name)
+          match = re.fullmatch(r'tenfold_v(\d+(?:\.\d+){3})\.apk', apk.name)
           if not match:
               raise SystemExit('Unexpected APK filename')
           checksum = apk.with_name(apk.name + '.sha256')
