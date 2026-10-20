@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "../sourcegen/android_cold_start.rs"]
 mod android_cold_start;
+#[path = "../sourcegen/android_local_read_efficiency.rs"]
+mod android_local_read_efficiency;
 #[path = "../sourcegen/android_ai_answer_ui.rs"]
 mod android_ai_answer_ui;
 #[path = "../sourcegen/android_agent_workspace_ui.rs"]
@@ -280,6 +282,11 @@ fn run() -> io::Result<()> {
         )?;
         write_source(
             &unit_test_output_root,
+            android_local_read_efficiency::TEST_PATH,
+            android_local_read_efficiency::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
             android_snapshot_row_read::TEST_PATH,
             android_snapshot_row_read::TEST_CONTENTS,
         )?;
@@ -466,6 +473,8 @@ fn run() -> io::Result<()> {
         let rendered = android_note_persist_preflight::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_cold_start::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_local_read_efficiency::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }

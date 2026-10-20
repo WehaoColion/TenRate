@@ -1,3 +1,5 @@
+Android 2.23.2.47 本机数据读取优化候选：[说明](android/release_notes_v2.23.2.47.md)。
+
 Android 2.23.2.46 启动路径优化候选：[说明](android/release_notes_v2.23.2.46.md)。
 
 v0.0.65 - 记录PR #36已合并及Android2.23.2.42 GitHub Release发布完成。
