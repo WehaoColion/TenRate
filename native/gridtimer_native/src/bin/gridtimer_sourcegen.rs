@@ -282,6 +282,11 @@ fn run() -> io::Result<()> {
         )?;
         write_source(
             &unit_test_output_root,
+            android_startup_stream::PIPELINE_TEST_PATH,
+            android_startup_stream::PIPELINE_TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
             android_local_read_efficiency::TEST_PATH,
             android_local_read_efficiency::TEST_CONTENTS,
         )?;
