@@ -93,7 +93,7 @@ internal class StartupSnapshotDecodeScope<T> {
             declaredVersion == null -> rawVersion
             else -> maxOf(rawVersion, declaredVersion)
         }
-        if (sameRaw?.effectiveVersion == effectiveVersion) return sameRaw
+        sameRaw?.takeIf { it.effectiveVersion == effectiveVersion }?.let { return it }
         entries?.firstOrNull {
             it !== sameRaw && it.effectiveVersion == effectiveVersion &&
                 (it.raw === raw || it.raw == raw)
