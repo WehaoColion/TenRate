@@ -1,3 +1,4 @@
+// v2.23.2.49 - Fast-path zero/single-row verification without defeating bounded completion-order pipeline.
 // v2.22.49 - Stream the pinned SQLite statement through reusable verification buffers.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
 const DATABASE: &str = "com/ofairyo/gridtimer/data/AppStateDatabase.kt";
@@ -271,6 +272,18 @@ internal fun verifySnapshotPipeline(
 ): Long {
     require(workers in 1..4)
     require(expectedRows >= 0)
+    // Fresh workspaces have no history. Avoid starting a thread pool for
+    // zero or one authenticated row; all existing fail-closed guards remain.
+    if (expectedRows <= 1L) {
+        var verified = 0L
+        produce { verify ->
+            check(verified < expectedRows) { "Snapshot scan visited unexpected rows" }
+            check(verify()) { "Snapshot verification rejected a row" }
+            verified++
+        }
+        check(verified == expectedRows) { "Snapshot scan did not cover the complete transaction" }
+        return verified
+    }
     val executor = java.util.concurrent.Executors.newFixedThreadPool(workers)
     // Completion order matters: one enormous snapshot must not prevent the
     // producer from feeding idle workers after smaller rows finish.
@@ -427,3 +440,49 @@ class SnapshotPipelineSchedulingTest {
     }
 }
 "####;
+
+pub const TEST_PATH: &str = "com/ofairyo/gridtimer/data/StartupSnapshotPipelineTest.kt";
+pub const TEST_CONTENTS: &str = r####"package com.ofairyo.gridtimer.data
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class StartupSnapshotPipelineTest {
+    @Test fun emptyWorkspaceDoesNotScheduleAnyVerifier() {
+        assertEquals(0L, verifySnapshotPipeline(4, 0) { _ -> })
+    }
+
+    @Test fun singleCurrentRowIsVerifiedExactlyOnce() {
+        var calls = 0
+        assertEquals(1L, verifySnapshotPipeline(4, 1) { submit ->
+            submit { calls++; true }
+        })
+        assertEquals(1, calls)
+    }
+
+    @Test fun singleRowFailuresAndCountMismatchRemainFailClosed() {
+        assertTrue(runCatching { verifySnapshotPipeline(4, 1) { _ -> } }.isFailure)
+        assertTrue(runCatching {
+            verifySnapshotPipeline(4, 1) { submit -> submit { false } }
+        }.isFailure)
+        assertTrue(runCatching {
+            verifySnapshotPipeline(4, 0) { submit -> submit { true } }
+        }.isFailure)
+    }
+
+    @Test fun multiRowVerifierChecksEveryResultAndCount() {
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        assertEquals(3L, verifySnapshotPipeline(2, 3) { submit ->
+            repeat(3) { submit { calls.incrementAndGet(); true } }
+        })
+        assertEquals(3, calls.get())
+        assertTrue(runCatching {
+            verifySnapshotPipeline(2, 2) { submit ->
+                submit { true }
+                submit { false }
+            }
+        }.isFailure)
+    }
+}
+"####;
+

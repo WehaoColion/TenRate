@@ -1,3 +1,5 @@
+Android 2.23.2.49 启动第三轮优化候选：[说明](android/release_notes_v2.23.2.49.md)。
+
 Android 2.23.2.48 历史校验调度与内存优化候选：[说明](android/release_notes_v2.23.2.48.md)。
 
 Android 2.23.2.47 本机数据读取优化候选：[说明](android/release_notes_v2.23.2.47.md)。
