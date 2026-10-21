@@ -1,3 +1,4 @@
+// v2.23.2.48 - Accelerate safe post-start maintenance and reduce indexed scan round trips.
 // v2.23.2.47 - Avoid unrelated media IO and unbounded maintenance before ready.
 const MEDIA: &str = "com/ofairyo/gridtimer/data/NoteMediaStore.kt";
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
@@ -195,7 +196,10 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
             }
             if (next == null) break
             afterId = next
-            delay(1_000L)
+            // Each transaction still packs only one authenticated row; shorter
+            // paced idle gaps drain old histories sooner for subsequent launches.
+            // Foreground writes always take precedence via writeMutex.tryLock().
+            delay(250L)
         }
     }
 "####;
@@ -228,7 +232,10 @@ const INDEXED_BATCHES: &str = r####"    private fun visitNativeSnapshotBatches(
         check(database.inTransaction())
         val history = table == HISTORY_TABLE
         val sizedWindow = android.os.Build.VERSION.SDK_INT >= 28
-        val batchSize = if (sizedWindow) 16 else 1
+        // A single 16 MiB CursorWindow can be refilled while iterating; the
+        // page limit controls SQL re-execution, not the memory window size.
+        // Larger indexed pages avoid repeated SELECT/seek on large histories.
+        val batchSize = if (sizedWindow) 64 else 1
         var afterTime: Long? = null
         var afterId: Long? = null
         do {
@@ -443,7 +450,7 @@ mod tests {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        for limit in [1, 16, 32] {
+        for limit in [1, 16, 32, 64] {
             let mut found = Vec::new();
             let mut after: Option<(i64, i64)> = None;
             loop {
@@ -538,5 +545,8 @@ mod tests {
         );
         assert!(INDEXED_BATCHES.contains("(created_at_epoch_millis, id) < (?, ?)"));
         assert!(!INDEXED_BATCHES.contains("NOT INDEXED"));
+        assert!(INDEXED_BATCHES.contains("val batchSize = if (sizedWindow) 64 else 1"));
+        assert!(MAINTENANCE_JOB.contains("delay(250L)"));
+        assert!(MAINTENANCE_JOB.contains("stateDatabase.compactHistoryBatch(workspaceKey, afterId)"));
     }
 }

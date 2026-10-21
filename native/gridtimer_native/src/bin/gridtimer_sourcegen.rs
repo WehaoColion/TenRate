@@ -292,6 +292,11 @@ fn run() -> io::Result<()> {
         )?;
         write_source(
             &unit_test_output_root,
+            android_startup_stream::TEST_PATH,
+            android_startup_stream::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
             android_snapshot_row_read::TEST_PATH,
             android_snapshot_row_read::TEST_CONTENTS,
         )?;
