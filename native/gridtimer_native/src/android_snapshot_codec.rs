@@ -47,7 +47,9 @@ fn tag(bytes: &[u8], key: &[u8]) -> hmac::Tag {
 }
 
 struct Packed {
-    bytes: Vec<u8>,
+    // Domain and decoded payload share one allocation, so authentication can
+    // borrow the complete message instead of copying every retained snapshot.
+    authenticated_bytes: Vec<u8>,
     raw_len: usize,
     sealed_supported: i32,
     prefix_end: usize,
@@ -62,7 +64,13 @@ impl Packed {
         if encoded.len() > MAX_ENCODED {
             return None;
         }
-        let bytes = STANDARD.decode(encoded).ok()?;
+        let mut authenticated_bytes =
+            Vec::with_capacity(DOMAIN.len() + base64::decoded_len_estimate(encoded.len()));
+        authenticated_bytes.extend_from_slice(DOMAIN);
+        STANDARD
+            .decode_vec(encoded, &mut authenticated_bytes)
+            .ok()?;
+        let bytes = &authenticated_bytes[DOMAIN.len()..];
         if bytes.len() < HEADER_LEN + TAG_LEN || bytes.len() > MAX_BINARY {
             return None;
         }
@@ -92,7 +100,7 @@ impl Packed {
             return None;
         }
         let packed = Self {
-            bytes,
+            authenticated_bytes,
             raw_len,
             sealed_supported,
             prefix_end,
@@ -109,16 +117,20 @@ impl Packed {
         Some(packed)
     }
 
+    fn bytes(&self) -> &[u8] {
+        &self.authenticated_bytes[DOMAIN.len()..]
+    }
+
     fn prefix(&self) -> Option<&str> {
-        std::str::from_utf8(&self.bytes[HEADER_LEN..self.prefix_end]).ok()
+        std::str::from_utf8(&self.bytes()[HEADER_LEN..self.prefix_end]).ok()
     }
 
     fn expected(&self) -> Option<&str> {
-        std::str::from_utf8(&self.bytes[self.prefix_end..self.digest_end]).ok()
+        std::str::from_utf8(&self.bytes()[self.prefix_end..self.digest_end]).ok()
     }
 
     fn envelope(&self) -> Option<&str> {
-        std::str::from_utf8(&self.bytes[self.digest_end..self.envelope_end]).ok()
+        std::str::from_utf8(&self.bytes()[self.digest_end..self.envelope_end]).ok()
     }
 
     fn authenticated(&self, key: &[u8]) -> bool {
@@ -127,13 +139,10 @@ impl Packed {
         }
         // ring performs the authentication comparison in constant time. The domain
         // is part of the authenticated message, including on the verification side.
-        let mut message = Vec::with_capacity(DOMAIN.len() + self.payload_end);
-        message.extend_from_slice(DOMAIN);
-        message.extend_from_slice(&self.bytes[..self.payload_end]);
         hmac::verify(
             &hmac::Key::new(hmac::HMAC_SHA256, key),
-            &message,
-            &self.bytes[self.payload_end..],
+            &self.authenticated_bytes[..DOMAIN.len() + self.payload_end],
+            &self.bytes()[self.payload_end..],
         )
         .is_ok()
     }
@@ -142,7 +151,7 @@ impl Packed {
         if self.sealed_supported > supported || supported < 0 {
             return None;
         }
-        let payload = &self.bytes[self.envelope_end..self.payload_end];
+        let payload = &self.bytes()[self.envelope_end..self.payload_end];
         let mut decoder = Decompress::new(true);
         let mut raw = vec![0; self.raw_len + 1];
         let status = decoder
@@ -397,6 +406,85 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Opt-in host microbenchmark; not a device startup latency assertion"]
+    fn startup_authentication_copy_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        let mut state = 7u64;
+        let values: Vec<_> = (0..16384)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state.to_string()
+            })
+            .collect();
+        let raw = serde_json::json!({"schemaVersion":15,"values":values}).to_string();
+        let (encoded, _, _, _) = fixture(raw.as_bytes());
+        let packed = Packed::parse(encoded.as_bytes()).unwrap();
+        let rounds = 2000;
+        let mut legacy = Vec::new();
+        let mut contiguous = Vec::new();
+        for sample in 0..6 {
+            for old in [sample % 2 == 0, sample % 2 != 0] {
+                let started = Instant::now();
+                for _ in 0..rounds {
+                    let ok = if old {
+                        let mut message = Vec::with_capacity(DOMAIN.len() + packed.payload_end);
+                        message.extend_from_slice(DOMAIN);
+                        message.extend_from_slice(&packed.bytes()[..packed.payload_end]);
+                        hmac::verify(
+                            &hmac::Key::new(hmac::HMAC_SHA256, &KEY),
+                            black_box(&message),
+                            &packed.bytes()[packed.payload_end..],
+                        )
+                        .is_ok()
+                    } else {
+                        black_box(&packed).authenticated(black_box(&KEY))
+                    };
+                    assert!(black_box(ok));
+                }
+                let elapsed = started.elapsed().as_micros();
+                if old {
+                    legacy.push(elapsed);
+                } else {
+                    contiguous.push(elapsed);
+                }
+            }
+        }
+        legacy.sort_unstable();
+        contiguous.sort_unstable();
+        println!("authentication only: rows={rounds}, payload_bytes={}, legacy_median_us={}, contiguous_median_us={}, eliminated_copy_bytes={}",
+            packed.payload_end, legacy[3], contiguous[3], rounds * packed.payload_end);
+    }
+
+    #[test]
+    fn contiguous_authentication_matches_legacy_domain_message() {
+        // Exercise base64 padding and different content lengths. The on-disk
+        // representation must stay byte-for-byte compatible with existing APKs.
+        for length in [0, 1, 2, 3, 31, 32, 255, 4096, 65536] {
+            let raw =
+                serde_json::json!({"schemaVersion":15,"text":"甲😀x".repeat(length)}).to_string();
+            let (encoded, _, _, _) = fixture(raw.as_bytes());
+            let packed = Packed::parse(encoded.as_bytes()).unwrap();
+            let legacy_bytes = STANDARD
+                .decode(encoded.as_bytes().strip_prefix(MARKER).unwrap())
+                .unwrap();
+            assert_eq!(packed.bytes(), legacy_bytes);
+            let mut legacy_message = DOMAIN.to_vec();
+            legacy_message.extend_from_slice(&legacy_bytes[..legacy_bytes.len() - TAG_LEN]);
+            assert_eq!(
+                &packed.authenticated_bytes[..DOMAIN.len() + packed.payload_end],
+                legacy_message,
+            );
+            assert!(packed.authenticated(&KEY));
+            assert!(!packed.authenticated(&[8; 32]));
+            let mut changed_domain = packed;
+            changed_domain.authenticated_bytes[0] ^= 1;
+            assert!(!changed_domain.authenticated(&KEY));
+        }
+    }
+
+    #[test]
     fn packed_history_roundtrips_unicode_and_recovers_when_key_is_lost() {
         let raw = serde_json::json!({"schemaVersion":15,"notes":[{"content":"你好😀\u{0000}".repeat(4096)}]}).to_string();
         let (packed, prefix, expected, envelope) = fixture(raw.as_bytes());
@@ -522,7 +610,7 @@ mod tests {
             original.envelope_end,
             original.payload_end - 1,
         ] {
-            let mut bytes = original.bytes.clone();
+            let mut bytes = original.bytes().to_vec();
             bytes[offset] ^= 1;
             let changed = encoded(&bytes);
             assert!(
@@ -533,13 +621,13 @@ mod tests {
         }
         for remove in [1, TAG_LEN, TAG_LEN + 1] {
             assert!(decode(
-                &encoded(&original.bytes[..original.bytes.len() - remove]),
+                &encoded(&original.bytes()[..original.bytes().len() - remove]),
                 &KEY,
                 15
             )
             .is_none());
         }
-        let mut bytes = original.bytes.clone();
+        let mut bytes = original.bytes().to_vec();
         bytes[..4].copy_from_slice(&((MAX_RAW + 1) as u32).to_le_bytes());
         assert!(decode(&encoded(&bytes), &KEY, 15).is_none());
         bytes.extend_from_slice(b"trailing");
@@ -550,7 +638,7 @@ mod tests {
     fn tampered_authentication_tag_only_falls_back_to_full_original_validation() {
         let (packed, prefix, expected, envelope) = fixture(br#"{"schemaVersion":15}"#);
         let original = Packed::parse(packed.as_bytes()).unwrap();
-        let mut bytes = original.bytes.clone();
+        let mut bytes = original.bytes().to_vec();
         *bytes.last_mut().unwrap() ^= 1;
         let changed = encoded(&bytes);
         assert!(!Packed::parse(changed.as_bytes())
@@ -580,7 +668,7 @@ mod tests {
     fn compressed_trailing_stream_and_declared_zipbomb_size_fail_even_without_key() {
         let (packed, prefix, expected, envelope) = fixture(br#"{"schemaVersion":15}"#);
         let original = Packed::parse(packed.as_bytes()).unwrap();
-        let mut bytes = original.bytes.clone();
+        let mut bytes = original.bytes().to_vec();
         bytes.splice(original.payload_end..original.payload_end, [1, 2, 3]);
         let payload_len = (original.payload_end - original.envelope_end + 3) as u32;
         bytes[16..20].copy_from_slice(&payload_len.to_le_bytes());
@@ -592,12 +680,12 @@ mod tests {
             15,
             &[]
         ));
-        let mut bytes = original.bytes.clone();
+        let mut bytes = original.bytes().to_vec();
         bytes[..4].copy_from_slice(&1u32.to_le_bytes());
         assert!(decode(&encoded(&bytes), &[], 15).is_none());
         // A missing zlib checksum can still yield all original JSON bytes. It
         // remains an incomplete compressed stream and cannot become a receipt.
-        let mut bytes = original.bytes.clone();
+        let mut bytes = original.bytes().to_vec();
         bytes.remove(original.payload_end - 1);
         let shortened_len = (original.payload_end - original.envelope_end - 1) as u32;
         bytes[16..20].copy_from_slice(&shortened_len.to_le_bytes());

@@ -1,3 +1,5 @@
+Android 2.23.2.46 启动路径优化候选：[说明](android/release_notes_v2.23.2.46.md)。
+
 v0.0.65 - 记录PR #36已合并及Android2.23.2.42 GitHub Release发布完成。
 v0.0.64 - 记录Android2.23.2.42用户确认、PR合并授权与GitHub APK持续交付要求。
 v0.0.63 - 补记Android2.23.2.42正式签名候选APK的云端构建、交付与待验收边界。

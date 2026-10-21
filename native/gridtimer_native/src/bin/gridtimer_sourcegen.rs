@@ -16,6 +16,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[path = "../sourcegen/android_cold_start.rs"]
+mod android_cold_start;
 #[path = "../sourcegen/android_ai_answer_ui.rs"]
 mod android_ai_answer_ui;
 #[path = "../sourcegen/android_agent_workspace_ui.rs"]
@@ -462,6 +464,8 @@ fn run() -> io::Result<()> {
         let rendered = android_note_persist_debounce::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_note_persist_preflight::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_cold_start::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }

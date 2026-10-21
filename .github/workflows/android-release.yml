@@ -2,7 +2,7 @@ name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019]
+    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020]
   workflow_dispatch:
 
 permissions:
@@ -79,6 +79,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Product identity tests failed' }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_ai_conversation::tests
           if ($LASTEXITCODE -ne 0) { throw 'Conversation request tests failed' }
+          cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_snapshot_codec::tests
+          if ($LASTEXITCODE -ne 0) { throw 'Snapshot codec regression tests failed' }
+          cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_snapshot_verifier::tests
+          if ($LASTEXITCODE -ne 0) { throw 'Snapshot verifier regression tests failed' }
       - name: Restore signing inputs and verify original certificate
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
