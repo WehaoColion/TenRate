@@ -57,6 +57,7 @@ pub mod finance_money;
 pub(crate) mod finance_precision_guard;
 mod finance_profile;
 pub mod knowledge;
+mod knowledge_filter;
 pub mod legal_scan;
 pub mod legal_sources;
 pub use finance_profile::{

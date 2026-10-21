@@ -83,12 +83,21 @@ internal class StartupSnapshotDecodeScope<T> {
         decodePayload: (String, Int) -> T?
     ): StartupDecodedSnapshot<T> {
         val entries = active.get()
-        val sameRaw = entries?.firstOrNull { it.raw == raw }
+        // A common primary/backup mirror reuses the exact String object.
+        // Test identity first, then preserve byte-exact equality for distinct
+        // strings; a different declared schema cannot reuse its decoded model.
+        val sameRaw = entries?.firstOrNull { it.raw === raw || it.raw == raw }
         val rawVersion = if (sameRaw != null) sameRaw.rawVersion else rawVersionOf(raw)
-        val effectiveVersion = listOfNotNull(rawVersion, declaredVersion).maxOrNull()
-            ?: supportedVersion
-        entries?.firstOrNull { it.raw == raw && it.effectiveVersion == effectiveVersion }
-            ?.let { return it }
+        val effectiveVersion = when {
+            rawVersion == null -> declaredVersion ?: supportedVersion
+            declaredVersion == null -> rawVersion
+            else -> maxOf(rawVersion, declaredVersion)
+        }
+        if (sameRaw?.effectiveVersion == effectiveVersion) return sameRaw
+        entries?.firstOrNull {
+            it !== sameRaw && it.effectiveVersion == effectiveVersion &&
+                (it.raw === raw || it.raw == raw)
+        }?.let { return it }
         val parsed = StartupDecodedSnapshot(raw, rawVersion, effectiveVersion,
             decodePayload(raw, effectiveVersion))
         if (entries != null) {
@@ -126,6 +135,21 @@ class StartupSnapshotDecodeTest {
             val firstCollision = read("Aa")
             assertNotSame(firstCollision.decoded, read("BB").decoded)
             assertEquals(4, decodes)
+        }
+    }
+
+    @Test fun twoDeclarationsReuseOnlyMatchingDecodedSchema() {
+        val scope = StartupSnapshotDecodeScope<Any>()
+        var parses = 0
+        val payload = "same"
+        scope.withMemo {
+            fun decode(version: Int) = scope.decode(
+                payload, version, 15, { 15 }, { _, _ -> parses++; Any() })
+            val supported = decode(15)
+            val future = decode(16)
+            assertSame(supported.decoded, decode(15).decoded)
+            assertSame(future.decoded, decode(16).decoded)
+            assertEquals(2, parses)
         }
     }
 
