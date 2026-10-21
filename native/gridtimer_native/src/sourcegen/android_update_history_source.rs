@@ -1,3 +1,4 @@
+// v2.23.2.49 - Record cold-start paging and authentication-path improvements.
 // v2.23.2.45 - Record bookkeeping-first finance navigation.
 // v2.23.2.42 - Record the slot command sheet header refinement.
 // v2.23.2.37 - Record preserved sticky-note line breaks in current and historical previews.
@@ -39,7 +40,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.48";
+pub const LATEST_VERSION: &str = "2.23.2.49";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -69,6 +70,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.49",
+        updatedAt = "2026-10-21 17:45",
+        summary = "进一步优化冷启动本机历史读取与校验调度",
+        sections = listOf(
+            AndroidUpdateSection("本机历史读取", listOf(
+                "Android 28～34 使用更大的索引分页批次，减少历史记录多时重复的 SQL 查询与游标创建。",
+                "只有零至一条历史记录时直接执行校验，避免额外启动验证线程池；多条记录仍全部逐条验证。"
+            )),
+            AndroidUpdateSection("后台整理与兼容性", listOf(
+                "历史压缩整理继续在启动就绪后进行，单次只处理一条记录，并优先让前台保存执行。",
+                "保留既有账户、本机数据、历史完整性校验、原签名及同步协议；具体启动耗时仍需真机对比。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.48",
         updatedAt = "2026-10-21 07:00",
