@@ -100,7 +100,7 @@ const WORKSPACE_READ: &str = r####"    fun <T> withVerifiedWorkspaceReads(worksp
         }
         val workers = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
         val nativeNanos = java.util.concurrent.atomic.AtomicLong()
-        val buffers = SnapshotBufferPool(workers * 2 + 1)
+        val buffers = SnapshotBufferPool(workers + 1)
         var payloadBytes = 0L
         val started = android.os.SystemClock.elapsedRealtime()
         val verified = verifySnapshotPipeline(workers, expectedRows) { submit ->
@@ -228,10 +228,15 @@ const VERIFICATION_PIPELINE: &str = r####"
 // A buffer stays exclusively owned by its verifier until that call returns.
 // Reuse removes one large Java allocation per history row; the explicit length
 // excludes bytes left over from a previous, larger snapshot.
+internal const val MAX_RETAINED_SNAPSHOT_BYTES = 4 * 1024 * 1024
+
 internal class SnapshotBufferPool(slots: Int) {
     private val free = java.util.concurrent.ArrayBlockingQueue<ByteArray>(slots).apply {
         repeat(slots) { add(ByteArray(0)) }
     }
+
+    private fun recycle(buffer: ByteArray): ByteArray =
+        if (buffer.size <= MAX_RETAINED_SNAPSHOT_BYTES) buffer else ByteArray(0)
 
     fun submit(
         length: Int, read: (ByteArray) -> Int,
@@ -250,11 +255,11 @@ internal class SnapshotBufferPool(slots: Int) {
             val owned = buffer
             submit {
                 try { verify(owned, length) }
-                finally { free.add(owned) }
+                finally { free.add(recycle(owned)) }
             }
             handedOff = true
         } finally {
-            if (!handedOff) free.add(buffer)
+            if (!handedOff) free.add(recycle(buffer))
         }
     }
 }
@@ -267,18 +272,23 @@ internal fun verifySnapshotPipeline(
     require(workers in 1..4)
     require(expectedRows >= 0)
     val executor = java.util.concurrent.Executors.newFixedThreadPool(workers)
-    val pending = java.util.ArrayDeque<java.util.concurrent.Future<Boolean>>()
+    // Completion order matters: one enormous snapshot must not prevent the
+    // producer from feeding idle workers after smaller rows finish.
+    val completions = java.util.concurrent.ExecutorCompletionService<Boolean>(executor)
+    var pending = 0
     var verified = 0L
     fun awaitOne() {
-        check(pending.removeFirst().get()) { "Snapshot verification rejected a row" }
+        check(completions.take().get()) { "Snapshot verification rejected a row" }
+        pending--
         verified++
     }
     try {
         produce { verify ->
-            while (pending.size >= workers * 2) awaitOne()
-            pending.addLast(executor.submit(java.util.concurrent.Callable { verify() }))
+            while (pending >= workers * 2) awaitOne()
+            completions.submit(java.util.concurrent.Callable { verify() })
+            pending++
         }
-        while (pending.isNotEmpty()) awaitOne()
+        while (pending > 0) awaitOne()
         check(verified == expectedRows) { "Snapshot scan did not cover the complete transaction" }
         return verified
     } finally {
@@ -321,6 +331,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bounded_buffers_and_completion_order_are_used_by_generated_android() {
+        assert!(WORKSPACE_READ.contains("SnapshotBufferPool(workers + 1)"));
+        assert!(VERIFICATION_PIPELINE.contains("ExecutorCompletionService<Boolean>(executor)"));
+        assert!(VERIFICATION_PIPELINE.contains("while (pending >= workers * 2) awaitOne()"));
+        assert!(VERIFICATION_PIPELINE.contains("while (pending > 0) awaitOne()"));
+        assert!(!VERIFICATION_PIPELINE.contains("pending.removeFirst().get()"));
+        assert!(VERIFICATION_PIPELINE.contains("free.add(recycle(owned))"));
+        assert!(VERIFICATION_PIPELINE.contains("MAX_RETAINED_SNAPSHOT_BYTES"));
+    }
+
+    #[test]
     fn receipt_cannot_escape_the_existing_transaction_or_replace_recovery_selection() {
         let base = super::super::android_local_startup::tests::rendered(DATABASE);
         let base = super::super::android_timer_action::render(DATABASE, &base).unwrap();
@@ -342,3 +363,67 @@ mod tests {
         ));
     }
 }
+
+
+pub const PIPELINE_TEST_PATH: &str = "com/ofairyo/gridtimer/data/SnapshotPipelineSchedulingTest.kt";
+pub const PIPELINE_TEST_CONTENTS: &str = r####"package com.ofairyo.gridtimer.data
+
+import org.junit.Assert.*
+import org.junit.Test
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+class SnapshotPipelineSchedulingTest {
+    @Test fun hugeFirstRowDoesNotBlockCompletedSmallRowsFromFeedingWorkers() {
+        val slowRow = CountDownLatch(1)
+        val fifthStarted = CountDownLatch(1)
+        val driver = Executors.newSingleThreadExecutor()
+        try {
+            val result = driver.submit(Callable {
+                verifySnapshotPipeline(2, 5) { submit ->
+                    submit { slowRow.await(8, TimeUnit.SECONDS) }
+                    repeat(3) { submit { true } }
+                    submit { fifthStarted.countDown(); true }
+                }
+            })
+            // FIFO waiting deadlocks the fifth submission behind the first row;
+            // completion-order waiting permits the fifth row to run immediately.
+            assertTrue("A large row blocked faster verification results",
+                fifthStarted.await(5, TimeUnit.SECONDS))
+            slowRow.countDown()
+            assertEquals(5L, result.get(5, TimeUnit.SECONDS))
+        } finally {
+            slowRow.countDown()
+            driver.shutdownNow()
+        }
+    }
+
+    @Test fun rejectedAndMissingRowsStillPreventAStartupReceipt() {
+        assertTrue(runCatching {
+            verifySnapshotPipeline(2, 1) { submit -> submit { false } }
+        }.isFailure)
+        assertTrue(runCatching {
+            verifySnapshotPipeline(2, 2) { submit -> submit { true } }
+        }.isFailure)
+    }
+
+    @Test fun retainedBuffersStayBoundedWithoutTruncatingVerificationInputs() {
+        assertEquals(4 * 1024 * 1024, MAX_RETAINED_SNAPSHOT_BYTES)
+        val pool = SnapshotBufferPool(1)
+        val length = MAX_RETAINED_SNAPSHOT_BYTES + 1
+        var accepted = false
+        pool.submit(length, read = { bytes ->
+            bytes[0] = 42
+            bytes[length - 1] = 7
+            length
+        }, submit = { verify ->
+            accepted = verify()
+        }, verify = { bytes, count ->
+            count == length && bytes[0] == 42.toByte() && bytes[length - 1] == 7.toByte()
+        })
+        assertTrue(accepted)
+    }
+}
+"####;

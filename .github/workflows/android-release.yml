@@ -2,7 +2,7 @@ name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021]
+    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021]
   workflow_dispatch:
 
 permissions:
@@ -170,3 +170,60 @@ jobs:
           Remove-Item -Force -ErrorAction SilentlyContinue release_signing.properties
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.jks')
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.der')
+
+  publish-candidate:
+    name: Publish signed prerelease
+    needs: release
+    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: package
+      - name: Verify checksum and push immutable GitHub Release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, subprocess, os, re, json
+          def gh(*args, check=True):
+              result = subprocess.run(['gh', *args, '--repo', os.environ['GITHUB_REPOSITORY']], text=True, capture_output=True)
+              if check and result.returncode:
+                  raise SystemExit(result.stderr or result.stdout)
+              return result
+          assets = list(pathlib.Path('package').glob('*.apk'))
+          if len(assets) != 1:
+              raise SystemExit('Exactly one signed APK is required')
+          apk = assets[0]
+          match = re.fullmatch(r'tenfold_v(\d+(?:\.\d+){3})\.apk', apk.name)
+          if not match:
+              raise SystemExit('Unexpected APK filename')
+          checksum = apk.with_name(apk.name + '.sha256')
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          if checksum.read_text().split() != [digest, apk.name]:
+              raise SystemExit('APK SHA256 mismatch')
+          version = match.group(1)
+          tag = 'v' + version
+          found = gh('release', 'view', tag, '--json', 'assets', check=False)
+          if found.returncode:
+              if 'not found' not in (found.stderr + found.stdout).lower():
+                  raise SystemExit(found.stderr or found.stdout)
+              gh('release', 'create', tag, str(apk), str(checksum), '--target', os.environ['GITHUB_SHA'], '--prerelease', '--title', f'Android {version}', '--notes', f'Signed candidate APK from {os.environ["GITHUB_SHA"]}. SHA256: {digest}. Not device-verified.')
+          else:
+              names = {item['name'] for item in json.loads(found.stdout)['assets']}
+              for item in [apk, checksum]:
+                  if item.name in names:
+                      folder = pathlib.Path('previous'); folder.mkdir(exist_ok=True)
+                      gh('release', 'download', tag, '--pattern', item.name, '--dir', str(folder))
+                      if (folder / item.name).read_bytes() != item.read_bytes():
+                          raise SystemExit('Existing release asset differs; refusing overwrite')
+                  else:
+                      gh('release', 'upload', tag, str(item))
+          gh('release', 'edit', tag, '--prerelease')
+          print(f'Published {apk.name} SHA256 {digest}')
+          PY
