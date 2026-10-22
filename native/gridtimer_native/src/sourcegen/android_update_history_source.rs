@@ -1,3 +1,4 @@
+// v2.23.2.50 - Record native Rust knowledge counters and startup mirror decode memo experiment.
 // v2.23.2.49 - Record cold-start paging and authentication-path improvements.
 // v2.23.2.45 - Record bookkeeping-first finance navigation.
 // v2.23.2.42 - Record the slot command sheet header refinement.
@@ -40,7 +41,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.49";
+pub const LATEST_VERSION: &str = "2.23.2.50";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -70,6 +71,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.50",
+        updatedAt = "2026-10-23 00:57",
+        summary = "试验用 Rust 批量统计知识库筛选和复用启动快照解码",
+        sections = listOf(
+            AndroidUpdateSection("知识库筛选", listOf(
+                "一次计算当前文件夹和搜索范围内的候选文档，通过 Rust 批量统计置顶、待办、图片和未归档数量。",
+                "原生不可用时自动回退 Kotlin；加密锁定文档仅参与全部计数，不传送正文与账号信息。"
+            )),
+            AndroidUpdateSection("冷启动与兼容性", listOf(
+                "优先复用相同快照字符串的解析结果，减少重复比较和临时对象，不绕过历史数据完整性验证。",
+                "保留原有存储格式、账号隔离、签名与同步协议；性能改善需真机对比确认。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.49",
         updatedAt = "2026-10-21 17:45",
