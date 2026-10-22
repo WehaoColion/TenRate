@@ -2,6 +2,7 @@
 // UI, state, and JVM tests are authored in Rust and emitted by sourcegen.
 
 const SCREEN: &str = "com/ofairyo/gridtimer/ui/NoteStudioSheet.kt";
+const BRIDGE: &str = "com/ofairyo/gridtimer/core/NativeOptimizerBridge.kt";
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/KnowledgeFilterState.kt";
 pub const TEST_PATH: &str = "com/ofairyo/gridtimer/ui/KnowledgeFilterStateTest.kt";
 
@@ -26,6 +27,28 @@ fn replace_range(source: &mut String, start: &str, end: &str, value: &str) -> Re
 }
 
 pub fn render(path: &str, source: &str) -> Result<String, String> {
+    if path == BRIDGE {
+        let mut bridge = source.to_owned();
+        replace(
+            &mut bridge,
+            "internal object NativeOptimizerBridge {",
+            r####"internal object NativeOptimizerBridge {
+    // One bounded JNI call per knowledge-filter refresh, not one per note/filter.
+    fun knowledgeQuickFilterCounts(flags: IntArray): IntArray? {
+        if (!nativeAvailable) return null
+        return runCatching { nativeKnowledgeQuickFilterCounts(flags) }.getOrNull()
+            ?.takeIf { counts ->
+                counts.size == 5 && counts[0] == flags.size &&
+                    counts.all { it in 0..flags.size }
+            }
+    }
+
+    @JvmStatic
+    private external fun nativeKnowledgeQuickFilterCounts(flags: IntArray): IntArray
+"####
+        )?;
+        return Ok(bridge);
+    }
     if path != SCREEN {
         return Ok(source.to_owned());
     }
@@ -145,6 +168,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
 pub const CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
 
 import androidx.compose.runtime.saveable.Saver
+import com.ofairyo.gridtimer.core.NativeOptimizerBridge
 import com.ofairyo.gridtimer.data.*
 
 // View state never writes or removes documents. The workspace is part of the
@@ -194,8 +218,34 @@ internal data class KnowledgeFilterState(
         }
     }
 
-    fun quickFilterCounts(notes: List<NoteEntry>, folders: List<NoteFolder>): Map<NoteQuickFilter, Int> =
-        NoteQuickFilter.entries.associateWith { candidate -> copy(quickFilter = candidate).visibleDocuments(notes, folders).size }
+    fun quickFilterCounts(notes: List<NoteEntry>, folders: List<NoteFolder>): Map<NoteQuickFilter, Int> {
+        // Search and workspace/folder selection must happen once, not five
+        // times. Locked notes are only eligible for ALL, even when pinned.
+        val scope = resolvedFolderId(folders)
+        val foldersById = folders.associateBy(NoteFolder::id)
+        val eligible = notes.filter { note ->
+            !note.isDeleted() && note.kind == NoteEntryKind.DOCUMENT &&
+                (scope == null || note.folderId == scope) &&
+                noteMatchesQuery(query, note, foldersById[note.folderId])
+        }
+        val flags = IntArray(eligible.size) { index ->
+            val note = eligible[index]
+            if (note.isEncryptionLocked()) 0 else
+                (if (note.pinned) 1 else 0) or
+                (if ((note.checklistStats()?.remaining ?: 0) > 0) 2 else 0) or
+                (if (note.attachmentCount(NoteAttachmentKind.IMAGE) > 0) 4 else 0) or
+                (if (note.folderId == null) 8 else 0)
+        }
+        // JVM tests, missing native libraries and older runtimes retain the
+        // exact same answer without any unverified cross-workspace cache.
+        val counts = NativeOptimizerBridge.knowledgeQuickFilterCounts(flags)
+            ?: intArrayOf(flags.size,
+                flags.count { it and 1 != 0 },
+                flags.count { it and 2 != 0 },
+                flags.count { it and 4 != 0 },
+                flags.count { it and 8 != 0 })
+        return NoteQuickFilter.entries.associateWith { candidate -> counts[candidate.ordinal] }
+    }
 
     fun folderCounts(notes: List<NoteEntry>, folders: List<NoteFolder>): Map<String, Int> {
         val candidates = copy(folderId = null).visibleDocuments(notes, folders)
@@ -387,6 +437,22 @@ class KnowledgeFilterStateTest {
         assertNull(other.sortMode)
         assertNull(KnowledgeFilterState.fromSavedValues(listOf("broken")))
         assertEquals(2, state.copy(folderId = "deleted-folder", query = "", quickFilter = NoteQuickFilter.ALL).visibleDocuments(notes, folders).size)
+    }
+
+    @Test fun batchedCountsPreservePinnedTodoImageAndUnfiledScopes() {
+        val state = KnowledgeFilterState("account-a")
+        val counts = state.quickFilterCounts(notes, folders)
+        assertEquals(2, counts[NoteQuickFilter.ALL])
+        assertEquals(1, counts[NoteQuickFilter.PINNED])
+        assertEquals(0, counts[NoteQuickFilter.TODO])
+        assertEquals(0, counts[NoteQuickFilter.IMAGE])
+        assertEquals(1, counts[NoteQuickFilter.UNFILED])
+        val scoped = state.copy(folderId = "work").quickFilterCounts(notes, folders)
+        assertEquals(1, scoped[NoteQuickFilter.ALL])
+        assertEquals(0, scoped[NoteQuickFilter.UNFILED])
+        val searched = state.copy(query = "Beta").quickFilterCounts(notes, folders)
+        assertEquals(1, searched[NoteQuickFilter.ALL])
+        assertEquals(0, searched[NoteQuickFilter.PINNED])
     }
 
     @Test fun candidateCountsReflectSearchAndScopeAndRepeatedSortChoicesAreNoOps() {

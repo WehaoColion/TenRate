@@ -1,3 +1,4 @@
+// v2.23.2.50 Android - Keep Rust product identity in sync with the batch knowledge filter trial.
 // v2.23.2.49 Android - Align Rust product identity with signed cold-start APK candidate.
 // v2.23.2.46 Android - Overlap startup IO and avoid redundant history authentication copies.
 // v2.23.2.45 Android - Make daily bookkeeping immediately accessible.
@@ -108,8 +109,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.8";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.2.49";
-pub const ANDROID_VERSION_CODE: i32 = 22318;
+pub const ANDROID_APP_VERSION: &str = "2.23.2.50";
+pub const ANDROID_VERSION_CODE: i32 = 22319;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

@@ -1,3 +1,4 @@
+// v2.23.2.50 - Try Rust batch knowledge counts and avoid repeated startup mirror comparisons.
 // v2.23.2.49 - Reduce single-row verifier setup and indexed startup scan overhead.
 // v2.23.2.45 - Keep bookkeeping actions visible above finance analysis.
 // v2.23.2.44 - Guide Agent tasks through scope, authorization and result review.
@@ -160,8 +161,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22318
-        versionName '2.23.2.49'
+        versionCode 22319
+        versionName '2.23.2.50'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
