@@ -1,3 +1,4 @@
+// v2.23.2.53 - Restore image-after-block editing and in-app release history.
 // v2.23.2.52 - Record faster batch image import and retained recovery evidence.
 // v2.23.2.51 - Avoid obsolete interleaved autosave snapshot writes blocking knowledge saves.
 // v2.23.2.50 - Record native Rust knowledge counters and startup mirror decode memo experiment.
@@ -43,7 +44,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.52";
+pub const LATEST_VERSION: &str = "2.23.2.53";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -73,6 +74,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.53",
+        updatedAt = "2026-10-24 07:45",
+        summary = "修复图片导入后无法继续在下方新增文档块",
+        sections = listOf(
+            AndroidUpdateSection("图片后的继续编辑", listOf(
+                "导入图片后，底部工具栏以最后一个图片块为插入锚点，新建正文、标题与待办不再被插到图片前面。",
+                "图片下方增加直接插入段落入口。编辑图片说明后，继续保留正确的插入位置。"
+            )),
+            AndroidUpdateSection("可靠性", listOf(
+                "图片附件、块顺序、撤销与原有持久化方式保留，支持已有图片文档继续编辑。",
+                "正式签名 APK 的构建及设备使用效果须以实际验证结果为准。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.52",
         updatedAt = "2026-10-24 01:07",
