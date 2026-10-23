@@ -36,6 +36,8 @@ mod android_device_timer_sync;
 mod android_document_block_alignment;
 #[path = "../sourcegen/android_document_caret.rs"]
 mod android_document_caret;
+#[path = "../sourcegen/android_document_image_insertion.rs"]
+mod android_document_image_insertion;
 #[path = "../sourcegen/android_document_collection_work.rs"]
 mod android_document_collection_work;
 #[path = "../sourcegen/android_document_exit_feedback.rs"]
@@ -226,6 +228,11 @@ fn run() -> io::Result<()> {
             &unit_test_output_root,
             android_document_caret::TEST_PATH,
             android_document_caret::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
+            android_document_image_insertion::TEST_PATH,
+            android_document_image_insertion::TEST_CONTENTS,
         )?;
         write_source(
             &unit_test_output_root,
@@ -807,6 +814,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_agent_workspace_ui::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_finance_navigation::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_document_image_insertion::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = contents
         .replace("十倍率", "tenfold")
