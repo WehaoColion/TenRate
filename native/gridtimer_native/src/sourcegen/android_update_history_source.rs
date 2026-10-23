@@ -1,3 +1,4 @@
+// v2.23.2.52 - Record faster batch image import and retained recovery evidence.
 // v2.23.2.51 - Avoid obsolete interleaved autosave snapshot writes blocking knowledge saves.
 // v2.23.2.50 - Record native Rust knowledge counters and startup mirror decode memo experiment.
 // v2.23.2.49 - Record cold-start paging and authentication-path improvements.
@@ -42,7 +43,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.51";
+pub const LATEST_VERSION: &str = "2.23.2.52";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -72,6 +73,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.52",
+        updatedAt = "2026-10-24 01:07",
+        summary = "减少批量图片导入期间的整库写入与重复文件读取",
+        sections = listOf(
+            AndroidUpdateSection("图片导入", listOf(
+                "图片复制时同步计算摘要，保留写盘同步、持久恢复日志、原子发布和发布后哈希核验。",
+                "图片批量导入采用已有保存防抖合并工作区快照，减少重复持久化等待。"
+            )),
+            AndroidUpdateSection("可靠性与验收", listOf(
+                "图片数据及恢复日志已持久化后可显示，完整工作区保存仍以数据库持久化结果为准。",
+                "同步协议、数据格式与账号隔离规则不变；批量导入实际速度仍需真机验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.51",
         updatedAt = "2026-10-23 06:59",

@@ -1,3 +1,4 @@
+// v2.23.2.52 Android - Align image import candidate with Rust product identity.
 // v2.23.2.51 Android - Match the save queue APK candidate with Rust product identity.
 // v2.23.2.50 Android - Keep Rust product identity in sync with the batch knowledge filter trial.
 // v2.23.2.49 Android - Align Rust product identity with signed cold-start APK candidate.
@@ -110,8 +111,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.8";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.2.51";
-pub const ANDROID_VERSION_CODE: i32 = 22320;
+pub const ANDROID_APP_VERSION: &str = "2.23.2.52";
+pub const ANDROID_VERSION_CODE: i32 = 22321;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
