@@ -72,6 +72,8 @@ mod android_legal_workflow;
 mod android_local_startup;
 #[path = "../sourcegen/android_note_background.rs"]
 mod android_note_background;
+#[path = "../sourcegen/android_image_import_performance.rs"]
+mod android_image_import_performance;
 #[path = "../sourcegen/android_note_collection_recovery.rs"]
 mod android_note_collection_recovery;
 #[path = "../sourcegen/android_note_latency.rs"]
@@ -485,6 +487,8 @@ fn run() -> io::Result<()> {
         let rendered = android_cold_start::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_local_read_efficiency::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_image_import_performance::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
