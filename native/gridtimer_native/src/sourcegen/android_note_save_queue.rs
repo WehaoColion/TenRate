@@ -1,3 +1,4 @@
+// v2.23.2.51 - Drop interleaved stale draft writes before they reach full-snapshot IO.
 // v2.23.2.35 - Hand off a committed exit before disposal can enqueue it again.
 // v2.23.2.30 - Leave untouched document visits without adding a storage barrier.
 // v2.23.2.27 - Complete retained document exit saves after editor disposal.
@@ -314,6 +315,8 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
     ) {
         val completions = mutableListOf(completion)
         val queuedAtNanos = System.nanoTime()
+        // Receipts move to the surviving draft; this mutation no longer owns a write.
+        var supersededByNewer = false
     }
 
     private val lifecycleLock = Any()
@@ -324,6 +327,10 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
     // Only an adjacent, accepted, not-yet-started autosave can be replaced. This
     // reference is cleared by every explicit mutation and before execution starts.
     private var replaceableTail: QueuedNoteMutation? = null
+    // Only queued autosaves after the last explicit barrier are eligible.
+    // Keeping one pending mutation per note prevents interleaved A,B,A edits
+    // from writing A's obsolete full-workspace snapshot twice.
+    private val pendingAutosaves = mutableMapOf<Pair<String, String>, QueuedNoteMutation>()
     private var acceptedMutationEpoch = 0L
     fun mutationEpoch(): Long = synchronized(lifecycleLock) { acceptedMutationEpoch }
     private val shutdownRequested = AtomicBoolean(false)
@@ -340,8 +347,14 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
             for (mutation in queue) {
                 val operation = synchronized(lifecycleLock) {
                     if (replaceableTail === mutation) replaceableTail = null
-                    mutation.operation
+                    mutation.autosaveKey?.let { key ->
+                        if (pendingAutosaves[key] === mutation) pendingAutosaves.remove(key)
+                    }
+                    if (mutation.supersededByNewer) null else mutation.operation
                 }
+                // A superseded draft owns no independent receipt: all its waiters
+                // have moved to the surviving queued draft, including on failure.
+                if (operation == null) continue
                 val kind = if (mutation.autosaveKey == null) "explicit" else "autosave"
                 reportSlow("$kind.queue_wait", mutation.queuedAtNanos)
                 val started = System.nanoTime()
@@ -351,7 +364,10 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
             }
         } finally {
             queue.close()
-            synchronized(lifecycleLock) { replaceableTail = null }
+            synchronized(lifecycleLock) {
+                replaceableTail = null
+                pendingAutosaves.clear()
+            }
             drainAbandonedMutations()
         }
     }
@@ -421,6 +437,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         val completion = CompletableDeferred<NoteSaveResult>()
         val queued = synchronized(lifecycleLock) {
             replaceableTail = null
+            pendingAutosaves.clear() // No draft may be coalesced across this durable barrier.
             val accepted = !shutdownRequested.get() && worker.isActive
             if (accepted) {
                 acceptedMutationEpoch += 1L
@@ -450,6 +467,16 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                     true
                 } else {
                     val candidate = QueuedNoteMutation(operation, completion, key)
+                    // Other notes' queued autosaves are not ordering barriers.
+                    // Supersede only work which has not begun execution. FIFO
+                    // stays intact for explicit save/version/delete/protection.
+                    pendingAutosaves.remove(key)?.let { stale ->
+                        stale.supersededByNewer = true
+                        stale.operation = { queueUnavailableResult() } // Release captured stale draft.
+                        candidate.completions.addAll(0, stale.completions)
+                        stale.completions.clear()
+                    }
+                    pendingAutosaves[key] = candidate
                     replaceableTail = candidate
                     admit(candidate)
                     true
@@ -502,6 +529,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
     ): CompletableDeferred<NoteSaveResult> {
         val shouldStart = synchronized(lifecycleLock) {
             replaceableTail = null
+            pendingAutosaves.clear()
             shutdownRequested.compareAndSet(false, true)
         }
         if (shouldStart) {
@@ -755,6 +783,74 @@ class NoteSaveQueueTest {
             }
             assertEquals(listOf("running", "latest"), events)
         } finally { scope.cancel() }
+    }
+
+    @Test fun interleavedQueuedDraftsKeepOneWritePerNoteAndLatestReceipts() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val blocker = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val controller = NoteMutationDrainController(scope) { throw it }
+        try {
+            val running = controller.enqueue {
+                started.complete(Unit); blocker.await(); NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            val a1 = controller.enqueueAutosave("workspace", "note-a") {
+                fail("obsolete a1 performed a snapshot write"); NoteSaveResult.committed()
+            }
+            val b1 = controller.enqueueAutosave("workspace", "note-b") {
+                events += "b1"; NoteSaveResult.committed()
+            }
+            val a2 = controller.enqueueAutosave("workspace", "note-a") {
+                events += "a2"; NoteSaveResult.committed()
+            }
+            val b2 = controller.enqueueAutosave("workspace", "note-b") {
+                events += "b2"; NoteSaveResult.committed()
+            }
+            assertTrue(listOf(a1, b1, a2, b2).none { it.isCompleted })
+            blocker.complete(Unit)
+            withTimeout(5_000L) {
+                assertTrue(running.await().committed)
+                listOf(a1, b1, a2, b2).forEach { assertTrue(it.await().committed) }
+            }
+            assertEquals(listOf("a2", "b2"), events)
+        } finally { blocker.complete(Unit); scope.cancel() }
+    }
+
+    @Test fun interleavedReplacementPropagatesFailureAndCannotCrossAnExplicitBarrier() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val blocker = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val controller = NoteMutationDrainController(scope) { throw it }
+        try {
+            controller.enqueue { started.complete(Unit); blocker.await(); NoteSaveResult.committed() }
+            withTimeout(5_000L) { started.await() }
+            val a1 = controller.enqueueAutosave("w", "a") {
+                fail("superseded draft must not write"); NoteSaveResult.committed()
+            }
+            val b = controller.enqueueAutosave("w", "b") {
+                events += "b"; NoteSaveResult.committed()
+            }
+            val a2 = controller.enqueueAutosave("w", "a") {
+                events += "a2"; NoteSaveResult.failed(NoteSaveFailure.STORAGE_FULL)
+            }
+            val explicit = controller.enqueue { events += "explicit"; NoteSaveResult.committed() }
+            val a3 = controller.enqueueAutosave("w", "a") {
+                events += "a3"; NoteSaveResult.committed()
+            }
+            blocker.complete(Unit)
+            withTimeout(5_000L) {
+                assertEquals(NoteSaveFailure.STORAGE_FULL, a1.await().failure)
+                assertFalse(a1.await().savedLocally)
+                assertEquals(NoteSaveFailure.STORAGE_FULL, a2.await().failure)
+                assertTrue(b.await().committed)
+                assertTrue(explicit.await().committed)
+                assertTrue(a3.await().committed)
+            }
+            assertEquals(listOf("b", "a2", "explicit", "a3"), events)
+        } finally { blocker.complete(Unit); scope.cancel() }
     }
 
     @Test fun failedCheckpointCannotEnterCommitAndReceiptPrecedesDurableCommit() = runBlocking {

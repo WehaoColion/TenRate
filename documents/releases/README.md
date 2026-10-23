@@ -1,3 +1,5 @@
+Android 2.23.2.51 知识页与重命名慢保存的交错草稿队列优化候选：[说明](android/release_notes_v2.23.2.51.md)。
+
 Android 2.23.2.50 Rust 批量知识筛选与启动镜像解码试验候选：[说明](android/release_notes_v2.23.2.50.md)。
 
 Android 2.23.2.49 启动第三轮优化候选：[说明](android/release_notes_v2.23.2.49.md)。

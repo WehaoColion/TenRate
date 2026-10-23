@@ -1,3 +1,4 @@
+// v2.23.2.51 - Avoid obsolete interleaved autosave snapshot writes blocking knowledge saves.
 // v2.23.2.50 - Record native Rust knowledge counters and startup mirror decode memo experiment.
 // v2.23.2.49 - Record cold-start paging and authentication-path improvements.
 // v2.23.2.45 - Record bookkeeping-first finance navigation.
@@ -41,7 +42,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.50";
+pub const LATEST_VERSION: &str = "2.23.2.51";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -71,6 +72,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.51",
+        updatedAt = "2026-10-23 06:59",
+        summary = "减少交错草稿的重复落盘及知识页保存排队",
+        sections = listOf(
+            AndroidUpdateSection("保存队列", listOf(
+                "同一页面尚未执行的过期自动保存可跨其他页面的草稿合并，减少整库快照重复写入。",
+                "显式保存、重命名、删除、版本创建和加密状态操作保持原有排队顺序，失败回执不伪装成功。"
+            )),
+            AndroidUpdateSection("保护与验收", listOf(
+                "不取消已开始的数据库事务，保留工作区隔离、恢复校验和加密数据保护。",
+                "实际保存速度仍以手机端含大量历史数据的验证为准。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.50",
         updatedAt = "2026-10-23 00:57",
