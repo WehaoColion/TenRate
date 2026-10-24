@@ -56,9 +56,26 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             replace(&mut new,
                 "        quarantineDigestMismatches(workspaceKey, includeHistory = true)",
                 "        val currentOnlyStartup = skipVerifiedHistory != null &&\n            snapshotReadWindow.get()?.hasCurrentOnlyReceipt(workspaceKey, snapshotWriteStamp()) == true\n        quarantineDigestMismatches(workspaceKey, includeHistory = !currentOnlyStartup)")?;
-            replace(&mut new,
-                "        database.visitSnapshotRows(\n            HISTORY_TABLE,",
-                "        // The current must have decoded successfully in the repository.\n        // A missing/corrupt/future current still takes the complete recovery path.\n        if (snapshotReadWindow.get()?.canSkipVerifiedHistory(\n                workspaceKey, snapshotWriteStamp(), skipVerifiedHistory?.invoke() == true\n            ) == true) return\n        if (currentOnlyStartup) quarantineDigestMismatches(workspaceKey, includeHistory = true)\n        database.visitSnapshotRows(\n            HISTORY_TABLE,")?;
+            // The history query may be rewritten as a cursor-bound visitor by
+            // earlier generator stages. Anchor to the uniquely named history
+            // projection rather than to the query helper implementation.
+            let history_columns = "            HISTORY_TABLE,\n            HISTORY_QUERY_COLUMNS,";
+            if new.matches(history_columns).count() != 1 {
+                return Err("startup history projection is not unique".into());
+            }
+            let history_offset = new.find(history_columns).unwrap();
+            let history_call = new[..history_offset]
+                .rfind("        database.")
+                .ok_or("startup history cursor call missing")?;
+            let visitor = &new[history_call..history_offset];
+            if !visitor.starts_with("        database.visitSnapshotRows(")
+                && !visitor.starts_with("        database.querySnapshotRows(")
+                && !visitor.starts_with("        database.query(")
+            {
+                return Err("unexpected startup history query helper".into());
+            }
+            new.insert_str(history_call,
+                "        // The current must decode and be accepted as authoritative.\n        // Unacceptable current rows continue through full quarantine and recovery.\n        if (snapshotReadWindow.get()?.canSkipVerifiedHistory(\n                workspaceKey, snapshotWriteStamp(), skipVerifiedHistory?.invoke() == true\n            ) == true) return\n        if (currentOnlyStartup) quarantineDigestMismatches(workspaceKey, includeHistory = true)\n");
             replace(&mut source, &old, &new)?;
             replace(&mut source,
                 "    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()",
