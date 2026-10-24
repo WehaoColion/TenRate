@@ -9083,7 +9083,6 @@ impl TimerWindowsClient {
     }
 
     fn ui_finance(&mut self, ui: &mut egui::Ui) {
-        self.ui_finance_backup_tools(ui);
         self.ui_finance_workbench(ui);
         match self.finance_workbench.tab {
             5 => {
@@ -9096,6 +9095,8 @@ impl TimerWindowsClient {
             }
             _ => {}
         }
+        egui::CollapsingHeader::new("更多 · 备份、导出与恢复")
+            .show(ui, |ui| self.ui_finance_backup_tools(ui));
     }
 
     fn ui_finance_inputs(&mut self, ui: &mut egui::Ui) {
