@@ -1,3 +1,4 @@
+// v2.23.2.55 Android - Align verified-current cold-start APK identity.
 // v2.23.2.54 Android - Index verified account history during saves.
 // v2.23.2.53 Android - Fix inserting blocks after imported images and align APK identity.
 // v2.23.2.52 Android - Align image import candidate with Rust product identity.
@@ -113,8 +114,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.8";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.2.54";
-pub const ANDROID_VERSION_CODE: i32 = 22323;
+pub const ANDROID_APP_VERSION: &str = "2.23.2.55";
+pub const ANDROID_VERSION_CODE: i32 = 22324;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
