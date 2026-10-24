@@ -1,3 +1,5 @@
+Android 2.23.2.54 知识保存预检索引优化候选：[说明](android/release_notes_v2.23.2.54.md)。
+
 Android 2.23.2.53 图片块后插入段落修复候选：[说明](android/release_notes_v2.23.2.53.md)。
 
 Android 2.23.2.52 图片导入性能优化候选：[说明](android/release_notes_v2.23.2.52.md)。
