@@ -567,6 +567,8 @@ impl TimerWindowsClient {
                 }
                 if ui.button("关闭").clicked() {
                     self.cancel_desktop_ai_query();
+                    self.desktop_ai.turns.clear();
+                    self.knowledge_ai_answer = None;
                     self.knowledge_ai_panel_open = false;
                 }
             });
@@ -586,7 +588,9 @@ impl TimerWindowsClient {
                 ui.radio_value(&mut self.desktop_ai.mode, QueryMode::Knowledge, "问知识库");
             });
             if self.desktop_ai.mode != old_mode {
-                self.desktop_ai.preview = None;
+                self.cancel_desktop_ai_query();
+                self.desktop_ai.turns.clear();
+                self.knowledge_ai_answer = None;
                 self.desktop_ai.priority_note_id = None;
             }
             if self.desktop_ai.mode == QueryMode::Knowledge {
@@ -609,7 +613,9 @@ impl TimerWindowsClient {
                     if ui.small_button("改为全部知识页").clicked() {
                         self.desktop_ai.priority_note_id = None;
                         self.knowledge_ai_scope_all = true;
-                        self.desktop_ai.preview = None;
+                        self.cancel_desktop_ai_query();
+                        self.desktop_ai.turns.clear();
+                        self.knowledge_ai_answer = None;
                     }
                 } else {
                     let old_scope = self.knowledge_ai_scope_all;
@@ -627,12 +633,30 @@ impl TimerWindowsClient {
                         );
                     });
                     if old_scope != self.knowledge_ai_scope_all {
-                        self.desktop_ai.preview = None;
+                        self.cancel_desktop_ai_query();
+                        self.desktop_ai.turns.clear();
+                        self.knowledge_ai_answer = None;
                     }
                 }
                 ui.label("发送相关知识页节选；答案依据本次来源。加密和已删除的内容不纳入。");
             } else {
                 ui.label("使用模型的通用知识与推理，仅发送你的问题。");
+            }
+            if !self.desktop_ai.turns.is_empty() {
+                egui::ScrollArea::vertical().id_source("desktop_ai_conversation").max_height(300.0).show(ui, |ui| {
+                    for (index, turn) in self.desktop_ai.turns.iter().enumerate() {
+                        ui.label(egui::RichText::new(format!("你 · {}", index + 1)).strong());
+                        ui.label(&turn.question);
+                        ui.label(egui::RichText::new("AI").strong());
+                        ui.label(&turn.answer);
+                        ui.separator();
+                    }
+                });
+                if ui.small_button("开始新对话").clicked() {
+                    self.desktop_ai.turns.clear();
+                    self.knowledge_ai_answer = None;
+                    self.desktop_ai.preview = None;
+                }
             }
             ui.label(format!(
                 "你的问题 · {}/1000",
@@ -643,7 +667,7 @@ impl TimerWindowsClient {
                     egui::TextEdit::multiline(&mut self.knowledge_ai_question_draft)
                         .desired_width(f32::INFINITY)
                         .desired_rows(3)
-                        .hint_text("输入问题，例如解释复利并给出公式"),
+                        .hint_text("输入问题，回答完成后可在这里继续追问"),
                 )
                 .changed();
             if changed {
@@ -676,7 +700,7 @@ impl TimerWindowsClient {
             if let Some(answer) = self.knowledge_ai_answer.clone() {
                 ui.separator();
                 ui.label(format!(
-                    "回答来自 {} · {} · {}",
+                    "最近一次回答来自 {} · {} · {}",
                     answer.recipient_host,
                     answer.model,
                     format_relative_time(answer.received_at_epoch_millis)

@@ -4520,6 +4520,14 @@ impl TimerWindowsClient {
                     return;
                 }
                 if task.result.ok {
+                    self.desktop_ai.turns.push(DesktopAiTurn {
+                        question: task.question.clone(),
+                        answer: task.result.content.clone(),
+                    });
+                    if self.desktop_ai.turns.len() > 8 {
+                        self.desktop_ai.turns.remove(0);
+                    }
+                    self.knowledge_ai_question_draft.clear();
                     self.knowledge_ai_answer = Some(KnowledgeAiAnswer {
                         workspace_binding: workspace,
                         recipient_host: task.recipient_host,
@@ -4533,7 +4541,6 @@ impl TimerWindowsClient {
                     });
                     self.desktop_ai.message = "AI 回答完成".into();
                     self.status = self.desktop_ai.message.clone();
-                    self.open_desktop_ai_answer_reader();
                 } else {
                     self.desktop_ai.message = desktop_ai_message(&task.result.message);
                     self.status = self.desktop_ai.message.clone();
