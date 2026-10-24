@@ -1,0 +1,157 @@
+name: Windows parity checks
+on:
+  pull_request:
+    paths:
+      - 'native/gridtimer_native/**'
+      - '.github/workflows/windows-parity.yml'
+      - 'tools/windows_preview.iss'
+      - 'tools/windows_preview_README.txt'
+  push:
+    branches:
+      - feat/windows-android-parity-20261025
+    paths:
+      - 'native/gridtimer_native/**'
+      - '.github/workflows/windows-parity.yml'
+      - 'tools/windows_preview.iss'
+      - 'tools/windows_preview_README.txt'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    name: Desktop build and regression
+    runs-on: windows-latest
+    timeout-minutes: 100
+    defaults:
+      run:
+        working-directory: native/gridtimer_native
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure stable Rust
+        run: rustup update stable
+      - name: Compile Windows client
+        run: cargo check --locked --features desktop --bin timer_windows_client
+      - name: Test Windows client
+        run: cargo test --locked --features desktop --bin timer_windows_client --no-fail-fast
+      - name: Test shared core
+        run: cargo test --locked --features desktop --lib --no-fail-fast
+
+  package:
+    name: Package Windows 1.1.0.9 preview installer
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 110
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure stable Rust and MSVC
+        run: |
+          rustup update stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust setup failed' }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain selection failed' }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Compile release Windows client
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:CARGO_INCREMENTAL = '0'
+          cargo build --locked --release --features desktop --manifest-path native/gridtimer_native/Cargo.toml --bin timer_windows_client
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release compilation failed' }
+      - name: Build isolated preview setup and portable ZIP
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = $env:GITHUB_WORKSPACE
+          $identity = Get-Content (Join-Path $root 'native/gridtimer_native/src/product_identity.rs') -Raw
+          if ($identity -notmatch 'pub const WINDOWS_APP_VERSION: &str = "1\.1\.0\.9";') {
+            throw 'Refusing to package: Windows identity is not 1.1.0.9'
+          }
+          $exe = Join-Path $root 'native/gridtimer_native/target/release/timer_windows_client.exe'
+          if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Windows client executable is missing' }
+          $info = Get-Item -LiteralPath $exe
+          if ($info.Length -lt 1000000) { throw 'Compiled Windows client is unexpectedly small' }
+          $stream = [IO.File]::OpenRead($exe)
+          try {
+            if ($stream.ReadByte() -ne 77 -or $stream.ReadByte() -ne 90) { throw 'Not a PE executable' }
+          } finally { $stream.Dispose() }
+          $dist = Join-Path $root 'dist'
+          $portable = Join-Path $env:RUNNER_TEMP 'tenrate-portable'
+          New-Item -ItemType Directory -Path $dist, $portable -Force | Out-Null
+          Copy-Item $exe (Join-Path $portable 'timer_windows_client.exe')
+          Copy-Item (Join-Path $root 'tools/windows_preview_README.txt') (Join-Path $portable 'README.txt')
+          "Version: 1.1.0.9`nCommit: $env:GITHUB_SHA`nBuild: unsigned Windows x64 preview" | Set-Content -LiteralPath (Join-Path $portable 'BUILD_INFO.txt') -Encoding utf8
+          $zip = Join-Path $dist 'TenRate_Windows_v1.1.0.9_preview_portable.zip'
+          Compress-Archive -LiteralPath (Join-Path $portable 'timer_windows_client.exe'), (Join-Path $portable 'README.txt'), (Join-Path $portable 'BUILD_INFO.txt') -DestinationPath $zip
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          }
+          if (!(Test-Path -LiteralPath $iscc)) { throw 'ISCC.exe was not installed' }
+          & $iscc "/O$dist" (Join-Path $root 'tools/windows_preview.iss')
+          if ($LASTEXITCODE -ne 0) { throw 'Windows setup compilation failed' }
+          $installer = Join-Path $dist 'TenRate_Windows_v1.1.0.9_preview_setup.exe'
+          if (!(Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Windows setup was not generated' }
+          foreach ($file in @($installer, $zip)) {
+            $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($file))" | Set-Content -LiteralPath ($file + '.sha256') -Encoding ascii
+          }
+          "Windows 1.1.0.9 candidate setup and portable ZIP built from $env:GITHUB_SHA (unsigned; not installed or device-tested)." >> $env:GITHUB_STEP_SUMMARY
+      - name: Upload Windows preview installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: TenRate-Windows-1.1.0.9-preview
+          path: |
+            dist/TenRate_Windows_v1.1.0.9_preview_setup.exe
+            dist/TenRate_Windows_v1.1.0.9_preview_setup.exe.sha256
+            dist/TenRate_Windows_v1.1.0.9_preview_portable.zip
+            dist/TenRate_Windows_v1.1.0.9_preview_portable.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-preview:
+    name: Publish immutable Windows preview download
+    needs: package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/windows-android-parity-20261025'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TenRate-Windows-1.1.0.9-preview
+          path: package
+      - name: Verify hashes and create candidate GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          expected = {
+              'TenRate_Windows_v1.1.0.9_preview_setup.exe',
+              'TenRate_Windows_v1.1.0.9_preview_portable.zip',
+          }
+          actual = {p.name for p in Path('package').iterdir() if p.is_file() and not p.name.endswith('.sha256')}
+          if actual != expected:
+              raise SystemExit(f'Unexpected Windows preview files: {actual}')
+          for filename in sorted(expected):
+              p = Path('package') / filename
+              checksum = (p.parent / (filename + '.sha256')).read_text().split()
+              if checksum != [hashlib.sha256(p.read_bytes()).hexdigest(), filename]:
+                  raise SystemExit(f'SHA256 mismatch: {filename}')
+          print('Windows preview downloads have verified SHA256 sidecars')
+          PY
+          tag="windows-v1.1.0.9-preview-${GITHUB_SHA:0:12}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing overwrite" >&2
+            exit 1
+          fi
+          gh release create "$tag" package/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Windows 1.1.0.9 preview (PR #51)" --notes "Unsigned test installer and portable ZIP built from PR #51. Not a formal desktop/sync-service release; no machine or account sync acceptance performed. Install side by side, and back up data before testing."
+          echo "Preview download: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"

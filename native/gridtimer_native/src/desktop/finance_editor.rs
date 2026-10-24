@@ -11,6 +11,7 @@ struct FinanceWorkbenchState {
     overview: FinanceOverviewState,
     risk_route: DesktopFinanceRiskRoute,
     tab: usize,
+    quick_add: Option<&'static str>,
     day_key: String,
     month_key: String,
     period_year: String,
@@ -32,7 +33,8 @@ impl Default for FinanceWorkbenchState {
             money_drafts: DesktopMoneyDrafts::default(),
             overview: FinanceOverviewState::default(),
             risk_route: DesktopFinanceRiskRoute::default(),
-            tab: 5,
+            tab: 0,
+            quick_add: None,
             day_key: String::new(),
             month_key: String::new(),
             period_year: String::new(),
@@ -120,6 +122,26 @@ impl TimerWindowsClient {
         let mut profile = Value::Object(std::mem::take(&mut self.finance_draft.extra));
         let mut changed = false;
         let mut save_now = false;
+        // Everyday bookkeeping stays reachable before the longer analysis pages.
+        ui.horizontal_wrapped(|ui| {
+            let allowed = self.workspace_persistence_ready
+                && !self.workspace_edit_locked()
+                && !self.finance_workbench.money_drafts.has_invalid();
+            if ui.add_enabled(allowed, egui::Button::new("＋ 记支出")).clicked() {
+                self.finance_workbench.tab = 0;
+                self.finance_workbench.day_key = today.clone();
+                self.finance_workbench.quick_add = Some("expenses");
+            }
+            if ui.add_enabled(allowed, egui::Button::new("＋ 记收入")).clicked() {
+                self.finance_workbench.tab = 0;
+                self.finance_workbench.day_key = today.clone();
+                self.finance_workbench.quick_add = Some("incomes");
+            }
+            if ui.small_button("风险分析").clicked() {
+                self.finance_workbench.tab = 5;
+                self.finance_workbench.quick_add = None;
+            }
+        });
         card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -292,6 +314,27 @@ fn finance_key_selector(
     });
 }
 
+/// Append a real, revisioned day-ledger entry; no advance success receipt is issued.
+/// The existing draft validation and explicit save barriers still apply.
+fn finance_quick_entry(ledger: &mut Value, list: &str, now: i64) -> bool {
+    let (label, field, kind) = match list {
+        "incomes" => ("收入", "kind", "ACTIVE"),
+        "expenses" => ("支出", "bucket", "OTHER"),
+        _ => return false,
+    };
+    let Some(object) = ledger.as_object_mut() else { return false; };
+    let rows = object.entry(list).or_insert_with(|| json!([]));
+    let Some(rows) = rows.as_array_mut() else { return false; };
+    let id = format!("finance-{:032x}", rand::random::<u128>());
+    let mut row = json!({
+        "id": id, "name": format!("新{label}"), "amount": 0,
+        "note": "", "updatedAtEpochMillis": now.max(1), "deletedAtEpochMillis": 0,
+    });
+    row[field] = json!(kind);
+    rows.push(row);
+    true
+}
+
 fn finance_day_editor(
     ui: &mut egui::Ui,
     state: &mut FinanceWorkbenchState,
@@ -328,7 +371,8 @@ fn finance_day_editor(
     .map(|(code, label)| (code.to_string(), label.to_string()))
     .collect::<Vec<_>>();
     let scope = format!("{}:day:{}", state.money_scope, state.day_key);
-    let mut changed = finance_rows_editor(
+    let mut changed = state.quick_add.take().is_some_and(|list| finance_quick_entry(&mut ledger, list, now));
+    changed |= finance_rows_editor(
         ui,
         &mut ledger,
         "incomes",
@@ -1398,5 +1442,22 @@ mod finance_workbench_tests {
             "债务",
             value["financeProfile"]["settings"]["expenseCategories"][0]["label"]
         );
+    }
+}
+
+#[cfg(test)]
+mod windows_finance_quick_entry_parity_tests {
+    use super::*;
+    #[test]
+    fn quick_income_and_expense_keep_untouched_records_and_revoke_day_confirmation() {
+        let mut ledger = json!({"incomes":[], "expenses":[], "note":"old", "confirmedAtEpochMillis":1234});
+        assert!(finance_quick_entry(&mut ledger, "incomes", 1235));
+        assert!(finance_quick_entry(&mut ledger, "expenses", 1236));
+        assert_eq!(ledger["incomes"][0]["kind"], "ACTIVE");
+        assert_eq!(ledger["expenses"][0]["bucket"], "OTHER");
+        assert_eq!(ledger["note"], "old");
+        assert!(!finance_quick_entry(&mut ledger, "unknown", 1237));
+        assert_eq!(ledger["incomes"].as_array().unwrap().len(), 1);
+        assert_eq!(ledger["expenses"].as_array().unwrap().len(), 1);
     }
 }

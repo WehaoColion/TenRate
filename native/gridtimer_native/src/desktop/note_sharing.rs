@@ -33,15 +33,21 @@ fn note_share_text(note: &DesktopNote) -> String {
 
 fn note_image_page(html: &str) -> String {
     let data = rich_editor_script_json(&json!(html));
+    // The same bundled, offline KaTeX resources are used for knowledge reading.
+    // The export tries an isolated SVG raster first, then retains literal TeX
+    // rather than silently omitting a formula when the browser refuses it.
+    let math_css = include_str!("assets/katex_v0.18.7_embedded.css");
+    let math_js = include_str!("assets/katex_v0.18.7.min.js");
     // Generate the image from document content; this never captures the screen.
     // Only embedded, verified images are loaded. Output has a bounded pixel area.
     format!(
-        r##"<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-note-export'; img-src data:; style-src 'unsafe-inline'"></head><body><script nonce="note-export">
+        r##"<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-note-export'; img-src data:; font-src data:; style-src 'unsafe-inline'"></head><body><style id="math-font-css">{math_css}</style><script nonce="note-export">{math_js}</script><script nonce="note-export">
     (async()=>{{try{{
     const doc=new DOMParser().parseFromString({data},'text/html');
     doc.querySelectorAll('script,style,nav').forEach(x=>x.remove());
     doc.querySelectorAll('br').forEach(x=>x.replaceWith(doc.createTextNode('\n')));
     const root=doc.querySelector('article')||doc.querySelector('main')||doc.body;
+    const mathFontCss=document.getElementById('math-font-css').textContent;
     const c=document.createElement('canvas'), g=c.getContext('2d');
     const ops=[]; let y=64; const width=1080, pad=64, usable=width-2*pad;
     const text=(s,size=26,bold=false)=>{{
@@ -57,10 +63,35 @@ fn note_image_page(html: &str) -> String {
         if(y>20000) throw Error('内容超过长图高度上限，请导出 HTML');
       }}
     }};
+    let renderedMath=0;
+    const math=async(el)=>{{
+      const latex=(el.getAttribute('data-latex')||el.textContent||'').trim();
+      if(!latex)return;
+      let stage=null;
+      try{{
+        if(++renderedMath>32)throw Error('too many formulas');
+        stage=document.createElement('div');stage.style.cssText='position:absolute;left:-10000px;top:0;width:952px;pointer-events:none';
+        document.body.appendChild(stage);
+        katex.render(latex,stage,{{displayMode:el.getAttribute('data-display')!=='false',throwOnError:true,trust:false,maxSize:20,maxExpand:1000}});
+        await document.fonts.ready;
+        const h=Math.ceil(stage.getBoundingClientRect().height+16),w=usable;
+        if(h<=0||h>1600||y+h>20000)throw Error('formula size invalid');
+        const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'"><foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:'+w+'px;height:'+h+'px"><style>'+mathFontCss+'</style>'+stage.innerHTML+'</div></foreignObject></svg>';
+        const img=new Image();img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+        await img.decode();
+        // Chromium may reject foreignObject-to-canvas for security reasons.
+        // Probe in an isolated canvas so a failed formula never taints the output.
+        const check=document.createElement('canvas');check.width=w;check.height=h;
+        check.getContext('2d').drawImage(img,0,0,w,h);check.toDataURL('image/png');
+        ops.push({{img,y,w,h}});y+=h+18;
+      }}catch(error){{text('公式：'+latex);}}
+      finally{{if(stage)stage.remove();}}
+    }};
     const walk=async(el)=>{{
       if(el.nodeType===3){{if(el.textContent.trim())text(el.textContent);return;}}
       if(el.nodeType!==1)return;
       const tag=el.tagName;
+      if(el.hasAttribute('data-latex')){{await math(el);return;}}
       if(tag==='IMG'){{
         const src=el.getAttribute('src')||'';
         if(!/^data:image\/(png|jpeg|webp|gif|bmp);base64,/i.test(src))throw Error('图片尚未完整嵌入');
@@ -406,4 +437,18 @@ fn decode_note_image(raw: &str) -> Result<Vec<u8>, String> {
         return Err("图片尺寸超出上限".into());
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod windows_note_image_math_parity_tests {
+    use super::*;
+    #[test]
+    fn export_includes_offline_math_and_never_silently_drops_latex() {
+        let html = note_image_page("<main><div class='math' data-latex='\\frac{1}{3}'></div></main>");
+        assert!(html.contains("math-font-css"));
+        assert!(html.contains("katex.render("));
+        assert!(html.contains("foreignObject"));
+        assert!(html.contains("公式："));
+        assert!(html.contains("data-latex"));
+    }
 }

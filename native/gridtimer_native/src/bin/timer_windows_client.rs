@@ -3966,6 +3966,19 @@ impl TimerWindowsClient {
     }
 
     fn import_note_image_path(&mut self, source_path: &Path) {
+        self.import_note_image_paths(&[source_path.to_path_buf()]);
+    }
+
+    fn import_note_images_dialog(&mut self) {
+        match desktop_transfer_multiple_images_dialog() {
+            Ok(Some(paths)) => self.import_note_image_paths(&paths),
+            Ok(None) => {},
+            Err(error) => self.status = format!("图片选择失败：{error}"),
+        }
+    }
+
+    fn import_note_image_paths(&mut self, sources: &[PathBuf]) {
+        if sources.is_empty() { return; }
         if !self.workspace_persistence_ready {
             self.status = "工作区当前只读，不能导入图片".to_string();
             return;
@@ -4027,7 +4040,9 @@ impl TimerWindowsClient {
             self.status = format!("加密{note_label}暂不导入外部图片，避免媒体明文脱离密封");
             return;
         }
-        if app_data::note_image_import_policy(true, false, note.attachments.len() as i32, 12) != 0 {
+        if sources.len() > 12
+            || note.attachments.len().saturating_add(sources.len()) > 12
+            || app_data::note_image_import_policy(true, false, note.attachments.len() as i32, 12) != 0 {
             self.status = format!("每条{note_label}最多保留 12 张图片");
             return;
         }
@@ -4076,60 +4091,81 @@ impl TimerWindowsClient {
         }
         // Release the media scan reservation before committing a new note reference.
         drop(references);
-        let pending = match store.begin_import(source_path) {
-            Ok(pending) => pending,
-            Err(error) => {
-                self.status = format!("图片导入失败：{error}");
-                return;
-            }
-        };
-        let attachment_json = match pending.attachment_json() {
-            Ok(value) => value,
-            Err(error) => {
-                let cleanup = store.cancel_import(&pending).err();
-                self.status = append_status(
-                    format!("图片元数据无效：{error}"),
-                    cleanup
-                        .map(|cleanup_error| format!("媒体回滚已持久阻断：{cleanup_error}"))
-                        .unwrap_or_default(),
-                );
-                return;
-            }
-        };
+        // Every staged file has a durable journal before the single AppData
+        // replacement. The entire batch of references is either committed
+        // together or rolled back; an interrupted file publication is recoverable.
         let note_id = self.selected_note_id.clone();
-        let next = app_data::import_note_image_attachment_app_data_json(
-            &self.state_json,
-            &note_id,
-            &attachment_json,
-            now_millis(),
-        );
-        let status = format!("图片已加入{note_label}");
-        match self.replace_state_outcome(next, &status) {
+        let mut next = self.state_json.clone();
+        let mut staged = Vec::new();
+        for source_path in sources {
+            let pending = match store.begin_import(source_path) {
+                Ok(pending) => pending,
+                Err(error) => {
+                    let mut message = format!("图片导入失败：{error}");
+                    for item in &staged {
+                        if let Err(rollback) = store.cancel_import(item) {
+                            message = append_status(message, format!("媒体回滚已留下持久阻断：{rollback}"));
+                        }
+                    }
+                    self.status = message;
+                    return;
+                }
+            };
+            let attachment_json = pending.attachment_json();
+            staged.push(pending);
+            let attachment_json = match attachment_json {
+                Ok(value) => value,
+                Err(error) => {
+                    let mut message = format!("图片元数据无效：{error}");
+                    for item in &staged {
+                        if let Err(rollback) = store.cancel_import(item) {
+                            message = append_status(message, format!("媒体回滚已留下持久阻断：{rollback}"));
+                        }
+                    }
+                    self.status = message;
+                    return;
+                }
+            };
+            let updated = app_data::import_note_image_attachment_app_data_json(
+                &next,
+                &note_id,
+                &attachment_json,
+                now_millis(),
+            );
+            let Some(updated) = updated else {
+                let mut message = "图片元数据不符合工作区约束，本批次没有保存".to_string();
+                for item in &staged {
+                    if let Err(rollback) = store.cancel_import(item) {
+                        message = append_status(message, format!("媒体回滚已留下持久阻断：{rollback}"));
+                    }
+                }
+                self.status = message;
+                return;
+            };
+            next = updated;
+        }
+        let status = format!("已导入 {} 张图片，正在核对保存", staged.len());
+        match self.replace_state_outcome(Some(next), &status) {
             StateReplaceOutcome::NotCommitted => {
-                if let Err(error) = store.cancel_import(&pending) {
-                    self.status = append_status(
-                        self.status.clone(),
-                        format!("媒体回滚未完成，已留下持久阻断：{error}"),
-                    );
+                for item in &staged {
+                    if let Err(error) = store.cancel_import(item) {
+                        self.status = append_status(self.status.clone(), format!("媒体回滚未完成，已留下持久阻断：{error}"));
+                    }
                 }
                 return;
             }
             StateReplaceOutcome::CommittedWithWarning => {
-                self.status = append_status(
-                    self.status.clone(),
-                    "图片引用已写入 SQLite；媒体保留在待提交日志中，证据恢复后自动完成".to_string(),
-                );
+                self.status = append_status(self.status.clone(), "图片引用已写入 SQLite；媒体仍由待提交日志恢复".into());
                 self.refresh_selected_note_after_local_mutation(&note_id);
                 self.note_attachment_path_draft.clear();
                 return;
             }
             StateReplaceOutcome::Committed => {}
         }
-        if let Err(error) = store.commit_import(&pending) {
-            self.status = format!("图片引用已安全保存，媒体文件将从待提交日志恢复：{error}");
-            self.refresh_selected_note_after_local_mutation(&note_id);
-            self.note_attachment_path_draft.clear();
-            return;
+        for pending in &staged {
+            if let Err(error) = store.commit_import(pending) {
+                self.status = append_status(self.status.clone(), format!("图片引用已保存，媒体文件留待恢复：{error}"));
+            }
         }
         self.refresh_selected_note_after_local_mutation(&note_id);
         self.note_attachment_path_draft.clear();
@@ -4143,7 +4179,18 @@ impl TimerWindowsClient {
             .find(|note| note.id == note_id)
             .cloned()
         {
+            // The stable inserted IMAGE id remains the insertion anchor after
+            // a media transaction reload. A text-first reload used to put the
+            // next block in front of the newly imported image.
+            let last_image = note.document.blocks.iter().rev()
+                .find(|block| block.block_type.eq_ignore_ascii_case("IMAGE"))
+                .map(|block| block.id.clone());
             self.load_note_draft_without_flush(&note);
+            if let Some(id) = last_image {
+                if self.note_blocks_draft.iter().any(|block| block.id == id) {
+                    self.note_active_block_id = id;
+                }
+            }
         }
     }
 
@@ -4520,7 +4567,8 @@ impl TimerWindowsClient {
                     return;
                 }
                 if task.result.ok {
-                    self.knowledge_ai_answer = Some(KnowledgeAiAnswer {
+                    self.knowledge_ai_question_draft.clear();
+                    let received = KnowledgeAiAnswer {
                         workspace_binding: workspace,
                         recipient_host: task.recipient_host,
                         model: task.model,
@@ -4530,10 +4578,18 @@ impl TimerWindowsClient {
                         source_titles: task.source_titles,
                         source_folders: task.source_folders,
                         received_at_epoch_millis: now_millis(),
+                    };
+                    self.desktop_ai.turns.push(DesktopAiTurn {
+                        question: received.question.clone(),
+                        answer: received.content.clone(),
+                        details: Some(received.clone()),
                     });
+                    if self.desktop_ai.turns.len() > 8 {
+                        self.desktop_ai.turns.remove(0);
+                    }
+                    self.knowledge_ai_answer = Some(received);
                     self.desktop_ai.message = "AI 回答完成".into();
                     self.status = self.desktop_ai.message.clone();
-                    self.open_desktop_ai_answer_reader();
                 } else {
                     self.desktop_ai.message = desktop_ai_message(&task.result.message);
                     self.status = self.desktop_ai.message.clone();
@@ -8185,6 +8241,7 @@ impl TimerWindowsClient {
     fn ui_note_insert_menu(&mut self, ui: &mut egui::Ui) {
         let mut command = None;
         let mut import_image = false;
+        let mut import_many = false;
         let mut insert_contact = false;
         let mut insert_call = false;
         ui.horizontal_wrapped(|ui| {
@@ -8214,6 +8271,9 @@ impl TimerWindowsClient {
             );
             if ui.button("导入图片").clicked() {
                 import_image = true;
+            }
+            if ui.button("选择多张图片").clicked() {
+                import_many = true;
             }
         });
         ui.horizontal_wrapped(|ui| {
@@ -8280,6 +8340,9 @@ impl TimerWindowsClient {
         if import_image {
             let path = PathBuf::from(self.note_attachment_path_draft.trim());
             self.import_note_image_path(&path);
+        }
+        if import_many {
+            self.import_note_images_dialog();
         }
         if insert_contact {
             self.insert_contact_block();
@@ -9076,7 +9139,6 @@ impl TimerWindowsClient {
     }
 
     fn ui_finance(&mut self, ui: &mut egui::Ui) {
-        self.ui_finance_backup_tools(ui);
         self.ui_finance_workbench(ui);
         match self.finance_workbench.tab {
             5 => {
@@ -9089,6 +9151,8 @@ impl TimerWindowsClient {
             }
             _ => {}
         }
+        egui::CollapsingHeader::new("更多 · 备份、导出与恢复")
+            .show(ui, |ui| self.ui_finance_backup_tools(ui));
     }
 
     fn ui_finance_inputs(&mut self, ui: &mut egui::Ui) {

@@ -3,11 +3,34 @@
 mod desktop_ai_query_boundary;
 use desktop_ai_query_boundary::{QueryBinding, QueryBoundary, QueryConsent, QueryMode};
 
+#[derive(Clone, Debug)]
+struct DesktopAiTurn {
+    question: String,
+    answer: String,
+    details: Option<KnowledgeAiAnswer>,
+}
+
+/// Keep a contiguous suffix of successful, role-safe turns. Prior responses
+/// never become knowledge sources; the provider request still supplies fresh sources.
+fn desktop_ai_history_json(turns: &[DesktopAiTurn]) -> String {
+    let mut recent = Vec::new();
+    let mut characters = 0_usize;
+    for turn in turns.iter().rev().take(8) {
+        let size = turn.question.chars().count() + turn.answer.chars().count();
+        if size == 0 || size + characters > 24_000 { break; }
+        recent.push(json!({"question": turn.question, "answer": turn.answer}));
+        characters += size;
+    }
+    recent.reverse();
+    Value::Array(recent).to_string()
+}
+
 struct DesktopAiPreview {
     binding: QueryBinding,
     consent: QueryConsent,
     mode: QueryMode,
     question: String,
+    history_json: String,
     sources: Vec<(String, String, String, String)>,
     notes_version: u64,
     recipient: String,
@@ -23,6 +46,8 @@ struct DesktopAiProbeResult {
 #[derive(Default)]
 struct DesktopAiSession {
     last_workspace: Option<String>,
+    last_configuration: Option<String>,
+    turns: Vec<DesktopAiTurn>,
     priority_note_id: Option<String>,
     mode: QueryMode,
     boundary: QueryBoundary,
@@ -64,6 +89,7 @@ impl TimerWindowsClient {
         mode: QueryMode,
         question: &str,
         sources: &[(String, String, String, String)],
+        history_json: &str,
     ) -> QueryBinding {
         QueryBinding {
             workspace: self.background_job_workspace_fingerprint(),
@@ -71,7 +97,7 @@ impl TimerWindowsClient {
             payload: format!(
                 "{:x}",
                 Sha256::digest(
-                    json!([mode.wire(), question, sources])
+                    json!([mode.wire(), question, sources, history_json])
                         .to_string()
                         .as_bytes()
                 )
@@ -82,6 +108,8 @@ impl TimerWindowsClient {
     fn invalidate_desktop_ai_configuration(&mut self) {
         self.cancel_desktop_agent();
         self.desktop_agent.draft = None;
+        self.desktop_ai.turns.clear();
+        self.knowledge_ai_answer = None;
         self.desktop_ai.preview = None;
         self.desktop_ai.probe_binding = None;
         self.desktop_ai.probe_message.clear();
@@ -107,6 +135,11 @@ impl TimerWindowsClient {
     fn observe_desktop_ai_scope(&mut self) {
         let workspace = self.background_job_workspace_fingerprint();
         let configuration = desktop_ai_configuration_binding(&self.sync);
+        let previous_configuration = self.desktop_ai.last_configuration.replace(configuration.clone());
+        if previous_configuration.as_deref().is_some_and(|previous| previous != configuration) {
+            self.desktop_ai.turns.clear();
+            self.knowledge_ai_answer = None;
+        }
         let previous_workspace = self.desktop_ai.last_workspace.replace(workspace.clone());
         if previous_workspace
             .as_deref()
@@ -116,6 +149,7 @@ impl TimerWindowsClient {
             self.knowledge_ai_question_draft.clear();
             self.desktop_ai.priority_note_id = None;
             self.knowledge_ai_answer = None;
+            self.desktop_ai.turns.clear();
             self.desktop_ai.probe_binding = None;
             self.desktop_ai.probe_ok = false;
             self.desktop_ai.probe_message.clear();
@@ -297,12 +331,14 @@ impl TimerWindowsClient {
                 return Err("所选范围没有可读知识页；可切换“直接问 AI”".into());
             }
         }
-        let binding = self.desktop_ai_current_binding(mode, &question, &sources);
+        let history_json = desktop_ai_history_json(&self.desktop_ai.turns);
+        let binding = self.desktop_ai_current_binding(mode, &question, &sources, &history_json);
         self.desktop_ai.preview = Some(DesktopAiPreview {
             consent: QueryConsent::preview(binding.clone()),
             binding,
             mode,
             question,
+            history_json,
             sources,
             notes_version: self.notes_cache_version(),
             recipient,
@@ -320,6 +356,7 @@ impl TimerWindowsClient {
             self.desktop_ai.mode,
             self.knowledge_ai_question_draft.trim(),
             &preview.sources,
+            &desktop_ai_history_json(&self.desktop_ai.turns),
         );
         let ready = self.background_work_is_allowed()
             && !self.workspace_edit_locked()
@@ -343,6 +380,7 @@ impl TimerWindowsClient {
         let base_url = self.sync.ai_base_url.clone();
         let model = self.sync.ai_model.clone();
         let question = preview.question;
+        let history_json = preview.history_json;
         let mode = preview.mode;
         let source_ids = preview
             .sources
@@ -379,7 +417,7 @@ impl TimerWindowsClient {
                 if cancellation.is_cancelled() {
                     return;
                 }
-                let result = ai_client::complete_android_query(
+                let result = ai_client::complete_android_conversation(
                     &api_key,
                     &base_url,
                     &model,
@@ -388,6 +426,7 @@ impl TimerWindowsClient {
                     &source_titles,
                     &source_folders,
                     &source_excerpts,
+                    &history_json,
                 );
                 if !cancellation.is_cancelled() {
                     let _ = tx.send(KnowledgeAiTaskResult {
@@ -531,6 +570,10 @@ impl TimerWindowsClient {
         self.knowledge_trash_mode = false;
         self.knowledge_view = KnowledgeCollectionView::Recent;
         self.knowledge_ai_panel_open = true;
+        if self.desktop_ai.mode != mode || self.desktop_ai.priority_note_id.is_some() {
+            self.desktop_ai.turns.clear();
+            self.knowledge_ai_answer = None;
+        }
         self.desktop_ai.mode = mode;
         self.desktop_ai.priority_note_id = None;
         self.desktop_ai.preview = None;
@@ -554,6 +597,8 @@ impl TimerWindowsClient {
             return;
         }
         self.open_desktop_ai_entry(QueryMode::Knowledge);
+        self.desktop_ai.turns.clear();
+        self.knowledge_ai_answer = None;
         self.desktop_ai.priority_note_id = Some(note_id.to_owned());
         self.knowledge_ai_scope_all = true;
         self.desktop_ai.message = "本次只依据当前文档最新内容回答，请输入问题后核对发送资料".into();
@@ -590,5 +635,22 @@ impl TimerWindowsClient {
         if confirm {
             self.send_desktop_ai_query();
         }
+    }
+}
+
+#[cfg(test)]
+mod desktop_conversation_parity_tests {
+    use super::{desktop_ai_history_json, DesktopAiTurn};
+    #[test]
+    fn keeps_only_complete_latest_turns_and_caps_request_context() {
+        let turns = (0..10).map(|n| DesktopAiTurn {
+            question: format!("问题{n}"), answer: format!("回答{n}"), details: None,
+        }).collect::<Vec<_>>();
+        let value: serde_json::Value = serde_json::from_str(&desktop_ai_history_json(&turns)).unwrap();
+        assert_eq!(value.as_array().unwrap().len(), 8);
+        assert_eq!(value[0]["question"], "问题2");
+        assert_eq!(value[7]["answer"], "回答9");
+        let oversized = vec![DesktopAiTurn { question: "q".into(), answer: "答".repeat(24_001), details: None }];
+        assert_eq!(desktop_ai_history_json(&oversized), "[]");
     }
 }
