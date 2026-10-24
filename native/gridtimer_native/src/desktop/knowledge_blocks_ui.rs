@@ -123,6 +123,22 @@ impl TimerWindowsClient {
             .get_or_insert_with(Default::default);
     }
 
+    /// Insert directly after the selected block, including non-text image blocks.
+    fn insert_paragraph_after_knowledge_image(&mut self, image_id: &str) -> bool {
+        if self.knowledge_page_locked() || !self.note_blocks_draft.iter().any(|block| block.id == image_id && block.block_type.eq_ignore_ascii_case("IMAGE")) {
+            return false;
+        }
+        let before = self.current_note_draft_snapshot();
+        let position = self.note_blocks_draft.iter().position(|block| block.id == image_id).unwrap();
+        let mut paragraph = new_desktop_text_block("");
+        // Keep normal page-block semantics, without changing the media reference.
+        paragraph.knowledge = Some(knowledge::KnowledgeBlock { kind: knowledge::BlockKind::Paragraph, ..Default::default() });
+        self.note_active_block_id = paragraph.id.clone();
+        self.note_blocks_draft.insert(position + 1, paragraph);
+        self.finish_note_structural_change(before);
+        true
+    }
+
     fn insert_knowledge_block(
         &mut self,
         kind: knowledge::BlockKind,
@@ -405,6 +421,11 @@ impl TimerWindowsClient {
             self.ui_knowledge_block(ui, block, index, 0, locked);
             if self.selected_note_id != editing_page || self.rich_editor.active {
                 return;
+            }
+            if !locked && block.block_type.eq_ignore_ascii_case("IMAGE") {
+                if ui.small_button("＋ 在图片下方添加段落").clicked() {
+                    self.insert_paragraph_after_knowledge_image(&block.id);
+                }
             }
         }
         if !locked
@@ -875,5 +896,26 @@ impl TimerWindowsClient {
         if meta != original && !self.knowledge_page_locked() {
             self.update_knowledge_page(meta);
         }
+    }
+}
+
+#[cfg(test)]
+mod windows_image_parity_tests {
+    use super::*;
+    #[test]
+    fn inserting_after_an_image_keeps_existing_order_and_attachment() {
+        let mut draft = vec![new_desktop_text_block("before")];
+        let image = DesktopNoteBlock {
+            id: "image-stable".to_string(),
+            block_type: "IMAGE".to_string(),
+            attachment_id: Some("attachment-stable".to_string()),
+            ..Default::default()
+        };
+        draft.push(image.clone());
+        let after = draft.iter().position(|block| block.id == image.id).unwrap();
+        draft.insert(after + 1, new_desktop_text_block(""));
+        assert_eq!(draft[1].attachment_id, image.attachment_id);
+        assert_eq!(draft[1].id, "image-stable");
+        assert_eq!(draft[2].block_type, "TEXT");
     }
 }

@@ -4143,7 +4143,18 @@ impl TimerWindowsClient {
             .find(|note| note.id == note_id)
             .cloned()
         {
+            // The stable inserted IMAGE id remains the insertion anchor after
+            // a media transaction reload. A text-first reload used to put the
+            // next block in front of the newly imported image.
+            let last_image = note.document.blocks.iter().rev()
+                .find(|block| block.block_type.eq_ignore_ascii_case("IMAGE"))
+                .map(|block| block.id.clone());
             self.load_note_draft_without_flush(&note);
+            if let Some(id) = last_image {
+                if self.note_blocks_draft.iter().any(|block| block.id == id) {
+                    self.note_active_block_id = id;
+                }
+            }
         }
     }
 
