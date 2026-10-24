@@ -1,0 +1,58 @@
+name: TenRate
+options:
+  bundleIdPrefix: com.ofairyo.tenrate
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+targets:
+  TenRate:
+    type: application
+    platform: iOS
+    sources:
+      - TenRate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ofairyo.tenrate.ios
+        SWIFT_OBJC_BRIDGING_HEADER: Native/BridgingHeader.h
+        LIBRARY_SEARCH_PATHS: ["$(inherited)", "$(PROJECT_DIR)/Native/$(PLATFORM_NAME)"]
+        OTHER_LDFLAGS: ["$(inherited)", "-ltenrate_ios_core", "-framework", Security]
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: TenRate
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  TenRateTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: TenRate
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  TenRateUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: TenRate
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  TenRate:
+    build:
+      targets:
+        TenRate: all
+    test:
+      targets: [TenRateTests, TenRateUITests]
+      gatherCoverageData: false
