@@ -484,10 +484,11 @@ mod tests {
         // never inherit the full-history stamp used by save preflight.
         assert!(source.contains("stateDatabase.verifiedReadHasFullHistoryReceipt(workspaceKey)"));
         assert!(source.contains("stateDatabase.verifiedReadHasOnlySealedSnapshots() &&"));
-        assert!(super::super::android_note_persist_preflight::DATABASE_PREFLIGHT
-            .contains("verifyNativeSnapshotRows(workspaceKey)"));
-        assert!(!super::super::android_note_persist_preflight::DATABASE_PREFLIGHT
-            .contains("currentOnly = true"));
+        let database = super::super::android_local_startup::tests::rendered(DATABASE);
+        let database = render(DATABASE, &database).unwrap();
+        let database = super::super::android_note_persist_preflight::render(DATABASE, &database).unwrap();
+        assert!(database.contains("verifyNativeSnapshotRows(workspaceKey).also"));
+        assert!(!database.contains("verifyNativeSnapshotRows(workspaceKey, currentOnly = true).also"));
     }
 }
 
