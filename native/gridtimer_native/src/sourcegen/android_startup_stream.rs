@@ -79,7 +79,8 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
         writableDatabase.rawQuery(
             "SELECT 1 FROM $HISTORY_TABLE WHERE workspace_key = ? AND " +
                 "(schema_version IS NULL OR schema_version > ? OR " +
-                "sha256 IS NULL OR envelope_sha256 IS NULL) LIMIT 1",
+                "sha256 IS NULL OR sha256 = '' OR " +
+                "envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1",
             arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
         ).use { it.moveToFirst() }
 
@@ -461,6 +462,12 @@ mod tests {
         assert!(source.contains("val freshTransaction = !database.inTransaction()"));
         assert!(source.contains("if (freshTransaction)"));
         assert!(source.contains("verifiedRows >= 0 && before == after"));
+        assert!(source.contains("verifyNativeSnapshotRows(workspaceKey, currentOnly = true)"));
+        assert!(source.contains("historyRequiresFullStartupScan(workspaceKey)"));
+        assert!(source.contains("nativeCurrentReceipt == (workspace to stamp)"));
+        assert!(source.contains("nativeHistoryReceipt == (workspace to stamp)"));
+        assert!(source.contains("fun verifiedReadHasFullHistoryReceipt("));
+        assert!(source.contains("val tables = if (currentOnly) arrayOf(CURRENT_TABLE)"));
         assert!(source.contains("CAST(app_data_json AS BLOB) AS app_data_json"));
         assert!(source.contains("finally {\n                snapshotReadWindow.remove()"));
         let base = super::super::android_local_startup::tests::rendered(REPOSITORY);
@@ -473,6 +480,14 @@ mod tests {
         assert!(source.contains(
             "futureCurrentSurface ?: databaseCurrent ?: jsonPrimaryAuthority ?: recovery"
         ));
+        // A trusted current can skip restoring historical payloads, but must
+        // never inherit the full-history stamp used by save preflight.
+        assert!(source.contains("stateDatabase.verifiedReadHasFullHistoryReceipt(workspaceKey)"));
+        assert!(source.contains("stateDatabase.verifiedReadHasOnlySealedSnapshots() &&"));
+        assert!(super::super::android_note_persist_preflight::DATABASE_PREFLIGHT
+            .contains("verifyNativeSnapshotRows(workspaceKey)"));
+        assert!(!super::super::android_note_persist_preflight::DATABASE_PREFLIGHT
+            .contains("currentOnly = true"));
     }
 }
 
@@ -547,6 +562,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StartupSnapshotPipelineTest {
+    @Test fun currentOnlyReceiptRequiresOneVerifiedRowStableStampAndSafeHistoryHeaders() {
+        assertTrue(canUseVerifiedCurrentStartupReceipt(1, true, true))
+        for (rows in listOf(-1L, 0L, 2L, 100L)) {
+            assertFalse(canUseVerifiedCurrentStartupReceipt(rows, true, true))
+        }
+        assertFalse(canUseVerifiedCurrentStartupReceipt(1, false, true))
+        assertFalse(canUseVerifiedCurrentStartupReceipt(1, true, false))
+        assertFalse(canUseVerifiedCurrentStartupReceipt(1, false, false))
+    }
+
     @Test fun emptyWorkspaceDoesNotScheduleAnyVerifier() {
         assertEquals(0L, verifySnapshotPipeline(4, 0) { _ -> })
     }
