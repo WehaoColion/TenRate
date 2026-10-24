@@ -1,3 +1,4 @@
+// v2.23.2.54 - Accept upstream workspace-indexed raw snapshot scans without rewriting them twice.
 // v2.23.2.48 - Accelerate safe post-start maintenance and reduce indexed scan round trips.
 // v2.23.2.47 - Avoid unrelated media IO and unbounded maintenance before ready.
 const MEDIA: &str = "com/ofairyo/gridtimer/data/NoteMediaStore.kt";
@@ -96,8 +97,17 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             source.replace_range(start..end, &compact);
             // Both APIs follow the existing workspace/time/id index, rather than
             // traversing payload pages belonging to other accounts.
-            replace(&mut source, "            \"FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid\"",
-                "            \"FROM $table WHERE workspace_key = ? ORDER BY \" +\n            if (table == HISTORY_TABLE) \"created_at_epoch_millis DESC, id DESC\" else \"rowid\"")?;
+            // Newer Android startup templates select the existing workspace index
+            // directly. Older templates still need the indexed rewrite below.
+            // Never silently accept an unrecognized scan or drop the workspace filter.
+            if source.contains("FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder") {
+                if !source.contains("INDEXED BY snapshot_history_workspace_time") {
+                    return Err("indexed snapshot scan must retain its workspace index".into());
+                }
+            } else {
+                replace(&mut source, "            \"FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid\"",
+                    "            \"FROM $table WHERE workspace_key = ? ORDER BY \" +\n            if (table == HISTORY_TABLE) \"created_at_epoch_millis DESC, id DESC\" else \"rowid\"")?;
+            }
             let start = source
                 .find("    private fun visitNativeSnapshotBatches(")
                 .ok_or("missing snapshot batches")?;
@@ -381,6 +391,16 @@ mod tests {
         let base = super::super::android_history_storage::render(DATABASE, &base).unwrap();
         let base = super::super::android_note_persist_preflight::render(DATABASE, &base).unwrap();
         render(DATABASE, &base).unwrap()
+    }
+
+    #[test]
+    fn composed_database_uses_forced_workspace_index_and_keeps_verification() {
+        let source = rendered_database();
+        assert!(source.contains("INDEXED BY snapshot_history_workspace_time"));
+        assert!(source.contains("FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder"));
+        assert!(!source.contains("FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid"));
+        assert!(source.contains("verifyNativeSnapshotRows(workspaceKey)"));
+        assert!(source.contains("preflight_native_verification"));
     }
 
     #[test]
