@@ -400,7 +400,7 @@ mod tests {
         assert!(source.contains("FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder"));
         assert!(!source.contains("FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid"));
         assert!(source.contains("verifyNativeSnapshotRows(workspaceKey)"));
-        assert!(source.contains("preflight_native_verification"));
+        assert!(source.contains("onNativeVerification(elapsedMs, verifiedRows)"));
     }
 
     #[test]
