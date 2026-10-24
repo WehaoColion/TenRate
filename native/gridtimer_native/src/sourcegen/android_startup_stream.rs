@@ -35,7 +35,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "stateDatabase.verifiedReadHasOnlySealedSnapshots()) {",
                 "stateDatabase.verifiedReadHasOnlySealedSnapshots() &&\n                stateDatabase.verifiedReadHasFullHistoryReceipt(workspaceKey)) {")?;
             replace(&mut source,
-                "            _isInitialized.value = true\\n            logDiagnosticEvent(",
+                "            _isInitialized.value = true\n            logDiagnosticEvent(",
                 "            _isInitialized.value = true\n            Log.i(\"StartupLatency\", \"ready elapsedMs=${android.os.SystemClock.elapsedRealtime() - initializationStarted}\")\n            logDiagnosticEvent(")?;
         }
         DATABASE => {
@@ -466,7 +466,7 @@ mod tests {
         let source = render(DATABASE, &base).unwrap();
         assert!(source.contains("val freshTransaction = !database.inTransaction()"));
         assert!(source.contains("if (freshTransaction)"));
-        assert!(source.contains("verifiedRows >= 0 && before == after"));
+        assert!(source.contains("if (verifiedRows >= 0 && before == after)"));
         assert!(source.contains("verifyNativeSnapshotRows(workspaceKey, currentOnly = true)"));
         assert!(source.contains("historyRequiresFullStartupScan(workspaceKey)"));
         assert!(source.contains("nativeCurrentReceipt == (workspace to stamp)"));
