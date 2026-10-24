@@ -670,9 +670,12 @@ impl TimerWindowsClient {
                     }
                 });
                 if ui.small_button("开始新对话").clicked() {
+                    // Invalidate any in-flight request so its late reply cannot
+                    // reappear as the first turn in the fresh conversation.
+                    self.cancel_desktop_ai_query();
                     self.desktop_ai.turns.clear();
                     self.knowledge_ai_answer = None;
-                    self.desktop_ai.preview = None;
+                    self.knowledge_ai_question_draft.clear();
                 }
             }
             ui.label(format!(
