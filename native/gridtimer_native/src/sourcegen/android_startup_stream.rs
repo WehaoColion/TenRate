@@ -1,3 +1,4 @@
+// v2.23.2.55 - Restore authenticated current snapshot without eager historical payload scans.
 // v2.23.2.54 - Index workspace history in Android 35+ save verification.
 // v2.23.2.49 - Fast-path zero/single-row verification without defeating bounded completion-order pipeline.
 // v2.22.49 - Stream the pinned SQLite statement through reusable verification buffers.
@@ -31,7 +32,10 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "        var verifiedCurrentAccepted = false\n        stateDatabase.forEachSnapshot(workspaceKey) { stored ->",
                 "        var verifiedCurrentAccepted = false\n        stateDatabase.forEachSnapshot(\n            workspaceKey,\n            skipVerifiedHistory = { authoritativeStartup && verifiedCurrentAccepted }\n        ) { stored ->")?;
             replace(&mut source,
-                "            _isInitialized.value = true\n            logDiagnosticEvent(",
+                "stateDatabase.verifiedReadHasOnlySealedSnapshots()) {",
+                "stateDatabase.verifiedReadHasOnlySealedSnapshots() &&\\n                stateDatabase.verifiedReadHasFullHistoryReceipt(workspaceKey)) {")?;
+            replace(&mut source,
+                "            _isInitialized.value = true\\n            logDiagnosticEvent(",
                 "            _isInitialized.value = true\n            Log.i(\"StartupLatency\", \"ready elapsedMs=${android.os.SystemClock.elapsedRealtime() - initializationStarted}\")\n            logDiagnosticEvent(")?;
         }
         DATABASE => {
@@ -56,7 +60,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 &format!("{WORKSPACE_READ}\n    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()"))?;
             replace(&mut source,
                 "internal class SnapshotVerificationWindow {",
-                "internal class SnapshotVerificationWindow {\n    private var nativeHistoryReceipt: Pair<String, Any>? = null\n\n    fun recordNativeHistory(workspace: String, stamp: Any) {\n        record(workspace, true, stamp)\n        nativeHistoryReceipt = workspace to stamp\n    }\n\n    fun canSkipVerifiedHistory(workspace: String, stamp: Any, acceptedCurrent: Boolean): Boolean =\n        acceptedCurrent && nativeHistoryReceipt == (workspace to stamp) &&\n            covers(workspace, true, stamp)\n")?;
+                "internal class SnapshotVerificationWindow {\\n    private var nativeHistoryReceipt: Pair<String, Any>? = null\\n    private var nativeCurrentReceipt: Pair<String, Any>? = null\\n\\n    fun recordNativeHistory(workspace: String, stamp: Any) {\\n        record(workspace, true, stamp)\\n        nativeHistoryReceipt = workspace to stamp\\n    }\\n\\n    fun recordNativeCurrent(workspace: String, stamp: Any) {\\n        record(workspace, false, stamp)\\n        nativeCurrentReceipt = workspace to stamp\\n    }\\n\\n    fun hasFullHistoryReceipt(workspace: String, stamp: Any): Boolean =\\n        nativeHistoryReceipt == (workspace to stamp) && covers(workspace, true, stamp)\\n\\n    fun canSkipVerifiedHistory(workspace: String, stamp: Any, acceptedCurrent: Boolean): Boolean =\\n        acceptedCurrent && (hasFullHistoryReceipt(workspace, stamp) ||\\n            nativeCurrentReceipt == (workspace to stamp) && covers(workspace, false, stamp))\\n")?;
             source.push_str(NATIVE_BRIDGE);
             source.push_str(VERIFICATION_PIPELINE);
         }
@@ -65,7 +69,21 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     Ok(source)
 }
 
-const WORKSPACE_READ: &str = r####"    fun <T> withVerifiedWorkspaceReads(workspaceKey: String, action: () -> T): T {
+const WORKSPACE_READ: &str = r####"    // A current-only receipt must never become a save-preflight receipt.
+    fun verifiedReadHasFullHistoryReceipt(workspaceKey: String): Boolean =
+        snapshotReadWindow.get()?.hasFullHistoryReceipt(workspaceKey, snapshotWriteStamp()) == true
+
+    // Index-only metadata probe; do not read any history payload on the normal path.
+    // Unknown legacy/unsealed or newer-schema history takes the complete scan.
+    private fun historyRequiresFullStartupScan(workspaceKey: String): Boolean =
+        writableDatabase.rawQuery(
+            "SELECT 1 FROM $HISTORY_TABLE WHERE workspace_key = ? AND " +
+                "(schema_version IS NULL OR schema_version > ? OR " +
+                "sha256 IS NULL OR envelope_sha256 IS NULL) LIMIT 1",
+            arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
+        ).use { it.moveToFirst() }
+
+    fun <T> withVerifiedWorkspaceReads(workspaceKey: String, action: () -> T): T {
         val database = writableDatabase
         // All rows are read on Android's pinned primary connection. The Rust
         // verifier only receives this cursor's bytes, never opens the database.
@@ -75,25 +93,48 @@ const WORKSPACE_READ: &str = r####"    fun <T> withVerifiedWorkspaceReads(worksp
             if (freshTransaction) {
                 val before = snapshotWriteStamp()
                 val started = android.os.SystemClock.elapsedRealtime()
-                val verifiedRows = runCatching { verifyNativeSnapshotRows(workspaceKey) }
-                    .onFailure { android.util.Log.w("StartupLatency", "snapshotStream fallback: ${it.javaClass.simpleName}") }
-                    .getOrDefault(-1L)
-                val after = snapshotWriteStamp()
-                if (verifiedRows >= 0 && before == after) {
-                    snapshotReadWindow.get()?.recordNativeHistory(workspaceKey, after)
+                var verifiedRows = -1L
+                var scope = "full"
+                // Only the authenticated current snapshot may activate the fast path.
+                // Its decoded/accepted result is checked later in forEachSnapshot.
+                val metadataSafe = runCatching { !historyRequiresFullStartupScan(workspaceKey) }
+                    .onFailure { android.util.Log.w("StartupLatency", "historyHeader fallback", it) }
+                    .getOrDefault(false)
+                if (metadataSafe) {
+                    val currentRows = runCatching { verifyNativeSnapshotRows(workspaceKey, currentOnly = true) }
+                        .onFailure { android.util.Log.w("StartupLatency", "currentSnapshot fallback", it) }
+                        .getOrDefault(-1L)
+                    val currentStamp = snapshotWriteStamp()
+                    if (canUseVerifiedCurrentStartupReceipt(currentRows, metadataSafe, before == currentStamp)) {
+                        snapshotReadWindow.get()?.recordNativeCurrent(workspaceKey, currentStamp)
+                        verifiedRows = currentRows
+                        scope = "current"
+                    }
+                }
+                if (scope == "full") {
+                    // No current, malformed/future current, native verifier failure or
+                    // unsafe historical header: keep the original complete verification.
+                    verifiedRows = runCatching { verifyNativeSnapshotRows(workspaceKey) }
+                        .onFailure { android.util.Log.w("StartupLatency", "snapshotStream fallback: ${it.javaClass.simpleName}") }
+                        .getOrDefault(-1L)
+                    val after = snapshotWriteStamp()
+                    if (verifiedRows >= 0 && before == after) {
+                        snapshotReadWindow.get()?.recordNativeHistory(workspaceKey, after)
+                    }
                 }
                 android.util.Log.i("StartupLatency",
-                    "snapshotStream rows=$verifiedRows elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
+                    "snapshotStream rows=$verifiedRows elapsedMs=${android.os.SystemClock.elapsedRealtime() - started} scope=$scope")
             }
             action()
         }
     }
 
-    private fun verifyNativeSnapshotRows(workspaceKey: String): Long {
+    private fun verifyNativeSnapshotRows(workspaceKey: String, currentOnly: Boolean = false): Long {
         if (!NativeSnapshotVerifier.available) return -1L
         val database = writableDatabase
         check(database.inTransaction())
-        val expectedRows = arrayOf(CURRENT_TABLE, HISTORY_TABLE).sumOf { table ->
+        val tables = if (currentOnly) arrayOf(CURRENT_TABLE) else arrayOf(CURRENT_TABLE, HISTORY_TABLE)
+        val expectedRows = tables.sumOf { table ->
             database.rawQuery("SELECT COUNT(*) FROM $table WHERE workspace_key = ?",
                 arrayOf(workspaceKey)).use { cursor ->
                 check(cursor.moveToFirst())
@@ -106,7 +147,7 @@ const WORKSPACE_READ: &str = r####"    fun <T> withVerifiedWorkspaceReads(worksp
         var payloadBytes = 0L
         val started = android.os.SystemClock.elapsedRealtime()
         val verified = verifySnapshotPipeline(workers, expectedRows) { submit ->
-            for (table in arrayOf(CURRENT_TABLE, HISTORY_TABLE)) {
+            for (table in tables) {
                 if (android.os.Build.VERSION.SDK_INT >= 35) {
                     payloadBytes += visitRawSnapshots(database, table, workspaceKey, buffers, submit, nativeNanos)
                     continue
@@ -231,6 +272,12 @@ const WORKSPACE_READ: &str = r####"    fun <T> withVerifiedWorkspaceReads(worksp
 "####;
 
 const VERIFICATION_PIPELINE: &str = r####"
+// Only a single fully authenticated current row, in an unchanged DB transaction,
+// can avoid eagerly streaming authenticated history. This is *not* a save receipt.
+internal fun canUseVerifiedCurrentStartupReceipt(
+    currentRows: Long, historyMetadataSafe: Boolean, unchanged: Boolean
+): Boolean = currentRows == 1L && historyMetadataSafe && unchanged
+
 
 // A buffer stays exclusively owned by its verifier until that call returns.
 // Reuse removes one large Java allocation per history row; the explicit length
