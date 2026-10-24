@@ -36,6 +36,8 @@ struct DesktopAgentDraft {
 #[derive(Default)]
 struct DesktopAgentSession {
     open: bool,
+    step: u8,
+    confirm_discard: bool,
     question: String,
     deep_review: bool,
     selected_ids: std::collections::BTreeSet<String>,
@@ -238,8 +240,17 @@ impl TimerWindowsClient {
         self.refresh_desktop_agent_sources();
         if self.desktop_agent.active.is_some() {
             self.desktop_agent.open = true;
+            self.desktop_agent.step = 3;
             return;
         }
+        if self.desktop_agent.draft.as_ref().is_some_and(|draft| draft.saved_id.is_none()) {
+            self.desktop_agent.open = true;
+            self.desktop_agent.step = 4;
+            self.desktop_agent.message = "已有未保存草稿，请先保存或明确放弃。".into();
+            return;
+        }
+        self.desktop_agent.step = 0;
+        self.desktop_agent.confirm_discard = false;
         self.desktop_agent.priority_note_id = priority_note_id.clone();
         self.desktop_agent.selected_ids.clear();
         if let Some(id) = priority_note_id {
@@ -288,7 +299,10 @@ impl TimerWindowsClient {
             })
         })();
         match preview {
-            Ok(preview) => self.desktop_agent.preview = Some(preview),
+            Ok(preview) => {
+                self.desktop_agent.preview = Some(preview);
+                self.desktop_agent.step = 2;
+            },
             Err(error) => self.desktop_agent.message = error,
         }
     }
@@ -345,6 +359,7 @@ impl TimerWindowsClient {
                     handle,
                     rx,
                 });
+                self.desktop_agent.step = 3;
                 self.desktop_agent.message = "正在连接模型；本次任务只生成可编辑草稿".into();
             }
             Err(error) => self.desktop_agent.message = format!("Agent 无法启动：{error}"),
@@ -370,6 +385,7 @@ impl TimerWindowsClient {
                     && completion.context == active.context
                     && self.desktop_agent_context_current(&completion.context);
                 if cancelled || !current {
+                    self.desktop_agent.step = 1;
                     self.desktop_agent.message =
                         "任务已取消或资料、账户、配置已变化，本次结果不能保存；可重新核对后运行"
                             .into();
@@ -399,6 +415,7 @@ impl TimerWindowsClient {
                     .as_str()
                     .unwrap_or("任务结束，没有返回可保存草稿")
                     .into();
+                self.desktop_agent.step = 4;
                 self.desktop_agent.draft = Some(DesktopAgentDraft {
                     context: completion.context,
                     result,
@@ -412,6 +429,7 @@ impl TimerWindowsClient {
             }
             Err(mpsc::TryRecvError::Empty) => self.desktop_agent.active = Some(active),
             Err(mpsc::TryRecvError::Disconnected) => {
+                self.desktop_agent.step = 1;
                 self.desktop_agent.message = "Agent 执行已中断，没有写入知识库；请重新运行".into()
             }
         }
@@ -530,14 +548,37 @@ impl TimerWindowsClient {
         let mut save = false;
         let mut source_to_open = None;
         let mut saved_to_open = None;
+        let mut start_new_task = false;
         let running = self.desktop_agent.active.is_some();
         egui::Window::new("AI Agent").id(egui::Id::new("desktop_agent")).default_width(760.0).resizable(true).vscroll(true).open(&mut open).show(ctx,|ui| {
             ui.label(format!("{} · {}",self.sync.ai_model,desktop_ai_configured_recipient(&self.sync).unwrap_or_else(|e| e)));
-            ui.label("选择本次资料，Agent 按需检索和分段读取，生成新知识页草稿。来源页不会被覆盖。");
+            ui.horizontal_wrapped(|ui| {
+                let steps = ["任务目标", "选择资料", "核对授权", "执行任务", "审阅结果"];
+                for (index, title) in steps.iter().enumerate() {
+                    ui.label(if self.desktop_agent.step as usize == index { format!("● {} {}", index + 1, title) } else { format!("{} {}", index + 1, title) });
+                }
+            });
+            ui.label("仅处理本次授权资料，来源页不会被 Agent 修改。");
             ui.add_enabled_ui(!running,|ui| {
+                if self.desktop_agent.step == 0 {
                 ui.label(format!("任务目标 · {}/1000",self.desktop_agent.question.chars().count()));
                 if ui.add(egui::TextEdit::multiline(&mut self.desktop_agent.question).desired_rows(3).desired_width(f32::INFINITY).hint_text("例如：整理这些记录的待办、冲突和需要补充的事实")).changed() { self.desktop_agent.preview=None; }
                 if ui.checkbox(&mut self.desktop_agent.deep_review,"第二阶段独立深度核验").changed() { self.desktop_agent.preview=None; }
+                ui.horizontal_wrapped(|ui| {
+                    for (name, goal) in [
+                        ("整理待办", "提取所选资料的待办、依赖和待确认事项，列出来源。"),
+                        ("核对矛盾", "核对所选资料的事实与时间线，指出不一致和证据缺口。"),
+                        ("阶段复盘", "总结所选资料的进展、问题、经验与下一步行动。"),
+                    ] {
+                        if ui.small_button(name).clicked() { self.desktop_agent.question = goal.into(); self.desktop_agent.preview = None; }
+                    }
+                });
+                if ui.add_enabled(!self.desktop_agent.question.trim().is_empty() && self.desktop_agent.question.chars().count() <= 1000, egui::Button::new("下一步：选择资料")).clicked() {
+                    self.desktop_agent.step = 1;
+                }
+                }
+                if self.desktop_agent.step == 1 {
+                if ui.small_button("返回任务目标").clicked() { self.desktop_agent.step = 0; self.desktop_agent.preview = None; }
                 ui.horizontal(|ui| {
                     ui.label(format!("已选 {}/30 条资料",self.desktop_agent.selected_ids.len()));
                     if self.desktop_agent.priority_note_id.is_some() { ui.label("仅当前文档"); }
@@ -570,6 +611,7 @@ impl TimerWindowsClient {
                     });
                 });
                 ui.label("只提供当前可读的最新内容；加密、已删除内容及历史版本不纳入。超限会提示调整范围。");
+                }
             });
             if let Some(active)=self.desktop_agent.active.as_ref() {
                 let progress=active.handle.progress();
@@ -579,7 +621,13 @@ impl TimerWindowsClient {
                 ui.label(format!("实际模型请求 {} 次 · 本机工具 {} 次 · 本阶段读取 {} 条资料",progress["requests"],progress["toolCalls"],progress["documentsRead"]));
                 if progress["cancelRequested"]==true { ui.label("正在停止后续步骤，等待在途请求结束"); } else { cancel=ui.button("停止本次任务").clicked(); }
                 ctx.request_repaint_after(Duration::from_millis(250));
-            } else { preview=ui.add_enabled(self.workspace_persistence_ready && !self.workspace_edit_locked() && !self.knowledge_ai_pending,egui::Button::new("核对资料并继续")).clicked(); }
+            } else if self.desktop_agent.step == 1 {
+                preview=ui.add_enabled(self.workspace_persistence_ready && !self.workspace_edit_locked() && !self.knowledge_ai_pending,egui::Button::new("核对资料并继续")).clicked();
+            } else if self.desktop_agent.step == 3 {
+                if ui.button("返回选择资料").clicked() { self.desktop_agent.step = 1; }
+            }
+            if self.desktop_agent.step == 2 {
+            if ui.small_button("返回选择资料").clicked() { self.desktop_agent.step = 1; self.desktop_agent.preview = None; }
             if let Some(preview)=self.desktop_agent.preview.as_mut() {
                 ui.separator();let recipient=desktop_ai_configured_recipient(&self.sync).unwrap_or_else(|e|e);
                 ui.label(egui::RichText::new("本次发送确认").strong());ui.label(format!("接收域名：{recipient} · 模型：{}",self.sync.ai_model));
@@ -591,8 +639,10 @@ impl TimerWindowsClient {
                 ui.checkbox(&mut preview.acknowledged,"我已核对接收方及全部授权资料，允许本次发送");
                 send=ui.add_enabled(preview.acknowledged,egui::Button::new("发送并运行 Agent")).clicked();
             }
+            }
             if !self.desktop_agent.message.is_empty() { ui.label(&self.desktop_agent.message); }
             let save_state=self.desktop_agent_save_state();
+            if self.desktop_agent.step == 4 {
             if let Some(draft)=self.desktop_agent.draft.as_mut() {
                 ui.separator();ui.label(if draft.saved_id.is_some() {"任务已保存"} else if draft.verified {"核验通过 · 待你审阅保存"} else {"未完成或核验失败 · 不能保存"});
                 ui.label(format!("实际模型请求 {} 次 · 本机工具调用 {} 次",draft.result["requests"],draft.result["toolCalls"]));
@@ -615,11 +665,36 @@ impl TimerWindowsClient {
                     if let Some(id)=draft.saved_id.as_ref() {if ui.button("打开已保存知识页").clicked() {saved_to_open=Some(id.clone());}}
                 });
                 if save_state==AgentSaveState::ScopeChanged {ui.label("资料、账户、配置或任务目标已经变化，请重新运行后保存。");}
+                if draft.saved_id.is_some() && ui.button("开始新任务").clicked() { start_new_task = true; }
+            }
             }
         });
         if !open {
-            self.cancel_desktop_agent();
-            self.desktop_agent.open = false;
+            if self.desktop_agent.draft.as_ref().is_some_and(|draft| draft.saved_id.is_none()) {
+                self.desktop_agent.confirm_discard = true;
+            } else {
+                self.cancel_desktop_agent();
+                self.desktop_agent.open = false;
+            }
+        }
+        if self.desktop_agent.confirm_discard {
+            let mut abandon = false;
+            let mut keep = false;
+            egui::Window::new("放弃未保存的 Agent 草稿？").collapsible(false).show(ctx, |ui| {
+                ui.label("当前草稿尚未保存为知识页。放弃后无法从此窗口恢复。");
+                ui.horizontal(|ui| {
+                    abandon = ui.button("确认放弃").clicked();
+                    keep = ui.button("继续审阅").clicked();
+                });
+            });
+            if abandon {
+                self.cancel_desktop_agent();
+                self.desktop_agent.draft = None;
+                self.desktop_agent.open = false;
+                self.desktop_agent.confirm_discard = false;
+            } else if keep {
+                self.desktop_agent.confirm_discard = false;
+            }
         }
         if cancel {
             self.cancel_desktop_agent();
@@ -635,6 +710,10 @@ impl TimerWindowsClient {
         }
         if let Some(id) = source_to_open.or(saved_to_open) {
             self.open_desktop_agent_source(&id);
+        }
+        if start_new_task {
+            let priority = self.desktop_agent.priority_note_id.clone();
+            self.open_desktop_agent_entry(priority);
         }
     }
 }
