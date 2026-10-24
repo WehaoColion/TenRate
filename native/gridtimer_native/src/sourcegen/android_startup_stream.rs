@@ -33,7 +33,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "        var verifiedCurrentAccepted = false\n        stateDatabase.forEachSnapshot(\n            workspaceKey,\n            skipVerifiedHistory = { authoritativeStartup && verifiedCurrentAccepted }\n        ) { stored ->")?;
             replace(&mut source,
                 "stateDatabase.verifiedReadHasOnlySealedSnapshots()) {",
-                "stateDatabase.verifiedReadHasOnlySealedSnapshots() &&\\n                stateDatabase.verifiedReadHasFullHistoryReceipt(workspaceKey)) {")?;
+                "stateDatabase.verifiedReadHasOnlySealedSnapshots() &&\n                stateDatabase.verifiedReadHasFullHistoryReceipt(workspaceKey)) {")?;
             replace(&mut source,
                 "            _isInitialized.value = true\\n            logDiagnosticEvent(",
                 "            _isInitialized.value = true\n            Log.i(\"StartupLatency\", \"ready elapsedMs=${android.os.SystemClock.elapsedRealtime() - initializationStarted}\")\n            logDiagnosticEvent(")?;
@@ -60,7 +60,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 &format!("{WORKSPACE_READ}\n    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()"))?;
             replace(&mut source,
                 "internal class SnapshotVerificationWindow {",
-                "internal class SnapshotVerificationWindow {\\n    private var nativeHistoryReceipt: Pair<String, Any>? = null\\n    private var nativeCurrentReceipt: Pair<String, Any>? = null\\n\\n    fun recordNativeHistory(workspace: String, stamp: Any) {\\n        record(workspace, true, stamp)\\n        nativeHistoryReceipt = workspace to stamp\\n    }\\n\\n    fun recordNativeCurrent(workspace: String, stamp: Any) {\\n        record(workspace, false, stamp)\\n        nativeCurrentReceipt = workspace to stamp\\n    }\\n\\n    fun hasFullHistoryReceipt(workspace: String, stamp: Any): Boolean =\\n        nativeHistoryReceipt == (workspace to stamp) && covers(workspace, true, stamp)\\n\\n    fun canSkipVerifiedHistory(workspace: String, stamp: Any, acceptedCurrent: Boolean): Boolean =\\n        acceptedCurrent && (hasFullHistoryReceipt(workspace, stamp) ||\\n            nativeCurrentReceipt == (workspace to stamp) && covers(workspace, false, stamp))\\n")?;
+                "internal class SnapshotVerificationWindow {\n    private var nativeHistoryReceipt: Pair<String, Any>? = null\n    private var nativeCurrentReceipt: Pair<String, Any>? = null\n\n    fun recordNativeHistory(workspace: String, stamp: Any) {\n        record(workspace, true, stamp)\n        nativeHistoryReceipt = workspace to stamp\n    }\n\n    fun recordNativeCurrent(workspace: String, stamp: Any) {\n        record(workspace, false, stamp)\n        nativeCurrentReceipt = workspace to stamp\n    }\n\n    fun hasFullHistoryReceipt(workspace: String, stamp: Any): Boolean =\n        nativeHistoryReceipt == (workspace to stamp) && covers(workspace, true, stamp)\n\n    fun canSkipVerifiedHistory(workspace: String, stamp: Any, acceptedCurrent: Boolean): Boolean =\n        acceptedCurrent && (hasFullHistoryReceipt(workspace, stamp) ||\n            nativeCurrentReceipt == (workspace to stamp) && covers(workspace, false, stamp))\n")?;
             source.push_str(NATIVE_BRIDGE);
             source.push_str(VERIFICATION_PIPELINE);
         }
