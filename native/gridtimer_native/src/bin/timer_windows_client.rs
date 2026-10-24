@@ -4567,15 +4567,8 @@ impl TimerWindowsClient {
                     return;
                 }
                 if task.result.ok {
-                    self.desktop_ai.turns.push(DesktopAiTurn {
-                        question: task.question.clone(),
-                        answer: task.result.content.clone(),
-                    });
-                    if self.desktop_ai.turns.len() > 8 {
-                        self.desktop_ai.turns.remove(0);
-                    }
                     self.knowledge_ai_question_draft.clear();
-                    self.knowledge_ai_answer = Some(KnowledgeAiAnswer {
+                    let received = KnowledgeAiAnswer {
                         workspace_binding: workspace,
                         recipient_host: task.recipient_host,
                         model: task.model,
@@ -4585,7 +4578,16 @@ impl TimerWindowsClient {
                         source_titles: task.source_titles,
                         source_folders: task.source_folders,
                         received_at_epoch_millis: now_millis(),
+                    };
+                    self.desktop_ai.turns.push(DesktopAiTurn {
+                        question: received.question.clone(),
+                        answer: received.content.clone(),
+                        details: Some(received.clone()),
                     });
+                    if self.desktop_ai.turns.len() > 8 {
+                        self.desktop_ai.turns.remove(0);
+                    }
+                    self.knowledge_ai_answer = Some(received);
                     self.desktop_ai.message = "AI 回答完成".into();
                     self.status = self.desktop_ai.message.clone();
                 } else {

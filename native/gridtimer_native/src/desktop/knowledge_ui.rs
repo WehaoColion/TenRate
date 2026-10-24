@@ -559,6 +559,9 @@ impl TimerWindowsClient {
     }
 
     fn ui_knowledge_ai_panel(&mut self, ui: &mut egui::Ui) {
+        let mut turn_to_view: Option<KnowledgeAiAnswer> = None;
+        let mut turn_to_save: Option<KnowledgeAiAnswer> = None;
+        let mut turn_source: Option<String> = None;
         card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
                 section_heading(ui, "AI 问答");
@@ -649,6 +652,20 @@ impl TimerWindowsClient {
                         ui.label(&turn.question);
                         ui.label(egui::RichText::new("AI").strong());
                         ui.label(&turn.answer);
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.small_button("复制回答").clicked() {
+                                ui.output_mut(|output| output.copied_text = turn.answer.clone());
+                            }
+                            if let Some(details) = &turn.details {
+                                if ui.small_button("查看公式排版").clicked() { turn_to_view = Some(details.clone()); }
+                                if ui.small_button("保存为知识页").clicked() { turn_to_save = Some(details.clone()); }
+                            }
+                        });
+                        if let Some(details) = &turn.details {
+                            for (id, title) in details.source_ids.iter().zip(details.source_titles.iter()) {
+                                if ui.small_button(format!("来源：{title}")).clicked() { turn_source = Some(id.clone()); }
+                            }
+                        }
                         ui.separator();
                     }
                 });
@@ -745,6 +762,17 @@ impl TimerWindowsClient {
                 }
             }
         });
+        if let Some(answer) = turn_to_view {
+            let latest = self.knowledge_ai_answer.replace(answer);
+            self.open_desktop_ai_answer_reader();
+            self.knowledge_ai_answer = latest;
+        }
+        if let Some(answer) = turn_to_save {
+            let latest = self.knowledge_ai_answer.replace(answer);
+            self.save_knowledge_answer_as_document();
+            self.knowledge_ai_answer = latest;
+        }
+        if let Some(id) = turn_source { self.open_knowledge_source(&id); }
     }
 }
 

@@ -7,6 +7,7 @@ use desktop_ai_query_boundary::{QueryBinding, QueryBoundary, QueryConsent, Query
 struct DesktopAiTurn {
     question: String,
     answer: String,
+    details: Option<KnowledgeAiAnswer>,
 }
 
 /// Keep a contiguous suffix of successful, role-safe turns. Prior responses
@@ -643,13 +644,13 @@ mod desktop_conversation_parity_tests {
     #[test]
     fn keeps_only_complete_latest_turns_and_caps_request_context() {
         let turns = (0..10).map(|n| DesktopAiTurn {
-            question: format!("问题{n}"), answer: format!("回答{n}"),
+            question: format!("问题{n}"), answer: format!("回答{n}"), details: None,
         }).collect::<Vec<_>>();
         let value: serde_json::Value = serde_json::from_str(&desktop_ai_history_json(&turns)).unwrap();
         assert_eq!(value.as_array().unwrap().len(), 8);
         assert_eq!(value[0]["question"], "问题2");
         assert_eq!(value[7]["answer"], "回答9");
-        let oversized = vec![DesktopAiTurn { question: "q".into(), answer: "答".repeat(24_001) }];
+        let oversized = vec![DesktopAiTurn { question: "q".into(), answer: "答".repeat(24_001), details: None }];
         assert_eq!(desktop_ai_history_json(&oversized), "[]");
     }
 }
