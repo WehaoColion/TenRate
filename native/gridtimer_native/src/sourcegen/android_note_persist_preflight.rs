@@ -1,3 +1,4 @@
+// v2.23.2.54 - Report native preflight separately from schema and mirror checks.
 // v2.23.2.35 - Reuse verified history within the current local-save transaction.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
 const DATABASE: &str = "com/ofairyo/gridtimer/data/AppStateDatabase.kt";
@@ -35,7 +36,11 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     Ok(source)
 }
 
-const DATABASE_PREFLIGHT: &str = r####"    fun <T> withVerifiedSavePreflight(workspaceKey: String, action: () -> T): T =
+const DATABASE_PREFLIGHT: &str = r####"    fun <T> withVerifiedSavePreflight(
+        workspaceKey: String,
+        onNativeVerification: (Long, Long) -> Unit = { _, _ -> },
+        action: () -> T
+    ): T =
         withSnapshotWriteTransaction {
             // Reuse the existing native payload/envelope/schema verifier on the
             // already pinned primary connection. Saving never starts history
@@ -45,7 +50,16 @@ const DATABASE_PREFLIGHT: &str = r####"    fun <T> withVerifiedSavePreflight(wor
                 windows = snapshotReadWindow,
                 transactionActive = { writableDatabase.inTransaction() },
                 snapshotStamp = ::snapshotWriteStamp,
-                verifyRows = { verifyNativeSnapshotRows(workspaceKey) },
+                verifyRows = {
+                    val began = System.nanoTime()
+                    var verifiedRows = -1L
+                    try {
+                        verifyNativeSnapshotRows(workspaceKey).also { verifiedRows = it }
+                    } finally {
+                        val elapsedMs = (System.nanoTime() - began).coerceAtLeast(0L) / 1_000_000L
+                        if (elapsedMs >= 1_000L) onNativeVerification(elapsedMs, verifiedRows)
+                    }
+                },
                 onVerificationFailure = {
                     android.util.Log.w("NoteSaveLatency", "Save preflight requires full recovery verification", it)
                 },
@@ -57,7 +71,15 @@ const DATABASE_PREFLIGHT: &str = r####"    fun <T> withVerifiedSavePreflight(wor
 const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySurface(
         workspaceKey: String,
         includeUnmigratedLegacy: Boolean = false
-    ): Int? = stateDatabase.withVerifiedSavePreflight(workspaceKey) {
+    ): Int? = stateDatabase.withVerifiedSavePreflight(
+        workspaceKey,
+        onNativeVerification = { millis, rows ->
+            logDiagnosticEvent(
+                category = "notes.local_save.latency",
+                message = "phase=preflight_native_verification durationMs=$millis rows=$rows"
+            )
+        }
+    ) {
         val evidence = NoteSavePreflightEvidence(APP_DATA_SCHEMA_VERSION)
         // Native success proves payload, envelope and BOTH schema declarations.
         // Read and accept the current row before skipping verified histories.
@@ -260,3 +282,21 @@ class NoteSavePreflightTest {
     }
 }
 "####;
+
+#[cfg(test)]
+mod generated_preflight_diagnostics_tests {
+    use super::*;
+
+    #[test]
+    fn slow_native_verification_records_only_bounded_metrics() {
+        assert!(DATABASE_PREFLIGHT.contains("withSnapshotWriteTransaction"));
+        assert!(DATABASE_PREFLIGHT.contains("verifyNativeSnapshotRows(workspaceKey)"));
+        assert!(DATABASE_PREFLIGHT.contains("finally {"));
+        assert!(DATABASE_PREFLIGHT.contains("onNativeVerification(elapsedMs, verifiedRows)"));
+        assert!(SCHEMA_PREFLIGHT.contains("phase=preflight_native_verification durationMs=$millis rows=$rows"));
+        assert!(!SCHEMA_PREFLIGHT.contains("noteId="));
+        assert!(!SCHEMA_PREFLIGHT.contains("workspaceKey=$"));
+        assert!(SCHEMA_PREFLIGHT.contains("forEachQuarantinedCurrentSnapshot"));
+        assert!(SCHEMA_PREFLIGHT.contains("observeFile(files.backup)"));
+    }
+}

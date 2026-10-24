@@ -1,3 +1,4 @@
+// v2.23.2.54 - Reduce account history scan during note persistence.
 // v2.23.2.53 - Restore image-after-block editing and in-app release history.
 // v2.23.2.52 - Record faster batch image import and retained recovery evidence.
 // v2.23.2.51 - Avoid obsolete interleaved autosave snapshot writes blocking knowledge saves.
@@ -44,7 +45,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.53";
+pub const LATEST_VERSION: &str = "2.23.2.54";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -74,6 +75,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.54",
+        updatedAt = "2026-10-24 10:01",
+        summary = "减少知识保存时的跨工作区历史扫描",
+        sections = listOf(
+            AndroidUpdateSection("保存前校验", listOf(
+                "Android 15及以上使用已有工作区历史索引定位待验证快照，减少扫描其他账户数据。",
+                "当前与历史快照仍逐条校验摘要、封装和版本，失败时保留既有恢复与写入保护。"
+            )),
+            AndroidUpdateSection("诊断与验收", listOf(
+                "记录原生历史验证耗时和校验条数，便于区分历史扫描与恢复镜像检查。",
+                "仍需用原有知识和历史数据在真机上验证保存耗时；同步与存储格式保持不变。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.53",
         updatedAt = "2026-10-24 07:45",

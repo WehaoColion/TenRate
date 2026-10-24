@@ -1,3 +1,4 @@
+// v2.23.2.54 - Index workspace history in Android 35+ save verification.
 // v2.23.2.49 - Fast-path zero/single-row verification without defeating bounded completion-order pipeline.
 // v2.22.49 - Stream the pinned SQLite statement through reusable verification buffers.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
@@ -158,9 +159,14 @@ const WORKSPACE_READ: &str = r####"    fun <T> withVerifiedWorkspaceReads(worksp
         check(database.inTransaction())
         val timestamp = if (table == CURRENT_TABLE) "updated_at_epoch_millis" else "created_at_epoch_millis"
         val identity = if (table == CURRENT_TABLE) "workspace_key" else "id"
+        // NOT INDEXED previously scanned other accounts' entire history.
+        // Seek this account's indexed history while authenticating every matching row.
+        val indexedTable = if (table == HISTORY_TABLE)
+            "$HISTORY_TABLE INDEXED BY snapshot_history_workspace_time" else CURRENT_TABLE
+        val rowOrder = if (table == HISTORY_TABLE) "created_at_epoch_millis DESC, id DESC" else "workspace_key"
         val sql = "SELECT $identity, workspace_key, schema_version, revision, item_count, $timestamp, " +
             "CAST(app_data_json AS BLOB) AS app_data_json, sha256, envelope_sha256 " +
-            "FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid"
+            "FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder"
         var bytes = 0L
         // This public API uses the same thread's already-pinned transaction.
         // It avoids CursorWindow copies and never opens another SQLite connection.
@@ -342,6 +348,52 @@ private object NativeSnapshotVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api35_snapshot_scan_is_indexed_and_visits_every_workspace_row() {
+        assert!(WORKSPACE_READ.contains("INDEXED BY snapshot_history_workspace_time"));
+        assert!(WORKSPACE_READ.contains("created_at_epoch_millis DESC, id DESC"));
+        assert!(!WORKSPACE_READ.contains(
+            "FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid"
+        ));
+        let database = rusqlite::Connection::open_in_memory().unwrap();
+        database.execute_batch(
+            "CREATE TABLE snapshot_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_key TEXT NOT NULL,
+                created_at_epoch_millis INTEGER NOT NULL
+            );
+            CREATE INDEX snapshot_history_workspace_time
+                ON snapshot_history(workspace_key, created_at_epoch_millis DESC, id DESC);"
+        ).unwrap();
+        for id in 0..1500 {
+            let workspace = if id % 73 == 0 { "target" } else { "unrelated" };
+            database.execute(
+                "INSERT INTO snapshot_history(workspace_key, created_at_epoch_millis) VALUES (?1, ?2)",
+                rusqlite::params![workspace, (id % 7) as i64]
+            ).unwrap();
+        }
+        let old = "SELECT id FROM snapshot_history NOT INDEXED WHERE workspace_key = ?1 ORDER BY rowid";
+        let fast = "SELECT id FROM snapshot_history INDEXED BY snapshot_history_workspace_time
+            WHERE workspace_key = ?1 ORDER BY created_at_epoch_millis DESC, id DESC";
+        let ids = |sql: &str| -> std::collections::BTreeSet<i64> {
+            let mut statement = database.prepare(sql).unwrap();
+            let mapped = statement.query_map(["target"], |row| row.get::<_, i64>(0)).unwrap();
+            mapped.collect::<Result<_, _>>().unwrap()
+        };
+        let baseline = ids(old);
+        assert_eq!(baseline.len(), 21);
+        assert_eq!(baseline, ids(fast));
+
+        let mut explain = database.prepare(&format!("EXPLAIN QUERY PLAN {fast}")).unwrap();
+        let details: Vec<String> = explain.query_map(["target"], |row| row.get(3))
+            .unwrap().collect::<Result<_, _>>().unwrap();
+        assert!(details.iter().any(|line| line.contains(
+            "USING COVERING INDEX snapshot_history_workspace_time")), "{details:?}");
+        assert!(!details.iter().any(|line| line.contains("SCAN snapshot_history")
+            || line.contains("USE TEMP B-TREE")), "{details:?}");
+    }
+
 
     #[test]
     fn bounded_buffers_and_completion_order_are_used_by_generated_android() {
