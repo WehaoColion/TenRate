@@ -51,16 +51,21 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 + start;
             let old = source[start..end].to_owned();
             let mut new = old.clone();
+            // Do not hash every historical payload before even reaching the
+            // authenticated current row; the normal history path still does.
+            replace(&mut new,
+                "        quarantineDigestMismatches(workspaceKey, includeHistory = true)",
+                "        val currentOnlyStartup = skipVerifiedHistory != null &&\n            snapshotReadWindow.get()?.hasCurrentOnlyReceipt(workspaceKey, snapshotWriteStamp()) == true\n        quarantineDigestMismatches(workspaceKey, includeHistory = !currentOnlyStartup)")?;
             replace(&mut new,
                 "        database.visitSnapshotRows(\n            HISTORY_TABLE,",
-                "        // The current must have decoded successfully in the repository.\n        // A missing/corrupt/future current still takes the complete recovery path.\n        if (snapshotReadWindow.get()?.canSkipVerifiedHistory(\n                workspaceKey, snapshotWriteStamp(), skipVerifiedHistory?.invoke() == true\n            ) == true) return\n        database.visitSnapshotRows(\n            HISTORY_TABLE,")?;
+                "        // The current must have decoded successfully in the repository.\n        // A missing/corrupt/future current still takes the complete recovery path.\n        if (snapshotReadWindow.get()?.canSkipVerifiedHistory(\n                workspaceKey, snapshotWriteStamp(), skipVerifiedHistory?.invoke() == true\n            ) == true) return\n        if (currentOnlyStartup) quarantineDigestMismatches(workspaceKey, includeHistory = true)\n        database.visitSnapshotRows(\n            HISTORY_TABLE,")?;
             replace(&mut source, &old, &new)?;
             replace(&mut source,
                 "    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()",
                 &format!("{WORKSPACE_READ}\n    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()"))?;
             replace(&mut source,
                 "internal class SnapshotVerificationWindow {",
-                "internal class SnapshotVerificationWindow {\n    private var nativeHistoryReceipt: Pair<String, Any>? = null\n    private var nativeCurrentReceipt: Pair<String, Any>? = null\n\n    fun recordNativeHistory(workspace: String, stamp: Any) {\n        record(workspace, true, stamp)\n        nativeHistoryReceipt = workspace to stamp\n    }\n\n    fun recordNativeCurrent(workspace: String, stamp: Any) {\n        record(workspace, false, stamp)\n        nativeCurrentReceipt = workspace to stamp\n    }\n\n    fun hasFullHistoryReceipt(workspace: String, stamp: Any): Boolean =\n        nativeHistoryReceipt == (workspace to stamp) && covers(workspace, true, stamp)\n\n    fun canSkipVerifiedHistory(workspace: String, stamp: Any, acceptedCurrent: Boolean): Boolean =\n        acceptedCurrent && (hasFullHistoryReceipt(workspace, stamp) ||\n            nativeCurrentReceipt == (workspace to stamp) && covers(workspace, false, stamp))\n")?;
+                "internal class SnapshotVerificationWindow {\n    private var nativeHistoryReceipt: Pair<String, Any>? = null\n    private var nativeCurrentReceipt: Pair<String, Any>? = null\n\n    fun recordNativeHistory(workspace: String, stamp: Any) {\n        record(workspace, true, stamp)\n        nativeHistoryReceipt = workspace to stamp\n    }\n\n    fun recordNativeCurrent(workspace: String, stamp: Any) {\n        record(workspace, false, stamp)\n        nativeCurrentReceipt = workspace to stamp\n    }\n\n    fun hasFullHistoryReceipt(workspace: String, stamp: Any): Boolean =\n        nativeHistoryReceipt == (workspace to stamp) && covers(workspace, true, stamp)\n\n    fun hasCurrentOnlyReceipt(workspace: String, stamp: Any): Boolean =\n        nativeCurrentReceipt == (workspace to stamp) && covers(workspace, false, stamp)\n\n    fun canSkipVerifiedHistory(workspace: String, stamp: Any, acceptedCurrent: Boolean): Boolean =\n        acceptedCurrent && (hasFullHistoryReceipt(workspace, stamp) ||\n            nativeCurrentReceipt == (workspace to stamp) && covers(workspace, false, stamp))\n")?;
             source.push_str(NATIVE_BRIDGE);
             source.push_str(VERIFICATION_PIPELINE);
         }
@@ -465,6 +470,9 @@ mod tests {
         assert!(source.contains("verifyNativeSnapshotRows(workspaceKey, currentOnly = true)"));
         assert!(source.contains("historyRequiresFullStartupScan(workspaceKey)"));
         assert!(source.contains("nativeCurrentReceipt == (workspace to stamp)"));
+        assert!(source.contains("val currentOnlyStartup = skipVerifiedHistory != null"));
+        assert!(source.contains("quarantineDigestMismatches(workspaceKey, includeHistory = !currentOnlyStartup)"));
+        assert!(source.contains("if (currentOnlyStartup) quarantineDigestMismatches(workspaceKey, includeHistory = true)"));
         assert!(source.contains("nativeHistoryReceipt == (workspace to stamp)"));
         assert!(source.contains("fun verifiedReadHasFullHistoryReceipt("));
         assert!(source.contains("val tables = if (currentOnly) arrayOf(CURRENT_TABLE)"));
