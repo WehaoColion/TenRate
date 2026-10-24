@@ -764,6 +764,11 @@ impl TimerWindowsClient {
         {
             if ctx.input_mut(|i| i.consume_key(command, key)) {
                 self.switch_tab(tab);
+                // The dedicated Ctrl+4 shortcut keeps its existing risk-overview
+                // destination; clicking the Finance navigation now opens day ledger.
+                if tab == AppTab::Finance && self.tab == AppTab::Finance {
+                    self.finance_workbench.tab = 5;
+                }
             }
         }
         if ctx.input_mut(|i| i.consume_key(command, egui::Key::S)) {

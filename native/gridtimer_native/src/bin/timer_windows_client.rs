@@ -4126,15 +4126,26 @@ impl TimerWindowsClient {
                     return;
                 }
             };
-            next = app_data::import_note_image_attachment_app_data_json(
+            let updated = app_data::import_note_image_attachment_app_data_json(
                 &next,
                 &note_id,
                 &attachment_json,
                 now_millis(),
             );
+            let Some(updated) = updated else {
+                let mut message = "图片元数据不符合工作区约束，本批次没有保存".to_string();
+                for item in &staged {
+                    if let Err(rollback) = store.cancel_import(item) {
+                        message = append_status(message, format!("媒体回滚已留下持久阻断：{rollback}"));
+                    }
+                }
+                self.status = message;
+                return;
+            };
+            next = updated;
         }
         let status = format!("已导入 {} 张图片，正在核对保存", staged.len());
-        match self.replace_state_outcome(next, &status) {
+        match self.replace_state_outcome(Some(next), &status) {
             StateReplaceOutcome::NotCommitted => {
                 for item in &staged {
                     if let Err(error) = store.cancel_import(item) {
