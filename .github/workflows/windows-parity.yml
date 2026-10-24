@@ -1,0 +1,25 @@
+name: Windows parity checks
+on:
+  pull_request:
+    paths:
+      - 'native/gridtimer_native/**'
+      - '.github/workflows/windows-parity.yml'
+  workflow_dispatch:
+jobs:
+  windows:
+    name: Desktop build and regression
+    runs-on: windows-latest
+    timeout-minutes: 100
+    defaults:
+      run:
+        working-directory: native/gridtimer_native
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure stable Rust
+        run: rustup update stable
+      - name: Compile Windows client
+        run: cargo check --locked --features desktop --bin timer_windows_client
+      - name: Test Windows client
+        run: cargo test --locked --features desktop --bin timer_windows_client --no-fail-fast
+      - name: Test shared core
+        run: cargo test --locked --features desktop --lib --no-fail-fast

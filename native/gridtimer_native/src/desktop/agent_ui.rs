@@ -250,6 +250,8 @@ impl TimerWindowsClient {
             return;
         }
         self.desktop_agent.step = 0;
+        self.desktop_agent.question.clear();
+        self.desktop_agent.filter.clear();
         self.desktop_agent.confirm_discard = false;
         self.desktop_agent.priority_note_id = priority_note_id.clone();
         self.desktop_agent.selected_ids.clear();
