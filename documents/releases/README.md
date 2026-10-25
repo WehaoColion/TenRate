@@ -1,3 +1,5 @@
+Android 2.23.2.56 便签默认进入编辑状态候选：[说明](android/release_notes_v2.23.2.56.md)。
+
 Windows 1.1.0.9 安卓近期功能对齐源码候选：[说明](windows/release_notes_v1.1.0.9.md)。
 
 Android 2.23.2.55 冷启动可信当前快照优先读取候选：[说明](android/release_notes_v2.23.2.55.md)。

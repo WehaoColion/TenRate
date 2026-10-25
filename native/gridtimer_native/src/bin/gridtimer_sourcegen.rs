@@ -1,3 +1,4 @@
+// v2.23.2.56 - Open existing sticky notes in editable source by default.
 // v2.23.2.6 - Generate offline Markdown and formula reading with safe render boundaries.
 // v2.23.2.3 - Generate usable AI entry points, request boundaries and safe sync failures.
 // v2.23.2.2 - Generate Android AI connection state and business tests.
@@ -44,6 +45,8 @@ mod android_document_collection_work;
 mod android_document_exit_feedback;
 #[path = "../sourcegen/android_document_markdown.rs"]
 mod android_document_markdown;
+#[path = "../sourcegen/android_sticky_edit_first.rs"]
+mod android_sticky_edit_first;
 #[path = "../sourcegen/android_document_transition.rs"]
 mod android_document_transition;
 #[path = "../sourcegen/android_finance_workspace.rs"]
@@ -794,6 +797,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_finance_workspace::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_markdown::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_sticky_edit_first::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_exit_feedback::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

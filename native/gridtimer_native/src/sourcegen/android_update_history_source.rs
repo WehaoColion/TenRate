@@ -1,3 +1,4 @@
+// v2.23.2.56 - Open sticky notes directly in edit mode.
 // v2.23.2.55 - Load verified current quickly while retaining historical recovery safeguards.
 // v2.23.2.54 - Reduce account history scan during note persistence.
 // v2.23.2.53 - Restore image-after-block editing and in-app release history.
@@ -46,7 +47,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.55";
+pub const LATEST_VERSION: &str = "2.23.2.56";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -76,6 +77,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.56",
+        updatedAt = "2026-10-25 15:40",
+        summary = "便签打开即显示可编辑原文，排版预览改为手动开启",
+        sections = listOf(
+            AndroidUpdateSection("打开便签", listOf(
+                "已有 Markdown 便签与新建便签统一进入原文编辑界面，不再先显示渲染内容。",
+                "从便签列表退出后重新打开仍以编辑界面开始；预览模式不跨打开过程记忆。"
+            )),
+            AndroidUpdateSection("预览与兼容", listOf(
+                "仍可点击预览公式与排版，之后点击编辑原文返回；历史版本仍按只读方式查看。",
+                "保存、防丢草稿、同步、版本记录与加密保护路径均不更改。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.55",
         updatedAt = "2026-10-25 03:01",
