@@ -1,3 +1,4 @@
+// v2.23.2.57 - Draw the startup workspace immediately while verified data restores.
 // v2.23.2.56 - Open sticky notes in editable mode; preview only on request.
 // v2.23.2.54 - Optimize account-scoped save preflight reads.
 // v2.23.2.53 - Allow inserting a block directly after imported images.
@@ -164,8 +165,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22325
-        versionName '2.23.2.56'
+        versionCode 22326
+        versionName '2.23.2.57'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

@@ -115,6 +115,8 @@ mod android_startup_decode;
 mod android_startup_loading;
 #[path = "../sourcegen/android_startup_stream.rs"]
 mod android_startup_stream;
+#[path = "../sourcegen/android_startup_shell.rs"]
+mod android_startup_shell;
 #[path = "../sourcegen/android_sync_failure.rs"]
 mod android_sync_failure;
 #[path = "../sourcegen/android_test_fixes.rs"]
@@ -499,6 +501,8 @@ fn run() -> io::Result<()> {
         let rendered = android_local_read_efficiency::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_image_import_performance::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_startup_shell::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
