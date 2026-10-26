@@ -473,6 +473,10 @@ fn run() -> io::Result<()> {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_startup_stream::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        // Consume the verified hydration guard before later screen rewrites
+        // change the exact textual anchors of the startup loader.
+        let rendered = android_startup_shell::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_history_storage::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_startup_decode::render(source.path, &rendered)
@@ -501,8 +505,6 @@ fn run() -> io::Result<()> {
         let rendered = android_local_read_efficiency::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_image_import_performance::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_startup_shell::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
