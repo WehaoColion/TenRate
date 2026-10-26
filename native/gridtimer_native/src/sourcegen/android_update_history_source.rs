@@ -1,3 +1,4 @@
+// v2.23.2.57 - Show an interactive workbench shell while verified data loads.
 // v2.23.2.56 - Open sticky notes directly in edit mode.
 // v2.23.2.55 - Load verified current quickly while retaining historical recovery safeguards.
 // v2.23.2.54 - Reduce account history scan during note persistence.
@@ -47,7 +48,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.56";
+pub const LATEST_VERSION: &str = "2.23.2.57";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -77,6 +78,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.57",
+        updatedAt = "2026-10-26 08:04",
+        summary = "先显示工作台，继续在后台安全恢复本机数据",
+        sections = listOf(
+            AndroidUpdateSection("首屏与导航", listOf(
+                "启动后立即显示计时、便签、知识和记账的工作台框架，避免全屏等待本机数据恢复。",
+                "等待时可以查看工作台栏目；数据认证完成后，自动进入包含真实内容的主界面。"
+            )),
+            AndroidUpdateSection("后台恢复与数据安全", listOf(
+                "快照校验、历史恢复和草稿修复继续后台执行，不会因页面先显示而取消。",
+                "在真实账号数据认证前不开放持久化操作，防止默认空状态影响历史记录。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.56",
         updatedAt = "2026-10-25 15:40",
