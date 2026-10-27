@@ -1,3 +1,5 @@
+Android 2.23.2.57 启动优先呈现工作台界面、数据继续后台恢复候选：[说明](android/release_notes_v2.23.2.57.md)。
+
 Android 2.23.2.56 便签默认进入编辑状态候选：[说明](android/release_notes_v2.23.2.56.md)。
 
 Windows 1.1.0.9 安卓近期功能对齐源码候选：[说明](windows/release_notes_v1.1.0.9.md)。

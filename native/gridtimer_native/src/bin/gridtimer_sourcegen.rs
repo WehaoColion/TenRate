@@ -115,6 +115,8 @@ mod android_startup_decode;
 mod android_startup_loading;
 #[path = "../sourcegen/android_startup_stream.rs"]
 mod android_startup_stream;
+#[path = "../sourcegen/android_startup_shell.rs"]
+mod android_startup_shell;
 #[path = "../sourcegen/android_sync_failure.rs"]
 mod android_sync_failure;
 #[path = "../sourcegen/android_test_fixes.rs"]
@@ -470,6 +472,10 @@ fn run() -> io::Result<()> {
         let rendered = android_rest_bell::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_startup_stream::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        // Consume the verified hydration guard before later screen rewrites
+        // change the exact textual anchors of the startup loader.
+        let rendered = android_startup_shell::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_history_storage::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

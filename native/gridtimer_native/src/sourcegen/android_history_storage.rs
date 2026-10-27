@@ -22,8 +22,8 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     if path == "com/ofairyo/gridtimer/ui/GridTimerScreen.kt" {
         replace(
             &mut source,
-            "    androidx.activity.compose.ReportDrawnWhen { initialized }",
-            r#"    androidx.activity.compose.ReportDrawnWhen { initialized }
+            "    androidx.activity.compose.ReportDrawnWhen { true }",
+            r#"    androidx.activity.compose.ReportDrawnWhen { true }
     val loadingGateStarted = androidx.compose.runtime.remember {
         if (initialized) null else android.os.SystemClock.elapsedRealtime()
     }
