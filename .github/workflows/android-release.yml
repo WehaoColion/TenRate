@@ -2,7 +2,7 @@ name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57]
+    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, perf/android-progressive-timer-ready-v2.23.2.58]
   workflow_dispatch:
 
 permissions:
@@ -176,7 +176,7 @@ jobs:
   publish-candidate:
     name: Publish signed prerelease
     needs: release
-    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57'
+    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57' || github.ref == 'refs/heads/perf/android-progressive-timer-ready-v2.23.2.58'
     runs-on: ubuntu-latest
     permissions:
       actions: read
