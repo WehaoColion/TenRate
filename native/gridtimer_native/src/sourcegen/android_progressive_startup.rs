@@ -34,10 +34,12 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 _timerStartupReady.value = true
                 android.util.Log.i("StartupLatency", "timerReady after durable hydrate")
             }"####)?;
+            // Workspace-aware signatures were added by android_timer_action.
+            // Retain its account guard immediately after the hydration wait.
             for old in [
-                "    suspend fun startSlot(slotId: Int) {\n        awaitInitialized()",
-                "    suspend fun pauseSlots(slotIds: Collection<Int>) {\n        awaitInitialized()",
-                "    suspend fun resetSlot(slotId: Int) {\n        awaitInitialized()",
+                "    suspend fun startSlot(slotId: Int, expectedWorkspaceKey: String = currentWorkspaceKey()) {\n        awaitInitialized()\n        if (activeWorkspaceKey != expectedWorkspaceKey) return",
+                "    suspend fun pauseSlots(slotIds: Collection<Int>, expectedWorkspaceKey: String = currentWorkspaceKey()) {\n        awaitInitialized()\n        if (activeWorkspaceKey != expectedWorkspaceKey) return",
+                "    suspend fun resetSlot(slotId: Int, expectedWorkspaceKey: String = currentWorkspaceKey()) {\n        awaitInitialized()\n        if (activeWorkspaceKey != expectedWorkspaceKey) return",
             ] {
                 replace(&mut source, old, &old.replace(
                     "        awaitInitialized()",
@@ -152,9 +154,9 @@ mod tests {
                 durableForMediaPrune = flushPersistLocked(resolved)
             }"####);
         for action in [
-            "    suspend fun startSlot(slotId: Int) {\n        awaitInitialized()",
-            "    suspend fun pauseSlots(slotIds: Collection<Int>) {\n        awaitInitialized()",
-            "    suspend fun resetSlot(slotId: Int) {\n        awaitInitialized()",
+            "    suspend fun startSlot(slotId: Int, expectedWorkspaceKey: String = currentWorkspaceKey()) {\n        awaitInitialized()\n        if (activeWorkspaceKey != expectedWorkspaceKey) return",
+            "    suspend fun pauseSlots(slotIds: Collection<Int>, expectedWorkspaceKey: String = currentWorkspaceKey()) {\n        awaitInitialized()\n        if (activeWorkspaceKey != expectedWorkspaceKey) return",
+            "    suspend fun resetSlot(slotId: Int, expectedWorkspaceKey: String = currentWorkspaceKey()) {\n        awaitInitialized()\n        if (activeWorkspaceKey != expectedWorkspaceKey) return",
         ] {
             repo.push('\n');
             repo.push_str(action);
@@ -165,6 +167,8 @@ mod tests {
         assert!(source.contains("futureSchemaVersion == null"));
         assert!(source.contains("persistenceWriteBlockedReason == null"));
         assert_eq!(source.matches("if (!_timerStartupReady.value) awaitInitialized()").count(), 3);
+        // Switching accounts still rejects stale timer commands.
+        assert_eq!(source.matches("if (activeWorkspaceKey != expectedWorkspaceKey) return").count(), 3);
         assert!(render(REPOSITORY, &repo.replace(
             "flushPersistLocked(resolved)", "false")).is_err());
     }
