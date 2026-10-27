@@ -1,3 +1,4 @@
+// v2.23.2.58 - Use safely hydrated timers before final startup maintenance.
 // v2.23.2.57 - Show an interactive workbench shell while verified data loads.
 // v2.23.2.56 - Open sticky notes directly in edit mode.
 // v2.23.2.55 - Load verified current quickly while retaining historical recovery safeguards.
@@ -48,7 +49,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.57";
+pub const LATEST_VERSION: &str = "2.23.2.58";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -78,6 +79,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.58",
+        updatedAt = "2026-10-27 08:20",
+        summary = "计时安全恢复后即可使用，其余模块继续后台准备",
+        sections = listOf(
+            AndroidUpdateSection("计时优先可用", listOf(
+                "启动工作台在真实计时数据完成快照校验、草稿修复及安全落盘后显示可操作的计时格子。",
+                "计时开始或暂停不再被后续启动清理阻塞，仍保持原有工作区写入锁。"
+            )),
+            AndroidUpdateSection("数据安全与范围", listOf(
+                "读取失败、落盘失败或不支持的数据格式均不提前开放计时写入。",
+                "便签与知识库仍共享当前持久化快照，完整磁盘数据拆分仍需后续改造。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.57",
         updatedAt = "2026-10-26 08:04",
