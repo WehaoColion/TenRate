@@ -1,3 +1,4 @@
+// v2.23.2.58 Android - Unlock verified timers before non-timer startup maintenance.
 // v2.23.2.57 Android - Show the workspace shell while account data restores.
 // v2.23.2.56 Android - Open sticky note in editable source by default.
 // v2.23.2.55 Android - Align verified-current cold-start APK identity.
@@ -116,8 +117,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.9";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.2.57";
-pub const ANDROID_VERSION_CODE: i32 = 22326;
+pub const ANDROID_APP_VERSION: &str = "2.23.2.58";
+pub const ANDROID_VERSION_CODE: i32 = 22327;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
