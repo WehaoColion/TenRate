@@ -56,7 +56,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             // durable save / blank-deletion path below this early return.
             replace_exact(
                 &mut source,
-                "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !blankDraftDeleted.value",
+                "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry && !hasHierarchyChildren && latestNote.document.knowledge == null &&\n            !blankDraftDeleted.value",
                 "        // Unchanged navigation does not request deletion of a blank page.\n        val visitNeedsBlankDeletion = false"
             )?;
         }
@@ -105,13 +105,26 @@ internal fun StickyNoteStudioSheet() {
 
     #[test]
     fn existing_and_new_untouched_blank_pages_can_exit_without_deletion() {
-        let base = "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !blankDraftDeleted.value";
+        let base = "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry && !hasHierarchyChildren && latestNote.document.knowledge == null &&\n            !blankDraftDeleted.value";
         let result = render(DOCUMENT, base).unwrap();
         assert!(result.contains("val visitNeedsBlankDeletion = false"));
         assert!(!result.contains("!blankDraftDeleted.value"));
         // The session's independent content, edit-generation and pending-write
         // checks still reject any modified/reverted/undurable draft.
         assert!(!result.contains("onComplete(true)"));
+    }
+
+    #[test]
+    fn hierarchy_guard_must_run_before_blank_exit_override() {
+        // The hierarchy generator owns the original blank-deletion anchor.
+        // Applying this pass first used to make signed APK generation fail.
+        let generator = include_str!("../bin/gridtimer_sourcegen.rs");
+        let hierarchy = generator.find("let contents = android_knowledge_hierarchy_ui::render(relative_path, &contents)")
+            .expect("hierarchy source transform registered");
+        let blank = generator.find("let contents = android_blank_document_lifecycle::render(relative_path, &contents)")
+            .expect("blank page transform registered");
+        assert!(hierarchy < blank);
+        assert!(render(DOCUMENT, "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !blankDraftDeleted.value").is_err());
     }
 
     #[test]
