@@ -1,3 +1,5 @@
+// v1.1.0.10 Windows - Recognize verified image import placeholders in desktop attachment audits.
+// v1.1.0.9 Windows - Accept Android image import placeholders during sync.
 // v1.1.0.8 Windows - Complete desktop knowledge, Agent and legal workflow parity.
 // v2.23.2.35 Android - Bound redundant work while preserving durable exit saves.
 // v2.23.2.33 Android - Compact knowledge page controls.
@@ -101,7 +103,7 @@
 // v2.22.41 Android - Protect newer note generations during privacy cleanup.
 // v2.22.39 - Complete Windows usability, save feedback, and release acceptance.
 
-pub const WINDOWS_APP_VERSION: &str = "1.1.0.8";
+pub const WINDOWS_APP_VERSION: &str = "1.1.0.10";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
 pub const ANDROID_APP_VERSION: &str = "2.23.2.35";
 pub const ANDROID_VERSION_CODE: i32 = 22304;
@@ -135,9 +137,9 @@ pub const PRODUCT: ProductIdentity = ProductIdentity {
     runtime_log_dir: "GridTimerClientRuntime",
 };
 
-pub const WINDOWS_CLIENT_TITLE: &str = "十倍率 Windows v1.1.0.8";
-pub const SYNC_LAUNCHER_FILE_NAME: &str = "grid_timer_sync_launcher_v1.1.0.8.exe";
-pub const SYNC_SERVER_FILE_NAME: &str = "grid_timer_sync_server_v1.1.0.8.exe";
+pub const WINDOWS_CLIENT_TITLE: &str = "十倍率 Windows v1.1.0.10";
+pub const SYNC_LAUNCHER_FILE_NAME: &str = "grid_timer_sync_launcher_v1.1.0.10.exe";
+pub const SYNC_SERVER_FILE_NAME: &str = "grid_timer_sync_server_v1.1.0.10.exe";
 pub const RELEASE_MANIFEST_FILE_NAME: &str = "release_manifest.json";
 
 pub const BUILD_GIT_COMMIT: &str = match option_env!("GRIDTIMER_GIT_COMMIT") {
