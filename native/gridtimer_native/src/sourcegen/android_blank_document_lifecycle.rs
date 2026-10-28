@@ -118,9 +118,11 @@ internal fun StickyNoteStudioSheet() {
     fn missing_or_ambiguous_anchors_fail_closed() {
         assert!(render(STUDIO, "a different screen").is_err());
         assert!(render(DOCUMENT, "a different editor").is_err());
-        let repeated = studio_sample().replace(
-            "                        viewModel.upsertNoteAndFlushResult(",
-            "                        viewModel.upsertNoteAndFlushResult(\n                        viewModel.upsertNoteAndFlushResult("
+        let anchor = "                        viewModel.upsertNoteAndFlushResult(\n                            note = freshNote,";
+        let repeated = studio_sample().replacen(
+            anchor,
+            &format!("{anchor}\n{anchor}"),
+            1
         );
         assert!(render(STUDIO, &repeated).is_err());
         assert_eq!(render("other/file.kt", "untouched").unwrap(), "untouched");
