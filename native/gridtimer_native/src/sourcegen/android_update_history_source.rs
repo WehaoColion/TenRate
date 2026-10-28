@@ -1217,10 +1217,11 @@ mod tests {
             &previous[..3],
             "release prefix must remain fixed"
         );
-        assert_eq!(
-            latest[3].checked_sub(1),
-            Some(previous[3]),
-            "previous release must precede the current fourth segment"
+        // Candidate releases can be prepared on independent PR branches; the
+        // preceding merged version need not be numerically adjacent.
+        assert!(
+            latest[3] > previous[3],
+            "previous merged release must be older than the current candidate"
         );
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
