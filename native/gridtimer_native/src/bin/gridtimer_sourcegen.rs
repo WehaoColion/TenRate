@@ -812,8 +812,6 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_transition::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let contents = android_blank_document_lifecycle::render(relative_path, &contents)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_collection_work::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_block_alignment::render(relative_path, &contents)
@@ -821,6 +819,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_knowledge_navigation::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_knowledge_hierarchy_ui::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_blank_document_lifecycle::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_note_save_failure::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
