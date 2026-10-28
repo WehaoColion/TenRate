@@ -1,3 +1,4 @@
+// v2.23.2.60 - Avoid redundant retained-media scans during account sync.
 // v2.22.40 - Keep startup truthful and avoid full historical timer decoding for media retention.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
 const SCREEN: &str = "com/ofairyo/gridtimer/ui/GridTimerScreen.kt";
@@ -133,6 +134,24 @@ internal fun snapshotFutureSchema(raw: String, verifiedDeclaredVersion: Int? = n
     }.getOrNull()
     return maxOf(rawVersion ?: APP_DATA_SCHEMA_VERSION, verifiedDeclaredVersion ?: APP_DATA_SCHEMA_VERSION)
         .takeIf { it > APP_DATA_SCHEMA_VERSION }
+}
+
+// Fail closed whenever a previous state is unavailable or a deletion/recovery
+// requires reconciliation. File names are the ownership keys used by pruning.
+internal fun shouldPruneSyncNoteMedia(before: AppData?, after: AppData?, reconcileDeletions: Boolean): Boolean {
+    if (before == null || after == null || reconcileDeletions) return true
+    fun AppData.retainedMediaNames(): Set<String> = notes.asSequence().flatMap { note ->
+        sequence {
+            yieldAll(note.attachments)
+            note.revisions.forEach { yieldAll(it.attachments) }
+            note.versions.forEach { yieldAll(it.attachments) }
+        }
+    }.map(NoteAttachment::fileName).filter(String::isNotBlank).toSet()
+    val deletionTypes = setOf(TOMBSTONE_ENTITY_NOTE, TOMBSTONE_ENTITY_NOTE_ATTACHMENT, TOMBSTONE_ENTITY_NOTE_MEDIA)
+    val previousDeletions = before.tombstones.filter { it.entityType in deletionTypes }.toSet()
+    if (after.tombstones.any { it.entityType in deletionTypes && it !in previousDeletions }) return true
+    val remaining = after.retainedMediaNames()
+    return before.retainedMediaNames().any { it !in remaining }
 }
 
 internal fun snapshotMediaReferences(raw: String): List<NoteAttachment> {

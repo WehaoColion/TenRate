@@ -1093,6 +1093,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NoteEditorExitSaveGateTest {
+    @Test fun untouchedBlankVisitAvoidsIOButExplicitDeletionMustNotBeSkipped() {
+        val gate = NoteEditorExitSaveGate<String>()
+        // New and already persisted untouched blanks pass requiresBlankDeletion=false.
+        assertTrue(gate.canLeaveUnmodified("blank", "blank", 0L, false, true, false))
+        // An explicit deletion still requires a real write, never a fake receipt.
+        assertFalse(gate.canLeaveUnmodified("blank", "blank", 0L, true, true, false))
+        assertFalse(gate.canLeaveUnmodified("blank", "edited", 0L, false, true, false))
+        assertFalse(gate.canLeaveUnmodified("blank", "blank", 1L, false, true, false))
+    }
+
     @Test fun unmodifiedFirstVisitNeedsNoDurableReceipt() {
         val gate = NoteEditorExitSaveGate<String>()
         assertFalse(gate.isDurableAtEpoch(100L))

@@ -1,3 +1,4 @@
+// v2.23.2.60 - Exercise sync media-pruning ownership boundaries.
 // v2.22.49.2 - Cover encrypted-note unlock cancellation and account isolation.
 // v2.22.49.1 - Cover published/cold-start phase bells and collector handoff.
 // v2.22.49 - Require every asynchronous verdict and join workers before startup recovery.
@@ -1076,6 +1077,32 @@ class TenfoldEditingTest {
         mutex.unlock()
         val failure = task.await().exceptionOrNull()
         assertTrue(failure is IllegalStateException)
+    }
+
+    @Test fun syncPruningTracksAllRetainedAttachmentOwnersAndFailsClosed() {
+        val current = NoteAttachment(id = "current", fileName = "current.png")
+        val revision = NoteAttachment(id = "revision", fileName = "revision.png")
+        val version = NoteAttachment(id = "version", fileName = "version.png")
+        val note = NoteEntry(id = "note", attachments = listOf(current),
+            revisions = listOf(NoteRevisionSnapshot(attachments = listOf(revision))),
+            versions = listOf(NoteVersionSnapshot(attachments = listOf(version))))
+        val before = AppData(notes = listOf(note))
+        val extended = before.copy(notes = listOf(note.copy(
+            attachments = listOf(current.copy(sha256 = "new-metadata"),
+                NoteAttachment(id = "added", fileName = "added.png")))))
+        assertFalse(shouldPruneSyncNoteMedia(before, extended, false))
+        assertFalse(shouldPruneSyncNoteMedia(before, before, false))
+        assertTrue(shouldPruneSyncNoteMedia(before, before.copy(notes = listOf(note.copy(attachments = emptyList()))), false))
+        assertTrue(shouldPruneSyncNoteMedia(before, before.copy(notes = listOf(note.copy(revisions = emptyList()))), false))
+        assertTrue(shouldPruneSyncNoteMedia(before, before.copy(notes = listOf(note.copy(versions = emptyList()))), false))
+        assertTrue(shouldPruneSyncNoteMedia(null, before, false))
+        assertTrue(shouldPruneSyncNoteMedia(before, null, false))
+        assertTrue(shouldPruneSyncNoteMedia(before, before, true))
+        val deletion = DataTombstone(entityType = TOMBSTONE_ENTITY_NOTE_MEDIA, entityId = "old", deletedAtEpochMillis = 1L)
+        assertTrue(shouldPruneSyncNoteMedia(before, before.copy(tombstones = listOf(deletion)), false))
+        val duplicateOwner = before.copy(notes = before.notes + NoteEntry(id = "other", attachments = listOf(current)))
+        val stillOwned = duplicateOwner.copy(notes = listOf(note.copy(attachments = emptyList()), duplicateOwner.notes[1]))
+        assertFalse(shouldPruneSyncNoteMedia(duplicateOwner, stillOwned, false))
     }
 
     @Test fun projectedMediaMatchesFullDecodeAcrossAllRetainedVersions() {

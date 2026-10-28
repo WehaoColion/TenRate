@@ -1,3 +1,7 @@
+Android 2.23.2.60 同步历史附件检查优化候选：[说明](android/release_notes_v2.23.2.60.md)。
+
+Android 2.23.2.59 空白知识页退出优化候选：[说明](android/release_notes_v2.23.2.59.md)。
+
 Android 2.23.2.58 已恢复计时优先使用候选：[说明](android/release_notes_v2.23.2.58.md)。
 
 Android 2.23.2.57 启动优先呈现工作台界面、数据继续后台恢复候选：[说明](android/release_notes_v2.23.2.57.md)。

@@ -1,4 +1,6 @@
+// v2.23.2.60 - Reduce unnecessary retained-media scans during sync.
 // v2.23.2.58 - Use safely hydrated timers before final startup maintenance.
+// v2.23.2.59 - Do not save untouched newly created blank knowledge pages.
 // v2.23.2.57 - Show an interactive workbench shell while verified data loads.
 // v2.23.2.56 - Open sticky notes directly in edit mode.
 // v2.23.2.55 - Load verified current quickly while retaining historical recovery safeguards.
@@ -49,7 +51,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.58";
+pub const LATEST_VERSION: &str = "2.23.2.60";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -79,6 +81,35 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.60",
+        updatedAt = "2026-10-28 21:33",
+        summary = "减少同步时不必要的历史附件检查",
+        sections = listOf(
+            AndroidUpdateSection("同步处理", listOf(
+                "同步前后未移除附件时，不再反复遍历全部历史快照检查附件。",
+                "需要恢复或处理附件删除时，仍保留原有历史引用检查和数据保护。"
+            )),
+            AndroidUpdateSection("诊断", listOf(
+                "记录附件检查阶段，便于区分同步等待发生的位置。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "2.23.2.59",
+        updatedAt = "2026-10-28 19:57",
+        summary = "空白知识页无修改直接退出，不再误触发创建或删除",
+        sections = listOf(
+            AndroidUpdateSection("新建空白页", listOf(
+                "新建空白知识页仅保留在编辑会话中，不再立即执行整份工作区写入。",
+                "已有空白知识页打开后未修改就返回时，也不会自动删除原记录或触发无意义的恢复镜像写入。"
+            )),
+            AndroidUpdateSection("保存安全", listOf(
+                "一旦实际修改标题、正文或属性，仍使用原有草稿队列与可靠落盘逻辑。",
+                "非空模板、实际编辑后的退出保存、手动删除和跨账号保护保持不变。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.58",
         updatedAt = "2026-10-27 08:20",
@@ -1217,10 +1248,11 @@ mod tests {
             &previous[..3],
             "release prefix must remain fixed"
         );
-        assert_eq!(
-            latest[3].checked_sub(1),
-            Some(previous[3]),
-            "previous release must precede the current fourth segment"
+        // Candidate releases can be prepared on independent PR branches; the
+        // preceding merged version need not be numerically adjacent.
+        assert!(
+            latest[3] > previous[3],
+            "previous merged release must be older than the current candidate"
         );
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));

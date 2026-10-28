@@ -33,6 +33,8 @@ mod android_backup_availability;
 mod android_canvas_ui;
 #[path = "../sourcegen/android_device_timer_sync.rs"]
 mod android_device_timer_sync;
+#[path = "../sourcegen/android_blank_document_lifecycle.rs"]
+mod android_blank_document_lifecycle;
 #[path = "../sourcegen/android_document_block_alignment.rs"]
 mod android_document_block_alignment;
 #[path = "../sourcegen/android_document_caret.rs"]
@@ -119,6 +121,8 @@ mod android_startup_stream;
 mod android_startup_shell;
 #[path = "../sourcegen/android_progressive_startup.rs"]
 mod android_progressive_startup;
+#[path = "../sourcegen/android_sync_pruning.rs"]
+mod android_sync_pruning;
 #[path = "../sourcegen/android_sync_failure.rs"]
 mod android_sync_failure;
 #[path = "../sourcegen/android_test_fixes.rs"]
@@ -510,6 +514,8 @@ fn run() -> io::Result<()> {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_progressive_startup::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_sync_pruning::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
 
@@ -821,6 +827,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_knowledge_navigation::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_knowledge_hierarchy_ui::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_blank_document_lifecycle::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_note_save_failure::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
