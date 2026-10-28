@@ -1,6 +1,5 @@
-// v2.23.2.59 - A brand-new untouched blank knowledge page is a transient editor draft.
-// Do not queue a full-workspace creation write before its first real edit.
-// Existing pages and nonblank presets retain the verified durable-save path.
+// v2.23.2.59 - Untouched blank knowledge pages are read-only visits, not save/delete operations.
+// New blank pages remain transient until edited; existing blank pages remain intact.
 
 const STUDIO: &str = "com/ofairyo/gridtimer/ui/NoteStudioSheet.kt";
 const DOCUMENT: &str = "com/ofairyo/gridtimer/ui/NoteDocumentEditor.kt";
@@ -20,8 +19,8 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     let mut source = base.to_owned();
     match path {
         STUDIO => {
-            // Limit the change to the DOCUMENT studio. Sticky-note creation must
-            // continue using its existing synchronous admission and recovery policy.
+            // Only the knowledge-document studio is changed. Sticky notes must
+            // preserve their own creation/admission and recovery contract.
             let from = source.find("internal fun NoteStudioSheet(")
                 .ok_or("missing document studio")?;
             let until = source[from..].find("internal fun StickyNoteStudioSheet(")
@@ -37,7 +36,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             replace_exact(
                 &mut creation,
                 "                        viewModel.upsertNoteAndFlushResult(\n                            note = freshNote,",
-                "                        // New blank pages exist only in pendingCreatedNote until edited.\n                        // Otherwise opening and backing out causes two expensive full-snapshot writes.\n                        if (preset != NoteDraftPreset.BLANK) {\n                        viewModel.upsertNoteAndFlushResult(\n                            note = freshNote,"
+                "                        // A new blank page exists in pendingCreatedNote.\n                        // Do not commit a whole AppData snapshot just to show it.\n                        if (preset != NoteDraftPreset.BLANK) {\n                            viewModel.upsertNoteAndFlushResult(\n                            note = freshNote,"
             )?;
             replace_exact(
                 &mut creation,
@@ -45,27 +44,20 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "                        }\n                        }\n                    },"
             )?;
             studio.replace_range(create_from..create_until, &creation);
-            replace_exact(
-                &mut studio,
-                "                    note = documentNote,",
-                "                    note = documentNote,\n                    // A pending blank page was never submitted to the repository.\n                    // Revoke this fast path as soon as a real record is published.\n                    transientBlankAtEntry = pendingCreatedNote?.id == documentNote.id &&\n                        appData.notes.none { it.id == documentNote.id },"
-            )?;
             source.replace_range(from..until, &studio);
         }
         DOCUMENT => {
-            replace_exact(
-                &mut source,
-                "    onAskKnowledge: (NoteEntry) -> Unit = {}\n) {",
-                "    onAskKnowledge: (NoteEntry) -> Unit = {},\n    transientBlankAtEntry: Boolean = false\n) {"
-            )?;
-            // canLeaveUnmodified already proves zero accepted editor mutations,
-            // exact entry-content equality, matching workspace and no restore.
-            // The sole exception for ordinary blank pages is required deletion;
-            // a transient blank has no row to delete and must not enter the queue.
+            // Back is navigation, not an explicit request to delete an existing
+            // empty note. An untouched entry should never wait on another
+            // caller's IO or destructively delete its already persisted record.
+            // canLeaveUnmodified still requires matching content/workspace,
+            // editGeneration == 0, no pending persistence and no restore.
+            // Edited, reverted or modified documents retain the original
+            // durable save / blank-deletion path below this early return.
             replace_exact(
                 &mut source,
                 "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !blankDraftDeleted.value",
-                "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !transientBlankAtEntry && !blankDraftDeleted.value"
+                "        // Unchanged navigation does not request deletion of a blank page.\n        val visitNeedsBlankDeletion = false"
             )?;
         }
         _ => {}
@@ -90,7 +82,6 @@ mod tests {
                     },
                     onOpenNote = open@ { note ->
                     },
-                    note = documentNote,
 }
 internal fun StickyNoteStudioSheet() {
                         viewModel.upsertNoteAndFlushResult(
@@ -107,19 +98,19 @@ internal fun StickyNoteStudioSheet() {
         let doc = changed.split("internal fun StickyNoteStudioSheet()").next().unwrap();
         let sticky = changed.split("internal fun StickyNoteStudioSheet()").nth(1).unwrap();
         assert!(doc.contains("if (preset != NoteDraftPreset.BLANK) {"));
-        assert!(doc.contains("transientBlankAtEntry = pendingCreatedNote?.id == documentNote.id"));
-        assert!(doc.contains("appData.notes.none { it.id == documentNote.id }"));
+        assert!(doc.contains("pendingCreatedNote = freshNote"));
+        assert!(doc.contains("viewModel.upsertNoteAndFlushResult("));
         assert_eq!(sticky, original.split("internal fun StickyNoteStudioSheet()").nth(1).unwrap());
     }
 
     #[test]
-    fn document_exit_skips_storage_only_for_unpersisted_and_unmodified_visit() {
-        let base = "    onAskKnowledge: (NoteEntry) -> Unit = {}\n) {\n        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !blankDraftDeleted.value";
+    fn existing_and_new_untouched_blank_pages_can_exit_without_deletion() {
+        let base = "        val visitNeedsBlankDeletion = deleteBlankDraft && blankDraftDeletionEligibleAtEntry &&\n            !blankDraftDeleted.value";
         let result = render(DOCUMENT, base).unwrap();
-        assert!(result.contains("transientBlankAtEntry: Boolean = false"));
-        assert!(result.contains("!transientBlankAtEntry && !blankDraftDeleted.value"));
-        // An edited page still fails the existing canLeaveUnmodified gate and
-        // therefore reaches its durable commit/deletion path.
+        assert!(result.contains("val visitNeedsBlankDeletion = false"));
+        assert!(!result.contains("!blankDraftDeleted.value"));
+        // The session's independent content, edit-generation and pending-write
+        // checks still reject any modified/reverted/undurable draft.
         assert!(!result.contains("onComplete(true)"));
     }
 
@@ -128,8 +119,8 @@ internal fun StickyNoteStudioSheet() {
         assert!(render(STUDIO, "a different screen").is_err());
         assert!(render(DOCUMENT, "a different editor").is_err());
         let repeated = studio_sample().replace(
-            "                    note = documentNote,",
-            "                    note = documentNote,\n                    note = documentNote,"
+            "                        viewModel.upsertNoteAndFlushResult(",
+            "                        viewModel.upsertNoteAndFlushResult(\n                        viewModel.upsertNoteAndFlushResult("
         );
         assert!(render(STUDIO, &repeated).is_err());
         assert_eq!(render("other/file.kt", "untouched").unwrap(), "untouched");
