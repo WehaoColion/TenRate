@@ -1,3 +1,4 @@
+// v2.23.2.59 - Do not save untouched newly created blank knowledge pages.
 // v2.23.2.57 - Show an interactive workbench shell while verified data loads.
 // v2.23.2.56 - Open sticky notes directly in edit mode.
 // v2.23.2.55 - Load verified current quickly while retaining historical recovery safeguards.
@@ -48,7 +49,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.57";
+pub const LATEST_VERSION: &str = "2.23.2.59";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -78,6 +79,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.2.59",
+        updatedAt = "2026-10-28 19:57",
+        summary = "空白知识页进入退出不再等待无意义的完整保存",
+        sections = listOf(
+            AndroidUpdateSection("新建空白页", listOf(
+                "刚新建的空白知识页仅保留在当前编辑会话中，不再立即生成一次完整工作区持久写入。",
+                "没有输入或更改内容就返回时，直接关闭该临时页，不再排队执行空白页删除与恢复镜像写入。"
+            )),
+            AndroidUpdateSection("保存安全", listOf(
+                "一旦实际修改标题、正文或属性，仍使用原有草稿队列与可靠落盘逻辑。",
+                "已有空白页面、非空模板、跨账号切换和未完成编辑的保护规则保持不变。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.57",
         updatedAt = "2026-10-26 08:04",
