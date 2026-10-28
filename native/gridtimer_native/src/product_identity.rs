@@ -118,7 +118,7 @@
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.9";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
 pub const ANDROID_APP_VERSION: &str = "2.23.2.59";
-pub const ANDROID_VERSION_CODE: i32 = 22326;
+pub const ANDROID_VERSION_CODE: i32 = 22328;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
