@@ -367,7 +367,16 @@ pub fn knowledge_container_action_app_data_json(
         }
         _ => return None,
     }
-    if matches!(action, "create_page" | "create_folder") {
+    if matches!(action, "create_page" | "create_folder")
+        && !data.notes.iter().any(|note| {
+            note.id != id
+                && note.kind == NoteEntryKind::Document
+                && knowledge_effective_parent(&data, note) == Some(id)
+        })
+    {
+        // A previously dangling child may point to an as-yet-uncreated parent.
+        // Such a creation must use the old full-tree projection to repair that
+        // child's legacy location, including descendants and deleted records.
         knowledge_refresh_new_container_projection(&mut data, id, now)?;
     } else {
         knowledge_refresh_folder_projection(&mut data, &HashSet::from([id.to_string()]), now)?;
