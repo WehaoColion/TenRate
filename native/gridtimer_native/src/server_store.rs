@@ -507,6 +507,19 @@ pub struct SnapshotStorageStats {
     pub charged_bytes: i64,
 }
 
+// Read-only quota accounting. This must reconcile with snapshot_history_charged_bytes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SnapshotHistorySpaceBreakdown {
+    pub snapshot_json_bytes: i64,
+    pub media_content_bytes: i64,
+    pub snapshot_row_bytes: i64,
+    pub media_row_bytes: i64,
+    pub media_metadata_bytes: i64,
+    pub history_rows: i64,
+    pub media_rows: i64,
+    pub charged_bytes: i64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SnapshotHistoryWarning {
     None,
@@ -1502,6 +1515,28 @@ impl SqliteServerStore {
             prune_audit_rows,
             charged_bytes,
         })
+    }
+
+    /// Diagnose one account without changing history, media, or quota decisions.
+    pub fn snapshot_history_space_breakdown(
+        &self,
+        user_id: &str,
+    ) -> StoreResult<SnapshotHistorySpaceBreakdown> {
+        let mut connection = self.open_connection(false)?;
+        // Several SELECTs must observe one SQLite snapshot, even if another
+        // device commits a new account revision during diagnosis.
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1)",
+            params![user_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Err(StoreError::NotFound(format!("user {user_id}")));
+        }
+        let breakdown = snapshot_history_space_breakdown_in_connection(&transaction, user_id)?;
+        transaction.commit()?;
+        Ok(breakdown)
     }
 
     pub fn snapshot_history_quota_status(
@@ -6491,6 +6526,69 @@ fn snapshot_user_distinct_content_bytes(
         |row| row.get::<_, i64>(0),
     )?;
     Ok(json_bytes.saturating_add(media_bytes))
+}
+
+fn snapshot_history_space_breakdown_in_connection(
+    connection: &Connection,
+    user_id: &str,
+) -> StoreResult<SnapshotHistorySpaceBreakdown> {
+    let snapshot_json_bytes = connection.query_row(
+        "SELECT COALESCE(SUM(c.compressed_size_bytes), 0)
+         FROM snapshot_contents c
+         WHERE c.sha256 IN (
+             SELECT DISTINCT content_sha256 FROM account_snapshot_history WHERE user_id = ?1
+         )",
+        params![user_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let media_content_bytes = connection.query_row(
+        "SELECT COALESCE(SUM(c.size_bytes), 0)
+         FROM media_snapshot_contents c
+         WHERE c.sha256 IN (
+             SELECT DISTINCT content_sha256 FROM account_snapshot_media_history
+             WHERE user_id = ?1 AND content_sha256 IS NOT NULL
+         )",
+        params![user_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let history_rows = connection.query_row(
+        "SELECT COUNT(*) FROM account_snapshot_history WHERE user_id = ?1",
+        params![user_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let media_rows = connection.query_row(
+        "SELECT COUNT(*) FROM account_snapshot_media_history WHERE user_id = ?1",
+        params![user_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let media_metadata_bytes = connection.query_row(
+        "SELECT COALESCE(SUM(
+             length(CAST(attachment_id AS BLOB))
+             + length(CAST(declared_sha256 AS BLOB))
+             + length(CAST(mime_type AS BLOB))
+             + length(CAST(missing_reason AS BLOB))
+         ), 0)
+         FROM account_snapshot_media_history WHERE user_id = ?1",
+        params![user_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let snapshot_row_bytes = history_rows.saturating_mul(SNAPSHOT_HISTORY_ROW_OVERHEAD_BYTES);
+    let media_row_bytes = media_rows.saturating_mul(SNAPSHOT_MEDIA_HISTORY_ROW_OVERHEAD_BYTES);
+    let charged_bytes = snapshot_json_bytes
+        .saturating_add(media_content_bytes)
+        .saturating_add(snapshot_row_bytes)
+        .saturating_add(media_row_bytes)
+        .saturating_add(media_metadata_bytes);
+    Ok(SnapshotHistorySpaceBreakdown {
+        snapshot_json_bytes,
+        media_content_bytes,
+        snapshot_row_bytes,
+        media_row_bytes,
+        media_metadata_bytes,
+        history_rows,
+        media_rows,
+        charged_bytes,
+    })
 }
 
 fn snapshot_history_charged_bytes(connection: &Connection, user_id: &str) -> StoreResult<i64> {
@@ -15014,6 +15112,45 @@ mod tests {
             stats_before,
             store.snapshot_storage_stats("user-a").unwrap()
         );
+    }
+
+    #[test]
+    fn snapshot_history_breakdown_reconciles_without_mutating_history() {
+        let directory = TestDirectory::new("snapshot_breakdown_read_only");
+        let store = open_empty(&directory);
+        store
+            .create_user(new_user("user-a", "a@example.test"))
+            .unwrap();
+        for revision in 0..3 {
+            store
+                .compare_and_swap_account(
+                    "user-a",
+                    revision,
+                    &serde_json::json!({"revision": revision + 1}).to_string(),
+                    100 + revision,
+                )
+                .unwrap();
+        }
+        let before = store.snapshot_storage_stats("user-a").unwrap();
+        let first = store.snapshot_history_space_breakdown("user-a").unwrap();
+        let second = store.snapshot_history_space_breakdown("user-a").unwrap();
+        assert_eq!(first, second);
+        assert_eq!(3, first.history_rows);
+        assert_eq!(0, first.media_rows);
+        assert_eq!(0, first.media_content_bytes);
+        assert_eq!(0, first.media_metadata_bytes);
+        assert!(first.snapshot_json_bytes > 0);
+        assert_eq!(
+            first.history_rows * SNAPSHOT_HISTORY_ROW_OVERHEAD_BYTES,
+            first.snapshot_row_bytes
+        );
+        assert_eq!(before.charged_bytes, first.charged_bytes);
+        assert_eq!(before, store.snapshot_storage_stats("user-a").unwrap());
+        assert!(matches!(
+            store.snapshot_history_space_breakdown("missing"),
+            Err(StoreError::NotFound(_))
+        ));
+        store.verify_snapshot_storage_integrity().unwrap();
     }
 
     #[test]
