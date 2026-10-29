@@ -1,3 +1,61 @@
+
+// Compare the incremental create projection to the old full-tree implementation,
+// including its exact version/revision and legacy-folder semantics.
+#[test]
+fn new_container_projection_matches_full_tree_across_ancestor_shapes() {
+    let raw = create_note_folder_app_data_json(&state(), "legacy", "老文件夹", 1001).unwrap();
+    let raw = action(&raw, "create_page", "legacy_child", "legacy", "旧目录子页", 1002);
+    let raw = action(&raw, "create_folder", "legacy_nested", "legacy_child", "深层", 1003);
+    let raw = action(&raw, "create_page", "plain_root", "", "根页面", 1004);
+    let raw = action(&raw, "create_folder", "plain_nested", "plain_root", "普通子目录", 1005);
+
+    for (index, parent_id) in [
+        "",
+        "legacy",
+        "legacy_child",
+        "legacy_nested",
+        "plain_root",
+        "plain_nested",
+    ]
+    .iter()
+    .enumerate()
+    {
+        for kind in ["create_page", "create_folder"] {
+            let id = format!("fresh_{index}_{kind}");
+            let now = 1010 + index as i64;
+            let mut base = parse_app_data_for_mutation(&raw, now).unwrap();
+            let mut created = NoteEntry {
+                id: id.clone(),
+                title: "新建项".to_owned(),
+                kind: NoteEntryKind::Document,
+                ..Default::default()
+            };
+            let page = knowledge_ensure_page(&mut created);
+            page.parent_id = (!parent_id.is_empty()).then(|| (*parent_id).to_owned());
+            if kind == "create_folder" {
+                page.properties.insert(
+                    crate::knowledge::FOLDER_KIND_PROPERTY.to_owned(),
+                    crate::knowledge::CellValue::Text("folder".into()),
+                );
+            }
+            created = normalize_note_for_save(&base, created, None, now).unwrap();
+            base.notes.push(created);
+            let mut full = base.clone();
+            knowledge_refresh_folder_projection(&mut full, &HashSet::from([id.clone()]), now)
+                .unwrap();
+            knowledge_refresh_new_container_projection(&mut base, &id, now).unwrap();
+            assert_eq!(base, full, "create projection differs for {kind} under {parent_id}");
+            let saved = action(&raw, kind, &id, parent_id, "新建项", now);
+            let expected = serde_json::to_string(&full.sanitized(now).unwrap()).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&saved).unwrap(),
+                serde_json::from_str::<Value>(&expected).unwrap(),
+                "persisted create differs for {kind} under {parent_id}"
+            );
+        }
+    }
+}
+
 // v2.23.2.29 - Hierarchy specifications cover lossless content and rejected transitions.
 use super::*;
 use serde_json::{json, Value};
