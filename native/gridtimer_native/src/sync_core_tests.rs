@@ -214,6 +214,63 @@ fn merge_sync_note_app_data_bidirectionally(
     )
 }
 
+fn assert_payload_encoder_matches_previous(mut payload: SyncClientResult) {
+    let mut previous = payload.clone();
+    let previous_result = prepare_sync_payload_fallback(&mut previous);
+    let optimized_result = prepare_sync_payload(&mut payload);
+    assert_eq!(
+        encode_result(&payload),
+        encode_result(&previous),
+        "payload metadata differs from the previous encoder"
+    );
+    match (optimized_result, previous_result) {
+        (Ok(actual), Ok(expected)) => {
+            assert_eq!(actual, expected, "wire response changed");
+            assert_eq!(actual.len() as i64, payload.sync_payload_usage_bytes);
+        }
+        (Err(actual), Err(expected)) => {
+            assert_eq!(encode_result(&actual), encode_result(&expected));
+            assert_eq!("sync_payload_quota_exceeded", actual.mode);
+            assert!(!actual.current_committed);
+        }
+        _ => panic!("payload acceptance differs from the previous encoder"),
+    }
+}
+
+#[test]
+fn sync_payload_length_fast_path_matches_previous_wire_contract() {
+    // Small envelopes cross decimal digit boundaries; the existing non-empty
+    // warning also proves that optional-field accounting uses escaped JSON.
+    for size in [0, 1, 9, 10, 99, 100, 1_024, 40_960] {
+        assert_payload_encoder_matches_previous(SyncClientResult {
+            ok: true,
+            message: "含引号 \" 和换行\n".to_string(),
+            app_data_json: Some("x".repeat(size)),
+            sync_payload_usage_bytes: 123_456,
+            sync_payload_limit_bytes: 7,
+            sync_payload_warning: "legacy \"warning\" \\ test".to_string(),
+            ..SyncClientResult::default()
+        });
+    }
+    // Cover the real large-envelope warning, critical and hard-limit
+    // transitions without changing or weakening quota enforcement.
+    for boundary in [
+        SYNC_PAYLOAD_WARNING_BYTES,
+        SYNC_PAYLOAD_CRITICAL_BYTES,
+        MAX_RESPONSE_BODY_BYTES,
+    ] {
+        for offset in [-128isize, 128isize] {
+            let size = (boundary as isize + offset) as usize;
+            assert_payload_encoder_matches_previous(SyncClientResult {
+                ok: true,
+                app_data_json: Some("x".repeat(size)),
+                current_committed: true,
+                ..SyncClientResult::default()
+            });
+        }
+    }
+}
+
 #[test]
 fn sync_payload_status_uses_the_actual_serialized_envelope() {
     let mut result = SyncClientResult {
