@@ -1,5 +1,5 @@
-; Windows 1.1.0.9 candidate installer: isolate from the formal desktop and sync service.
-#define TenRateVersion "1.1.0.9"
+; Windows 1.1.0.10 candidate installer: isolate from the formal desktop and sync service.
+#define TenRateVersion "1.1.0.10"
 [Setup]
 AppId={{D14BB1FC-A178-4C36-B787-4E8DFE9089B8}
 AppName=TenRate Windows Preview

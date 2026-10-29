@@ -1,10 +1,13 @@
+// v1.1.0.10 Windows - Record the published attachment reference audit repair.
 // v1.1.0.8 Windows - Record complete knowledge and Agent parity candidate.
 // v1.1.0.7 Windows - Keep detailed Chinese release notes, historical entry and tap-to-copy text.
 // v1.1.0.6 Windows - Require valid visible money drafts before saving or reviewing finance.
 // v1.1.0.5 Windows - Preserve exact finance amounts during editing and sync.
 // v1.1.0.4 Windows - Repair automatic desktop entry maintenance.
-const WINDOWS_UPDATE_HISTORY_CURRENT_VERSION: &str = "1.1.0.9";
-const WINDOWS_UPDATE_HISTORY_CURRENT_TEXT: &str = "版本 1.1.0.9\n更新时间：2026-10-25（源码候选）\n\n对齐安卓连续 AI 追问：问答面板保留成功的最近对话，下一次请求携带最多 8 轮、24,000 字符的上下文，已发送的问题、回答与本次来源仍受工作区、配置、知识范围及一次性授权限制。取消、切换范围及账户时不跨边界复用历史。\n\n风控默认进入每日收支，顶部增加记支出、记收入快捷入口和风险分析入口，快捷记账创建有真实记录编号的当天草稿，沿用原精确金额、确认失效及持久保存门禁。原风险计算和月季年数据不变。\n\nAgent 工作区加入任务目标、选择资料、核对授权、执行任务及审阅结果阶段，提供常用目标模板、完成后新任务入口和未保存草稿放弃确认。保留原受限工具、资料许可、真实进度与独立核验。\n\n知识页图片导入后保留末尾图片作为插入锚点，图片下方可以直接增加正文段落，原生文件选择器支持多张图片一起导入并合并引用提交，不改附件编号、恢复日志和同步格式。导出 PNG 在保留原有 Canvas 规则的同时尝试使用内置 KaTeX 排版公式，浏览器不允许绘制时回退到原 LaTeX 文字。共享的流式图片摘要与 Windows 原有恢复保护继续生效。\n\n本版仅是 Windows 源码候选，尚未替换正式 Windows 1.1.0.7 可执行程序与同步服务；需要 Windows CI 和真实桌面验收。Android 仍独立为 2.23.2.55，不改其 APK、签名与同步协议。\n";
+const WINDOWS_UPDATE_HISTORY_CURRENT_VERSION: &str = "1.1.0.10";
+const WINDOWS_UPDATE_HISTORY_CURRENT_TEXT: &str = "版本 1.1.0.10\n更新时间：2026-10-29 06:59\n\n修复 Windows 同步时将安卓图片导入占位符误认为无效附件，导致附件引用核对无法完成的问题。只有与同一份文档图片块严格匹配的临时标识才会被识别；真实附件和无法确认的引用继续受到保护。\n\n账户、已配对手机、数据目录及同步协议继续沿用，安卓安装包不变。";
+const WINDOWS_UPDATE_HISTORY_V1109_TEXT: &str = "版本 1.1.0.9\n更新时间：2026-10-28 18:02\n\n同步服务兼容安卓图片导入期间产生的临时占位标识，避免将它误判成无效附件。笔记正文和历史记录继续保留；其他无效附件标识仍会被拒绝。\n\nWindows 客户端、同步服务和守护程序统一更新，账户、已配对手机、数据目录及同步协议继续沿用。";
+const WINDOWS_UPDATE_HISTORY_V1109_PREVIEW_TEXT: &str = "版本 1.1.0.9\n更新时间：2026-10-25（源码候选）\n\n对齐安卓连续 AI 追问：问答面板保留成功的最近对话，下一次请求携带最多 8 轮、24,000 字符的上下文，已发送的问题、回答与本次来源仍受工作区、配置、知识范围及一次性授权限制。取消、切换范围及账户时不跨边界复用历史。\n\n风控默认进入每日收支，顶部增加记支出、记收入快捷入口和风险分析入口，快捷记账创建有真实记录编号的当天草稿，沿用原精确金额、确认失效及持久保存门禁。原风险计算和月季年数据不变。\n\nAgent 工作区加入任务目标、选择资料、核对授权、执行任务及审阅结果阶段，提供常用目标模板、完成后新任务入口和未保存草稿放弃确认。保留原受限工具、资料许可、真实进度与独立核验。\n\n知识页图片导入后保留末尾图片作为插入锚点，图片下方可以直接增加正文段落，原生文件选择器支持多张图片一起导入并合并引用提交，不改附件编号、恢复日志和同步格式。导出 PNG 在保留原有 Canvas 规则的同时尝试使用内置 KaTeX 排版公式，浏览器不允许绘制时回退到原 LaTeX 文字。共享的流式图片摘要与 Windows 原有恢复保护继续生效。\n\n本版仅是 Windows 源码候选，尚未替换正式 Windows 1.1.0.7 可执行程序与同步服务；需要 Windows CI 和真实桌面验收。Android 仍独立为 2.23.2.55，不改其 APK、签名与同步协议。\n";
 const WINDOWS_UPDATE_HISTORY_V1108_TEXT: &str = "版本 1.1.0.8\n更新时间：2026-10-16 01:37\n\n知识模块增加完整目录窗口。页面中可以新建子页面和子文件夹，文件夹里继续建立多层内容；页面与文件夹转换保留正文和子项。移动时检查循环、锁定和过期目录，不允许把页面移进自己的后代。文档上方使用紧凑的路径、子项与操作入口，常用新建、移动、重命名、属性、转换和预览功能仍可使用。\n\n目录支持同级拖动排序，顺序按本机工作区单独保存。首页继续按原来的更新时间与日期分组显示，目录排序不会改写正文、页面更新时间或首页卡片顺序。切换工作区、移动节点或目录成员变化后会重新核对拖动目标。\n\n新增任务 Agent 入口，支持从知识页与便签选择资料，先查看问题、接收接口、模型、所选原文及调用上限，再明确授权发送。Agent 使用真实配置的远程模型，能够查找与读取本次选定资料、生成有来源的回答，并独立复核后在本机校验证据。不使用预存回答。进度显示当前阶段、已用时间、调用与工具计数、完成或失败状态；取消后停止后续步骤，已发出的请求仍可能计费。\n\nAgent 结果先保留为待审草稿。只有复核通过、证据有效、资料及配置仍匹配当前工作区时才可保存为新的知识页；原记录不被覆盖。保存失败保留草稿，重复点击不会生成多份结果。切换工作区、密钥、接口或模型会使旧发送预览及结果失效。当前知识页还提供仅针对本页的 AI 入口，通用问答、知识库问答与任务 Agent 各自显示实际发送范围。\n\n法律风险分析只读取当前可见版本及其中仍有效的附件，不再因历史版本残留而读取旧附件。报告“打开所属记录”按证据定位到实际知识页、便签、对应内容块、计时记录或财务逐笔记录；来源已删除或证据范围变化时明确提示，不回退为知识首页。历史计时记录按记录编号定位，不把同时间的其他记录当作原来源。\n\n财务风控增加概览、核对与配置、账目和预测操作分区，减少长页面中寻找核对按钮的成本。金额继续使用精确到分的格式；核对凭据、资料不足时的待核对状态、缺失负债和安全金额判断沿用现有保守规则。\n\n知识页和便签返回列表时，已修改正文通过现有后台保存线程写入，界面继续响应并显示保存进度，可选择留在此页。只有当前工作区、页面及编辑版本对应的保存回执成功后才退出；失败继续保留编辑内容，继续编辑后不会被旧回执带离页面。没有改动的页面直接退出，不因无关后台任务重新提交全文。数据库属性仍需通过合法性检查并确认保存才能退出。\n\n本次为 Windows 1.1.0.8 源码候选，补齐安卓近期目录、Agent、文档边界、证据跳转与保存流程。安卓版本仍为 2.23.2.35。本机正式 Windows 程序、同步服务及稳定桌面入口继续使用现有 1.1.0.7，待验收后按原发布流程统一更新。更新时间精确到分钟，本版说明可点按复制，旧版保留在历史版本入口。\n";
 const WINDOWS_UPDATE_HISTORY_V1107_TEXT: &str = "版本 1.1.0.7\n更新时间：2026-10-05 00:53\n\nWindows 补齐安卓近期已经使用的 AI 问答流程。在“我的”的 AI 模块提供“直接问 AI”“问知识库”和“法律风险线索”入口；连接设置可选 DeepSeek 官方预设，填写密钥后保存，或发送一次合成文字与图片测试接口能力。不会自动填入密钥，也不会因打开页面而调用付费模型。\n\n“直接问 AI”只发送你的问题，使用模型通用知识与推理；“问知识库”发送问题和相关知识页节选，明确显示所选范围及原文。问题上限为 1000 字，超过上限需要修改，不会静默截断。知识模式最多选择五页，每页最多 900 字，加密和已删除内容不纳入；发送预览可逐页查看本次节选。\n\n点击“预览并发送问题”先核对接收方、模型、正文量和本次请求，点击“确认发送问题”才实际调用接口。授权绑定当前工作区、接口、模型、密钥与问题资料，只能使用一次。取消或改变配置后旧结果不能应用；在途请求结束前不允许重复启动，已发送的请求仍可能计费。\n\n真实远程回答通过 Responses 完成状态检查后显示，没有本机预存答案。AI 回答使用离线 Markdown 与 KaTeX 排版，支持粗体、标题、列表、表格、代码以及行内和独立公式；不加载外网排版脚本，回答中的原始 HTML 不能执行。无法解析的公式保留原文，回答可复制原文或另存为知识页。答案保存为知识页后，普通文本中的行内与独立公式也能在阅读视图中继续排版，编辑和复制保留原文。\n\n风控概览加入明显的“开始 AI 分析”入口。法律资料整理、发送确认、取消和重试操作固定在顶部，长资料与报告单独滚动。空资料、配置缺失、保存未完成或旧快照不会进入发送；确认页重新核对当前快照与配置，一次确认只允许一次发送。失败原因显示在操作旁，可按现状重试。\n\n知识页、金额小数、原有财务核对、计时、账户和资料格式继续保留。客户端、同步服务、同步守护程序和稳定桌面入口统一使用 Windows 1.1.0.7。安卓保持独立版本，不重新打包或改变已交付 APK。\n\n本版更新说明可点按段落复制，也可一次复制完整内容。旧版说明放在“历史版本”入口内，展开后逐版查看；已有记录保留，更新时间按北京时间精确到分钟。";
 
@@ -25,7 +28,7 @@ impl TimerWindowsClient {
             egui::CollapsingHeader::new(format!("更新记录 · v{}", WINDOWS_CLIENT_VERSION))
                 .default_open(false)
                 .show(ui, |ui| {
-                    egui::CollapsingHeader::new("1.1.0.9 · Windows 与 Android 更新对齐")
+                    egui::CollapsingHeader::new("1.1.0.10 · 修复附件引用核对")
                         .default_open(true)
                         .show(ui, |ui| {
                             if ui.button("复制本版完整更新说明").clicked() { ui.output_mut(|output| output.copied_text = WINDOWS_UPDATE_HISTORY_CURRENT_TEXT.to_owned()); }
@@ -34,6 +37,14 @@ impl TimerWindowsClient {
                     egui::CollapsingHeader::new("历史版本")
                         .default_open(false)
                         .show(ui, |ui| {
+                    egui::CollapsingHeader::new("1.1.0.9 · 同步服务兼容性修复")
+                        .default_open(false).show(ui, |ui| {
+                            for paragraph in WINDOWS_UPDATE_HISTORY_V1109_TEXT.split("\n\n") { windows_update_note(ui, paragraph); }
+                        });
+                    egui::CollapsingHeader::new("1.1.0.9 候选 · Windows 与 Android 更新对齐")
+                        .default_open(false).show(ui, |ui| {
+                            for paragraph in WINDOWS_UPDATE_HISTORY_V1109_PREVIEW_TEXT.split("\n\n") { windows_update_note(ui, paragraph); }
+                        });
                     egui::CollapsingHeader::new("1.1.0.8 · 知识目录与任务 Agent")
                         .default_open(false).show(ui, |ui| {
                             for paragraph in WINDOWS_UPDATE_HISTORY_V1108_TEXT.split("\n\n") { windows_update_note(ui, paragraph); }

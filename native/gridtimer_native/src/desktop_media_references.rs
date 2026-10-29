@@ -1,3 +1,4 @@
+// v1.1.0.10 Windows - Recognize strictly bound Android image import markers during reference checks.
 // v0.0.4 - Resolve compact private identities without retaining their ciphertext bodies.
 // v0.0.3 - Retain bounded content hashes and conflicting private reference state.
 // v0.0.2 - Merge retained recovery references without treating unknown copies as empty.
@@ -243,17 +244,20 @@ impl DesktopMediaReferenceScope {
                 self.complete = false;
             }
         }
+        let mut pending_markers = HashSet::new();
+        if let Some(document) = object.get("document") {
+            self.document(document, &mut pending_markers);
+        }
         if let Some(ids) = object.get("attachmentIds") {
             if let Some(ids) = ids.as_array() {
                 for id in ids {
-                    self.id(id);
+                    if !id.as_str().is_some_and(|id| pending_markers.contains(id)) {
+                        self.id(id);
+                    }
                 }
             } else {
                 self.complete = false;
             }
-        }
-        if let Some(document) = object.get("document") {
-            self.document(document);
         }
         for key in ["revisions", "versions"] {
             if let Some(snapshots) = object.get(key) {
@@ -299,7 +303,7 @@ impl DesktopMediaReferenceScope {
         }
     }
 
-    fn document(&mut self, value: &Value) {
+    fn document(&mut self, value: &Value, pending_markers: &mut HashSet<String>) {
         if !self.visit() {
             return;
         }
@@ -307,16 +311,25 @@ impl DesktopMediaReferenceScope {
             Value::Object(object) => {
                 if let Some(id) = object.get("attachmentId") {
                     if !id.is_null() && id != "" {
-                        self.id(id);
+                        if let Some(marker) = android_pending_image_marker(object) {
+                            if pending_markers.len() >= 10_000 && !pending_markers.contains(marker)
+                            {
+                                self.complete = false;
+                            } else {
+                                pending_markers.insert(marker.to_owned());
+                            }
+                        } else {
+                            self.id(id);
+                        }
                     }
                 }
                 for child in object.values() {
-                    self.document(child);
+                    self.document(child, pending_markers);
                 }
             }
             Value::Array(items) => {
                 for item in items {
-                    self.document(item);
+                    self.document(item, pending_markers);
                 }
             }
             _ => {}
@@ -324,10 +337,71 @@ impl DesktopMediaReferenceScope {
     }
 }
 
+// An import marker is not a media identity. A matching block and a v4 UUID
+// are required; an unrelated or malformed identifier remains unresolved.
+fn android_pending_image_marker(object: &serde_json::Map<String, Value>) -> Option<&str> {
+    let marker = object.get("attachmentId")?.as_str()?;
+    let uuid = marker.strip_prefix("pending:")?;
+    if object.get("type").and_then(Value::as_str) != Some("IMAGE")
+        || object.get("id").and_then(Value::as_str) != Some(uuid)
+    {
+        return None;
+    }
+    let bytes = uuid.as_bytes();
+    (bytes.len() == 36
+        && bytes.iter().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                *b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b'))
+    .then_some(marker)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn android_pending_image_marker_does_not_block_reference_audit_but_unproven_ids_do() {
+        let uuid = "12345678-1234-4abc-8abc-123456789abc";
+        let marker = format!("pending:{uuid}");
+        let block = json!({"id":uuid,"type":"IMAGE","attachmentId":marker});
+        let mut data: Value = serde_json::from_str(&app_data::default_app_data_json(100)).unwrap();
+        data["notes"] = json!([{"id":"note-1", "attachments":[{"id":"real-image"}],
+            "document":{"blocks":[block.clone()]},
+            "revisions":[{"id":"revision-1","document":{"blocks":[block]},
+                "attachmentIds":[marker,"real-image"]}]}]);
+        let policy = DesktopPrivacyPolicy::default();
+        let check =
+            |data: &Value| DesktopMediaReferenceScope::from_snapshot(&data.to_string(), &policy);
+        let safe = check(&data);
+        assert!(safe.is_complete());
+        assert!(safe.ids().contains("real-image"));
+        assert!(!safe.ids().contains(&marker));
+
+        let mut wrong_block = data.clone();
+        wrong_block["notes"][0]["document"]["blocks"][0]["id"] = json!("different");
+        assert!(!check(&wrong_block).is_complete());
+
+        let mut wrong_scope = data.clone();
+        wrong_scope["notes"][0]["revisions"][0]["document"]["blocks"] = json!([]);
+        assert!(!check(&wrong_scope).is_complete());
+
+        let mut invalid_attachment = data.clone();
+        invalid_attachment["notes"][0]["attachments"][0]["id"] = json!(marker);
+        assert!(!check(&invalid_attachment).is_complete());
+
+        let mut invalid_uuid = data.clone();
+        let other = "12345678-1234-1abc-8abc-123456789abc";
+        invalid_uuid["notes"][0]["document"]["blocks"][0] =
+            json!({"id":other,"type":"IMAGE","attachmentId":format!("pending:{other}")});
+        assert!(!check(&invalid_uuid).is_complete());
+    }
 
     #[test]
     fn local_media_reference_private_declaration_resolves_only_the_exact_note() {

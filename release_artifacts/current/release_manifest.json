@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "productId": "gridtimer",
   "displayName": "十倍率",
-  "version": "1.1.0.7",
+  "version": "1.1.0.10",
   "windowsOnly": true,
   "syncProtocolVersion": 1,
-  "gitCommit": "18cf017ede66211bdaf229f26340c6d5e0d25f10",
+  "gitCommit": "928d6456a70ece603638cf13b25b47ebfd14496c",
   "sourceWorktreeDirty": true,
-  "sourceSnapshotSha256": "6720034b37215496af2749806f11735364131a407fb72dcda2aa69e2ab8403fb",
+  "sourceSnapshotSha256": "5cfd043b25250c744e6b5f42eee097e9e36399096e550549380f9ad27b535581",
   "toolchain": {
     "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
     "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
@@ -28,7 +28,7 @@
     "windows_executable_integrity_chain",
     "windows_server_runtime_smoke"
   ],
-  "createdAtEpochMillis": 1791139952511,
+  "createdAtEpochMillis": 1793229970250,
   "files": [
     {
       "role": "apk",
@@ -38,21 +38,21 @@
     },
     {
       "role": "sync_server",
-      "file_name": "grid_timer_sync_server_v1.1.0.7.exe",
-      "size": 7854592,
-      "sha256": "a478f75b87d2e7dade07519699a4bc89333131aa15dd5a7d5ca3da83f1596be2"
+      "file_name": "grid_timer_sync_server_v1.1.0.10.exe",
+      "size": 7945216,
+      "sha256": "b8d486f19c804b9445eaa3e052b46b77232f17195e1ae0eb1f93376ae3896cce"
     },
     {
       "role": "sync_launcher",
-      "file_name": "grid_timer_sync_launcher_v1.1.0.7.exe",
+      "file_name": "grid_timer_sync_launcher_v1.1.0.10.exe",
       "size": 4264960,
-      "sha256": "ed80feef1660b6595d6397daee5660ce07e395357740cd9d9d93597e4eedf6b1"
+      "sha256": "7519dc1619589eebb29c02669af7ec73d2541c785613abc05274661444d54964"
     },
     {
       "role": "windows_client",
-      "file_name": "grid_timer_windows_client_v1.1.0.7.exe",
-      "size": 26405376,
-      "sha256": "278733d779eb1d1a69d805d97ed12196a032ae3302fdf8a5a5cf17945d8f2f2f"
+      "file_name": "grid_timer_windows_client_v1.1.0.10.exe",
+      "size": 27136000,
+      "sha256": "cd90f76df75f098340933c9ad56fd287c682eac5c56725eb5c4e81eb2d555959"
     },
     {
       "role": "cloudflared",
