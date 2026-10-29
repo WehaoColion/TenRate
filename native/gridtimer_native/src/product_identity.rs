@@ -1,3 +1,4 @@
+// v2.23.4 Android - Local hierarchy projection and save latency diagnostics.
 // v2.23.3 Android - Complete compact inline children in knowledge pages.
 // v2.23.2.59 Android - Avoid unnecessary blank-page persistence on open and exit.
 // v2.23.2.57 Android - Show the workspace shell while account data restores.
@@ -118,8 +119,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.9";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.3";
-pub const ANDROID_VERSION_CODE: i32 = 22329;
+pub const ANDROID_APP_VERSION: &str = "2.23.4";
+pub const ANDROID_VERSION_CODE: i32 = 22330;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
