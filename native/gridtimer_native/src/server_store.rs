@@ -15126,7 +15126,7 @@ mod tests {
                 .compare_and_swap_account(
                     "user-a",
                     revision,
-                    &format!("{{\\"revision\\":{}}}", revision + 1),
+                    &serde_json::json!({"revision": revision + 1}).to_string(),
                     100 + revision,
                 )
                 .unwrap();
