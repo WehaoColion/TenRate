@@ -1522,8 +1522,11 @@ impl SqliteServerStore {
         &self,
         user_id: &str,
     ) -> StoreResult<SnapshotHistorySpaceBreakdown> {
-        let connection = self.open_connection(false)?;
-        let exists = connection.query_row(
+        let mut connection = self.open_connection(false)?;
+        // Several SELECTs must observe one SQLite snapshot, even if another
+        // device commits a new account revision during diagnosis.
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let exists = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1)",
             params![user_id],
             |row| row.get::<_, bool>(0),
@@ -1531,7 +1534,9 @@ impl SqliteServerStore {
         if !exists {
             return Err(StoreError::NotFound(format!("user {user_id}")));
         }
-        snapshot_history_space_breakdown_in_connection(&connection, user_id)
+        let breakdown = snapshot_history_space_breakdown_in_connection(&transaction, user_id)?;
+        transaction.commit()?;
+        Ok(breakdown)
     }
 
     pub fn snapshot_history_quota_status(
