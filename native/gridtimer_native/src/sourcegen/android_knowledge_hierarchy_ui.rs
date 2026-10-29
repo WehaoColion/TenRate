@@ -1,3 +1,4 @@
+// v2.23.4 - Diagnose hierarchy save stages without changing durable write barriers.
 // v2.23.3 - Show complete, compact inline child lists in the mobile knowledge page.
 // Workspace-local sibling dragging in the full directory; page dates and shared data stay intact.
 // Compact page controls while preserving hierarchy navigation and durable handoff.
@@ -248,13 +249,38 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
         title: String, expectedWorkspaceKey: String): Boolean {
         awaitInitialized()
         var applied = false
-        val attempt = withContext(NonCancellable) { updateDataDetailed(expectedWorkspaceKey = expectedWorkspaceKey,
-            persistImmediately = true, publishAfterDurable = true) { data ->
-            decodeNativeAppData(NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
-                json.encodeToString(data), action, id, parentId, title, now()))?.also { applied = true } ?: data
+        val operationStarted = System.nanoTime()
+        fun recordHierarchyStage(phase: String, started: Long) {
+            val elapsedMs = (System.nanoTime() - started).coerceAtLeast(0L) / 1_000_000L
+            if (elapsedMs >= 1_000L) {
+                // Fixed phase names only. Never write a title, note ID or workspace identity.
+                logDiagnosticEvent(
+                    category = "notes.local_save.latency",
+                    message = "phase=$phase durationMs=$elapsedMs"
+                )
+            }
         }
+        try {
+            val attempt = withContext(NonCancellable) {
+                updateDataDetailed(expectedWorkspaceKey = expectedWorkspaceKey,
+                    persistImmediately = true, publishAfterDurable = true) { data ->
+                    val encodeStarted = System.nanoTime()
+                    val originalJson = json.encodeToString(data)
+                    recordHierarchyStage("hierarchy_encode", encodeStarted)
+                    val nativeStarted = System.nanoTime()
+                    val mutatedJson = NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
+                        originalJson, action, id, parentId, title, now())
+                    recordHierarchyStage("hierarchy_rust_mutation", nativeStarted)
+                    val decodeStarted = System.nanoTime()
+                    val decoded = mutatedJson?.let { decodeNativeAppData(it) }
+                    recordHierarchyStage("hierarchy_decode", decodeStarted)
+                    decoded?.also { applied = true } ?: data
+                }
+            }
+            return applied && attempt.succeeded
+        } finally {
+            recordHierarchyStage("hierarchy_action_total", operationStarted)
         }
-        return applied && attempt.succeeded
     }
 "####;
 const VIEW_MODEL: &str = r####"    internal fun knowledgeContainerAction(action: String, id: String, parentId: String,
@@ -1062,5 +1088,33 @@ mod mobile_inline_children_tests {
         assert!(CONTENTS.contains("KnowledgeHierarchyInlineRow("));
         assert!(CONTENTS.contains("if (supporting != null)"));
         assert!(!CONTENTS.contains("LazyColumn(Modifier.heightIn"));
+    }
+}
+
+#[cfg(test)]
+mod hierarchy_save_latency_tests {
+    use super::*;
+
+    #[test]
+    fn hierarchy_save_stays_durable_and_logs_only_slow_phase_names() {
+        let source = render(
+            "com/ofairyo/gridtimer/data/TimerRepository.kt",
+            "    suspend fun createNoteFolder(",
+        )
+        .unwrap();
+        assert!(source.contains("persistImmediately = true, publishAfterDurable = true"));
+        assert!(source.contains("withContext(NonCancellable)"));
+        assert!(source.contains("expectedWorkspaceKey = expectedWorkspaceKey"));
+        for phase in [
+            "hierarchy_encode",
+            "hierarchy_rust_mutation",
+            "hierarchy_decode",
+            "hierarchy_action_total",
+        ] {
+            assert!(source.contains(phase), "{phase}");
+        }
+        assert!(source.contains("elapsedMs >= 1_000L"));
+        assert!(!source.contains("title=$title"));
+        assert!(!source.contains("workspace=$expectedWorkspaceKey"));
     }
 }

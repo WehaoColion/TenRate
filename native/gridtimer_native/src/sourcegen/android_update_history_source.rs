@@ -1,3 +1,4 @@
+// v2.23.4 - Record scoped Rust hierarchy writes and latency diagnostics.
 // v2.23.3 - Record compact, complete mobile page children and three-part milestone.
 // v2.23.2.59 - Do not save untouched newly created blank knowledge pages.
 // v2.23.2.57 - Show an interactive workbench shell while verified data loads.
@@ -50,7 +51,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.3";
+pub const LATEST_VERSION: &str = "2.23.4";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -80,6 +81,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4",
+        updatedAt = "2026-10-29 08:40",
+        summary = "缩小新建知识页时的 Rust 层级处理范围，补充保存卡顿诊断",
+        sections = listOf(
+            AndroidUpdateSection("新建页面的 Rust 优化", listOf(
+                "新建页面或文件夹时只沿父级链计算旧版文件夹兼容位置，不再扫描整棵目录计算新节点位置。",
+                "移动、重命名、文件夹转换继续使用原有完整层级规则，保留旧版客户端兼容与内容保护。"
+            )),
+            AndroidUpdateSection("保存耗时诊断", listOf(
+                "增加目录操作的编码、Rust 变更、解码及整体可靠保存耗时记录，不记录标题、正文或账号。",
+                "完整快照、历史验证和 SQLite 持久化护栏没有放宽；此次优化不承诺根治历史校验导致的分钟级卡顿。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.3",
         updatedAt = "2026-10-29 06:30",

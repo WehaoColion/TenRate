@@ -1,3 +1,61 @@
+
+// Compare the incremental create projection to the old full-tree implementation,
+// including its exact version/revision and legacy-folder semantics.
+#[test]
+fn new_container_projection_matches_full_tree_across_ancestor_shapes() {
+    let raw = create_note_folder_app_data_json(&state(), "legacy", "老文件夹", 1001).unwrap();
+    let raw = action(&raw, "create_page", "legacy_child", "legacy", "旧目录子页", 1002);
+    let raw = action(&raw, "create_folder", "legacy_nested", "legacy_child", "深层", 1003);
+    let raw = action(&raw, "create_page", "plain_root", "", "根页面", 1004);
+    let raw = action(&raw, "create_folder", "plain_nested", "plain_root", "普通子目录", 1005);
+
+    for (index, parent_id) in [
+        "",
+        "legacy",
+        "legacy_child",
+        "legacy_nested",
+        "plain_root",
+        "plain_nested",
+    ]
+    .iter()
+    .enumerate()
+    {
+        for kind in ["create_page", "create_folder"] {
+            let id = format!("fresh_{index}_{kind}");
+            let now = 1010 + index as i64;
+            let mut base = parse_app_data_for_mutation(&raw, now).unwrap();
+            let mut created = NoteEntry {
+                id: id.clone(),
+                title: "新建项".to_owned(),
+                kind: NoteEntryKind::Document,
+                ..Default::default()
+            };
+            let page = knowledge_ensure_page(&mut created);
+            page.parent_id = (!parent_id.is_empty()).then(|| (*parent_id).to_owned());
+            if kind == "create_folder" {
+                page.properties.insert(
+                    crate::knowledge::FOLDER_KIND_PROPERTY.to_owned(),
+                    crate::knowledge::CellValue::Text("folder".into()),
+                );
+            }
+            created = normalize_note_for_save(&base, created, None, now).unwrap();
+            base.notes.push(created);
+            let mut full = base.clone();
+            knowledge_refresh_folder_projection(&mut full, &HashSet::from([id.clone()]), now)
+                .unwrap();
+            knowledge_refresh_new_container_projection(&mut base, &id, now).unwrap();
+            assert_eq!(base, full, "create projection differs for {kind} under {parent_id}");
+            let saved = action(&raw, kind, &id, parent_id, "新建项", now);
+            let expected = serde_json::to_string(&full.sanitized(now).unwrap()).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&saved).unwrap(),
+                serde_json::from_str::<Value>(&expected).unwrap(),
+                "persisted create differs for {kind} under {parent_id}"
+            );
+        }
+    }
+}
+
 // v2.23.2.29 - Hierarchy specifications cover lossless content and rejected transitions.
 use super::*;
 use serde_json::{json, Value};
@@ -467,3 +525,41 @@ fn knowledge_hierarchy_promoted_origin_cannot_be_removed_or_hidden_by_encryption
     plain_clone.id = clone.id.clone();
     assert!(knowledge_save_allowed(&data, Some(&plain_clone), &clone));
 }
+
+#[test]
+fn creating_a_previously_missing_parent_keeps_dangling_children_compatible() {
+    let raw = create_note_folder_app_data_json(&state(), "legacy", "旧目录", 1001).unwrap();
+    let raw = action(&raw, "create_page", "orphan", "", "孤立子页", 1002);
+    let mut value = serde_json::from_str::<Value>(&raw).unwrap();
+    let orphan = value["notes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|note| note["id"] == "orphan")
+        .unwrap();
+    orphan["document"]["knowledge"]["parentId"] = json!("future");
+    let raw = sanitize_app_data_json(&value.to_string(), 1003).unwrap();
+    let mut expected = parse_app_data_for_mutation(&raw, 1004).unwrap();
+    let mut parent = NoteEntry {
+        id: "future".to_owned(),
+        title: "补建父页面".to_owned(),
+        kind: NoteEntryKind::Document,
+        ..Default::default()
+    };
+    knowledge_ensure_page(&mut parent).parent_id = Some("legacy".to_owned());
+    parent = normalize_note_for_save(&expected, parent, None, 1004).unwrap();
+    expected.notes.push(parent);
+    knowledge_refresh_folder_projection(&mut expected, &HashSet::from(["future".into()]), 1004)
+        .unwrap();
+    // Compare the same JSON wire representation on both sides. Direct
+    // serde_json::to_value(AppData) retains f32 -> f64 precision noise in
+    // finance category shares (e.g. 0.180000007 vs serialized 0.18).
+    let expected = serde_json::from_str::<Value>(
+        &serde_json::to_string(&expected.sanitized(1004).unwrap()).unwrap(),
+    )
+    .unwrap();
+    let actual = action(&raw, "create_page", "future", "legacy", "补建父页面", 1004);
+    assert_eq!(serde_json::from_str::<Value>(&actual).unwrap(), expected);
+    assert_eq!(note(&actual, "orphan")["folderId"], "legacy");
+}
+
