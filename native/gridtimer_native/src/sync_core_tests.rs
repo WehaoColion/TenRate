@@ -15,6 +15,46 @@ include!("sync_preschema_privacy_tests.rs");
 use std::collections::VecDeque;
 
 #[test]
+fn snapshot_quota_failure_reports_reconciled_breakdown_without_committing() {
+    let breakdown = crate::server_store::SnapshotHistorySpaceBreakdown {
+        snapshot_json_bytes: 512,
+        media_content_bytes: 256,
+        snapshot_row_bytes: 256,
+        media_row_bytes: 256,
+        media_metadata_bytes: 32,
+        history_rows: 1,
+        media_rows: 1,
+        charged_bytes: 1312,
+    };
+    let result = snapshot_history_quota_exceeded_result(1312, 2048, 1800, Some(breakdown));
+    assert!(!result.ok);
+    assert!(!result.current_committed);
+    assert!(!result.retryable);
+    assert_eq!("snapshot_history_quota_exceeded", result.mode);
+    assert_eq!(512, result.snapshot_history_json_bytes);
+    assert_eq!(256, result.snapshot_history_media_bytes);
+    assert_eq!(544, result.snapshot_history_metadata_bytes);
+    assert_eq!(1, result.snapshot_history_revision_count);
+    assert_eq!(1, result.snapshot_history_media_reference_count);
+    assert!(result.message.contains("本地数据仍完整保留"));
+    assert!(result.message.contains("历史占用"));
+
+    let encoded = serde_json::to_value(&result).unwrap();
+    assert_eq!(encoded["snapshotHistoryJsonBytes"], 512);
+    assert_eq!(encoded["snapshotHistoryMediaBytes"], 256);
+    assert_eq!(encoded["snapshotHistoryMetadataBytes"], 544);
+
+    // Never mix a breakdown from a concurrent revision with this error.
+    let stale = snapshot_history_quota_exceeded_result(1313, 2048, 1800, Some(breakdown));
+    assert_eq!(0, stale.snapshot_history_json_bytes);
+    assert!(!stale.message.contains("历史占用："));
+    assert!(!stale.current_committed);
+    let unavailable = snapshot_history_quota_exceeded_result(1312, 2048, 1800, None);
+    assert_eq!(0, unavailable.snapshot_history_revision_count);
+    assert!(!unavailable.message.contains("历史占用："));
+}
+
+#[test]
 fn diagnostic_pending_image_sync_preserves_note_and_history() {
     let token = "diagnostic-token";
     let fixture = account_test_store(token, app_data::default_app_data_json(1_000));
