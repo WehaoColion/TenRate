@@ -1,4 +1,4 @@
-// v2.23.2.29 - Lossless page/folder conversions and guarded shared hierarchy mutations.
+// v2.23.4 - Resolve a newly created container's legacy projection along its ancestor chain.\n// v2.23.2.29 - Lossless page/folder conversions and guarded shared hierarchy mutations.
 // Folders use existing version-1 typed properties, so old clients keep their
 // contents and hierarchy without accepting a new data or sync format.
 
@@ -176,6 +176,40 @@ fn knowledge_refresh_folder_projection(
     Some(())
 }
 
+/// A newly created container has no descendants. Compute only its own legacy
+/// folder projection instead of constructing the entire workspace hierarchy.
+/// The full-tree refresh remains authoritative for move/rename/conversion.
+fn knowledge_refresh_new_container_projection(
+    data: &mut AppData,
+    id: &str,
+    now: i64,
+) -> Option<()> {
+    let created = data.notes.iter().find(|note| note.id == id)?;
+    let mut next = knowledge_effective_parent(data, created).map(str::to_owned);
+    let mut visited = HashSet::from([id.to_owned()]);
+    let mut legacy_folder = None;
+    while let Some(parent_id) = next {
+        if !visited.insert(parent_id.clone()) {
+            return None;
+        }
+        // A promoted legacy folder also has a note of the same id. As in the
+        // full projection, the legacy folder takes precedence.
+        if data.note_folders.iter().any(|folder| folder.id == parent_id) {
+            legacy_folder = Some(parent_id);
+            break;
+        }
+        let parent = data.notes.iter().find(|note| note.id == parent_id)?;
+        next = knowledge_effective_parent(data, parent).map(str::to_owned);
+    }
+    let created = data.notes.iter_mut().find(|note| note.id == id)?;
+    if created.folder_id != legacy_folder {
+        created.folder_id = legacy_folder;
+        created.updated_at_epoch_millis =
+            next_mutation_revision(note_revision_epoch_millis(created), now)?;
+    }
+    Some(())
+}
+
 fn knowledge_promote_legacy_folder(data: &mut AppData, id: &str, now: i64) -> Option<()> {
     if data.notes.iter().any(|note| note.id == id) {
         return None;
@@ -333,7 +367,11 @@ pub fn knowledge_container_action_app_data_json(
         }
         _ => return None,
     }
-    knowledge_refresh_folder_projection(&mut data, &HashSet::from([id.to_string()]), now)?;
+    if matches!(action, "create_page" | "create_folder") {
+        knowledge_refresh_new_container_projection(&mut data, id, now)?;
+    } else {
+        knowledge_refresh_folder_projection(&mut data, &HashSet::from([id.to_string()]), now)?;
+    }
     serde_json::to_string(&data.sanitized(now)?).ok()
 }
 
