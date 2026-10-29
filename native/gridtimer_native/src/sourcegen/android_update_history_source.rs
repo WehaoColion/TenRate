@@ -83,7 +83,7 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
     AndroidUpdateEntry(
         version = "2.23.4",
-        updatedAt = "2026-10-29 09:00",
+        updatedAt = "2026-10-29 08:40",
         summary = "缩小新建知识页时的 Rust 层级处理范围，补充保存卡顿诊断",
         sections = listOf(
             AndroidUpdateSection("新建页面的 Rust 优化", listOf(
