@@ -1,3 +1,4 @@
+// v2.23.3 - Expand and compact every direct child in the mobile knowledge page.
 // v2.23.2.59 - Skip storage IO for a newly opened, untouched blank knowledge page.
 // v2.23.2.57 - Draw the startup workspace immediately while verified data restores.
 // v2.23.2.56 - Open sticky notes in editable mode; preview only on request.
@@ -166,8 +167,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22328
-        versionName '2.23.2.59'
+        versionCode 22329
+        versionName '2.23.3'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

@@ -1,3 +1,4 @@
+// v2.23.3 - Show complete, compact inline child lists in the mobile knowledge page.
 // Workspace-local sibling dragging in the full directory; page dates and shared data stay intact.
 // Compact page controls while preserving hierarchy navigation and durable handoff.
 // v2.23.2.32 - Use the knowledge hierarchy as the single page-location source.
@@ -480,6 +481,49 @@ private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: Knowledge
         }) }, trailingContent = trailing ?: { Text("›") })
 }
 
+// The inline list belongs to the document's own scroll surface. Keep entries
+// compact and avoid an independently scrolling list inside the document editor.
+@Composable
+private fun KnowledgeHierarchyInlineRow(
+    node: KnowledgeHierarchyNode,
+    index: KnowledgeHierarchy,
+    enabled: Boolean,
+    onOpen: () -> Unit
+) {
+    val issue = index.issues[node.id]
+    val descendantCount = index.children(node.id).size
+    val supporting = when {
+        issue == KnowledgeHierarchyIssue.IDENTITY_CONFLICT -> "记录编号冲突，暂不能打开"
+        node.note?.encryption != null -> "加密页面"
+        issue != null -> "上级不可用，已放在目录中"
+        !node.writable -> if (descendantCount > 0) "只读 · ${descendantCount} 个子项" else "只读"
+        descendantCount > 0 -> "${descendantCount} 个子项"
+        else -> null
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .clickable(enabled = enabled && issue != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(if (node.isFolder) "▣" else "▤", style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(node.title.ifBlank { "无标题" }, maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium)
+            if (supporting != null) {
+                Text(supporting, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun KnowledgeHierarchyActions(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
@@ -512,7 +556,7 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
     val canEdit = node?.writable == true
     val canConvert = canEdit && node?.note?.document?.knowledge?.get("database")?.let { it != kotlinx.serialization.json.JsonNull } != true
     var menu by remember(workspace, parentId) { mutableStateOf<String?>(null) }
-    var expanded by rememberSaveable(workspace, parentId) { mutableStateOf(false) }
+    var expanded by rememberSaveable(workspace, parentId) { mutableStateOf(true) }
     val callbacksAlive = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicBoolean(true) }
     DisposableEffect(callbacksAlive) { onDispose { callbacksAlive.set(false) } }
     val latestIndex by rememberUpdatedState(index)
@@ -599,11 +643,15 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
             }
         }
         if (expanded && children.isNotEmpty()) {
-            children.take(3).forEach { child -> KnowledgeHierarchyRow(child, index) {
-                if (mayInteract()) onOpen(child)
-            } }
-            TextButton(enabled = canInteract, onClick = { if (mayInteract()) onBrowse(parentId) },
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("查看全部 ${children.size} 项") }
+            // All direct children stay on the parent's scroll surface. No three-item preview
+            // and no second "view all" screen for the current hierarchy level.
+            children.forEach { child ->
+                key(child.id) {
+                    KnowledgeHierarchyInlineRow(child, index, enabled = canInteract) {
+                        if (mayInteract()) onOpen(child)
+                    }
+                }
+            }
         }
     }
 }
@@ -994,3 +1042,25 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } })
 }
 "####;
+
+#[cfg(test)]
+mod mobile_inline_children_tests {
+    use super::CONTENTS;
+
+    #[test]
+    fn inline_children_are_complete_and_initially_expanded() {
+        assert!(CONTENTS.contains("rememberSaveable(workspace, parentId) { mutableStateOf(true) }"));
+        assert!(CONTENTS.contains("children.forEach { child ->"));
+        assert!(CONTENTS.contains("KnowledgeHierarchyInlineRow(child, index, enabled = canInteract)"));
+        assert!(!CONTENTS.contains("children.take(3)"));
+        assert!(!CONTENTS.contains("查看全部 ${children.size} 项"));
+    }
+
+    #[test]
+    fn inline_list_uses_parent_scroll_and_does_not_persist_expand_state() {
+        assert!(CONTENTS.contains("expanded = !expanded"));
+        assert!(CONTENTS.contains("KnowledgeHierarchyInlineRow("));
+        assert!(CONTENTS.contains("if (supporting != null)"));
+        assert!(!CONTENTS.contains("LazyColumn(Modifier.heightIn"));
+    }
+}
