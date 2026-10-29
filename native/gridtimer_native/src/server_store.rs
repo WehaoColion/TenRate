@@ -7043,6 +7043,10 @@ fn collect_note_snapshot_attachment_expectations(
 }
 
 fn collect_note_snapshot_attachment_ids(snapshot: &serde_json::Value, ids: &mut HashSet<String>) {
+    let mut placeholders = HashSet::new();
+    if let Some(document) = snapshot.get("document") {
+        collect_android_pending_image_markers(document, &mut placeholders);
+    }
     for attachment in snapshot
         .get("attachments")
         .and_then(serde_json::Value::as_array)
@@ -7067,10 +7071,36 @@ fn collect_note_snapshot_attachment_ids(snapshot: &serde_json::Value, ids: &mut 
         .map(str::trim)
         .filter(|id| !id.is_empty())
     {
-        ids.insert(id.to_string());
+        if !placeholders.contains(id) {
+            ids.insert(id.to_string());
+        }
     }
     if let Some(document) = snapshot.get("document") {
         collect_note_document_attachment_ids(document, ids);
+    }
+}
+
+fn collect_android_pending_image_markers(value: &serde_json::Value, markers: &mut HashSet<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(id) = object
+                .get("attachmentId")
+                .and_then(serde_json::Value::as_str)
+            {
+                if is_android_pending_image_block(object, id) {
+                    markers.insert(id.to_string());
+                }
+            }
+            for child in object.values() {
+                collect_android_pending_image_markers(child, markers);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                collect_android_pending_image_markers(child, markers);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -7083,7 +7113,9 @@ fn collect_note_document_attachment_ids(value: &serde_json::Value, ids: &mut Has
                 .map(str::trim)
                 .filter(|id| !id.is_empty())
             {
-                ids.insert(id.to_string());
+                if !is_android_pending_image_block(object, id) {
+                    ids.insert(id.to_string());
+                }
             }
             for child in object.values() {
                 collect_note_document_attachment_ids(child, ids);
@@ -7096,6 +7128,33 @@ fn collect_note_document_attachment_ids(value: &serde_json::Value, ids: &mut Has
         }
         _ => {}
     }
+}
+
+// Diagnostic prototype: the Android editor uses this UUID-shaped marker while
+// importing an image. It is not an attachment or an uploaded media identity.
+fn is_android_pending_image_block(
+    object: &serde_json::Map<String, serde_json::Value>,
+    id: &str,
+) -> bool {
+    let Some(uuid) = id.strip_prefix("pending:") else {
+        return false;
+    };
+    if object.get("type").and_then(serde_json::Value::as_str) != Some("IMAGE")
+        || object.get("id").and_then(serde_json::Value::as_str) != Some(uuid)
+    {
+        return false;
+    }
+    let bytes = uuid.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                *b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
 }
 
 fn reconcile_media_histories_for_schema_v12(
@@ -11790,6 +11849,35 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::SystemTime;
+
+    #[test]
+    fn diagnostic_pending_image_marker_is_not_media_and_other_invalid_ids_remain_rejected() {
+        let uuid = "12345678-1234-4abc-8abc-123456789abc";
+        let pending = json!({"id": uuid, "type":"IMAGE", "attachmentId":format!("pending:{uuid}")});
+        let current = json!({"notes":[{"id":"n", "content":"kept", "document":{"blocks":[
+            {"id":"text", "type":"TEXT", "text":"kept"}, pending.clone()
+        ]}, "revisions":[{"document":{"blocks":[pending.clone()]}}]}]});
+        assert_eq!(
+            unresolved_media_metadata_count(&current.to_string()).unwrap(),
+            0
+        );
+        let mut invalid = current.clone();
+        invalid["notes"][0]["document"]["blocks"][1]["id"] = json!("different");
+        assert!(unresolved_media_metadata_count(&invalid.to_string()).is_err());
+        let mut invalid_history = current.clone();
+        invalid_history["notes"][0]["revisions"][0]["document"]["blocks"][0]["attachmentId"] =
+            json!("../other");
+        assert!(unresolved_media_metadata_count(&invalid_history.to_string()).is_err());
+        let mut version_with_index = current.clone();
+        version_with_index["notes"][0]["revisions"][0]["attachmentIds"] =
+            json!([format!("pending:{uuid}")]);
+        assert_eq!(
+            unresolved_media_metadata_count(&version_with_index.to_string()).unwrap(),
+            0
+        );
+        version_with_index["notes"][0]["revisions"][0]["document"]["blocks"] = json!([]);
+        assert!(unresolved_media_metadata_count(&version_with_index.to_string()).is_err());
+    }
 
     #[test]
     fn deleted_historical_media_are_not_reported_missing_but_newer_media_are() {

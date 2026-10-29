@@ -1,5 +1,7 @@
 Android 2.23.4 Rust 新建页面局部层级投影和保存耗时诊断候选：[说明](android/release_notes_v2.23.4.md)。
 
+Windows 1.1.0.10 附件引用核验修复：[说明](windows/release_notes_windows_v1.1.0.10.md)。
+
 Android 2.23.3 手机端子页面完整展开与紧凑列表候选：[说明](android/release_notes_v2.23.3.md)。
 
 Android 2.23.2.57 启动优先呈现工作台界面、数据继续后台恢复候选：[说明](android/release_notes_v2.23.2.57.md)。
