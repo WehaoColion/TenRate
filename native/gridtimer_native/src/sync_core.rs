@@ -6577,7 +6577,25 @@ pub(crate) fn refresh_committed_sync_response(raw: &str, current: &str) -> Resul
         .map_err(|_| "projected committed response exceeds its wire quota".into())
 }
 
-fn prepare_sync_payload(result: &mut SyncClientResult) -> Result<String, SyncClientResult> {
+// These three fields are the only parts of the wire envelope changed while
+// computing its size. Account snapshots can be tens of MiB: do not repeatedly
+// serialize the entire response just to discover a decimal digit count.
+fn sync_payload_metadata_wire_len(usage: i64, limit: i64, warning: &str) -> usize {
+    let warning_len = if warning.is_empty() {
+        0
+    } else {
+        // This optional camelCase field is always preceded by other fields.
+        ",\"syncPayloadWarning\":".len()
+            + serde_json::to_string(warning)
+                .expect("serializing a string cannot fail")
+                .len()
+    };
+    usage.to_string().len() + limit.to_string().len() + warning_len
+}
+
+// Preserve the original conservative encoder as a fall-back if the schema
+// or a quota-boundary oscillation defeats the length-only calculation.
+fn prepare_sync_payload_fallback(result: &mut SyncClientResult) -> Result<String, SyncClientResult> {
     let mut encoded = encode_result(result);
     for _ in 0..3 {
         result.sync_payload_usage_bytes = encoded.len().min(i64::MAX as usize) as i64;
@@ -6595,6 +6613,55 @@ fn prepare_sync_payload(result: &mut SyncClientResult) -> Result<String, SyncCli
     } else {
         Ok(encoded)
     }
+}
+
+fn prepare_sync_payload(result: &mut SyncClientResult) -> Result<String, SyncClientResult> {
+    let encoded = encode_result(result);
+    let prior_usage = result.sync_payload_usage_bytes;
+    let prior_limit = result.sync_payload_limit_bytes;
+    let prior_warning = result.sync_payload_warning.clone();
+    let prior_metadata_len =
+        sync_payload_metadata_wire_len(prior_usage, prior_limit, &prior_warning);
+
+    if let Some(static_len) = encoded.len().checked_sub(prior_metadata_len) {
+        let limit = MAX_RESPONSE_BODY_BYTES as i64;
+        let mut proposed_len = encoded.len();
+
+        // Only decimal lengths and a bounded warning string change here.
+        // No large JSON is serialized during these iterations.
+        for _ in 0..8 {
+            let warning = sync_payload_warning(proposed_len);
+            let updated_len = static_len
+                .saturating_add(sync_payload_metadata_wire_len(
+                    proposed_len.min(i64::MAX as usize) as i64,
+                    limit,
+                    warning,
+                ));
+            if updated_len == proposed_len {
+                result.sync_payload_usage_bytes =
+                    proposed_len.min(i64::MAX as usize) as i64;
+                result.sync_payload_limit_bytes = limit;
+                result.sync_payload_warning = warning.to_string();
+                let final_encoded = encode_result(result);
+                // Assert the assumed wire layout at runtime, never emit a
+                // misreported length if the serializer or schema changes.
+                if final_encoded.len() == proposed_len {
+                    return if final_encoded.len() > MAX_RESPONSE_BODY_BYTES {
+                        Err(sync_payload_quota_exceeded_result(final_encoded.len()))
+                    } else {
+                        Ok(final_encoded)
+                    };
+                }
+                break;
+            }
+            proposed_len = updated_len;
+        }
+    }
+
+    result.sync_payload_usage_bytes = prior_usage;
+    result.sync_payload_limit_bytes = prior_limit;
+    result.sync_payload_warning = prior_warning;
+    prepare_sync_payload_fallback(result)
 }
 
 fn app_data_quota_exceeded_result(
