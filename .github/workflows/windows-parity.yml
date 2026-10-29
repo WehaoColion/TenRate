@@ -37,7 +37,7 @@ jobs:
         run: cargo test --locked --features desktop --lib --no-fail-fast
 
   package:
-    name: Package Windows 1.1.0.9 preview installer
+    name: Package Windows 1.1.0.10 preview installer
     needs: windows
     runs-on: windows-latest
     timeout-minutes: 110
@@ -66,8 +66,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $root = $env:GITHUB_WORKSPACE
           $identity = Get-Content (Join-Path $root 'native/gridtimer_native/src/product_identity.rs') -Raw
-          if ($identity -notmatch 'pub const WINDOWS_APP_VERSION: &str = "1\.1\.0\.9";') {
-            throw 'Refusing to package: Windows identity is not 1.1.0.9'
+          if ($identity -notmatch 'pub const WINDOWS_APP_VERSION: &str = "1\.1\.0\.10";') {
+            throw 'Refusing to package: Windows identity is not 1.1.0.10'
           }
           $exe = Join-Path $root 'native/gridtimer_native/target/release/timer_windows_client.exe'
           if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Windows client executable is missing' }
@@ -82,8 +82,8 @@ jobs:
           New-Item -ItemType Directory -Path $dist, $portable -Force | Out-Null
           Copy-Item $exe (Join-Path $portable 'timer_windows_client.exe')
           Copy-Item (Join-Path $root 'tools/windows_preview_README.txt') (Join-Path $portable 'README.txt')
-          "Version: 1.1.0.9`nCommit: $env:GITHUB_SHA`nBuild: unsigned Windows x64 preview" | Set-Content -LiteralPath (Join-Path $portable 'BUILD_INFO.txt') -Encoding utf8
-          $zip = Join-Path $dist 'TenRate_Windows_v1.1.0.9_preview_portable.zip'
+          "Version: 1.1.0.10`nCommit: $env:GITHUB_SHA`nBuild: unsigned Windows x64 preview" | Set-Content -LiteralPath (Join-Path $portable 'BUILD_INFO.txt') -Encoding utf8
+          $zip = Join-Path $dist 'TenRate_Windows_v1.1.0.10_preview_portable.zip'
           Compress-Archive -LiteralPath (Join-Path $portable 'timer_windows_client.exe'), (Join-Path $portable 'README.txt'), (Join-Path $portable 'BUILD_INFO.txt') -DestinationPath $zip
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (!(Test-Path -LiteralPath $iscc)) {
@@ -93,22 +93,22 @@ jobs:
           if (!(Test-Path -LiteralPath $iscc)) { throw 'ISCC.exe was not installed' }
           & $iscc "/O$dist" (Join-Path $root 'tools/windows_preview.iss')
           if ($LASTEXITCODE -ne 0) { throw 'Windows setup compilation failed' }
-          $installer = Join-Path $dist 'TenRate_Windows_v1.1.0.9_preview_setup.exe'
+          $installer = Join-Path $dist 'TenRate_Windows_v1.1.0.10_preview_setup.exe'
           if (!(Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Windows setup was not generated' }
           foreach ($file in @($installer, $zip)) {
             $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $([IO.Path]::GetFileName($file))" | Set-Content -LiteralPath ($file + '.sha256') -Encoding ascii
           }
-          "Windows 1.1.0.9 candidate setup and portable ZIP built from $env:GITHUB_SHA (unsigned; not installed or device-tested)." >> $env:GITHUB_STEP_SUMMARY
+          "Windows 1.1.0.10 candidate setup and portable ZIP built from $env:GITHUB_SHA (unsigned; not installed or device-tested)." >> $env:GITHUB_STEP_SUMMARY
       - name: Upload Windows preview installers
         uses: actions/upload-artifact@v4
         with:
-          name: TenRate-Windows-1.1.0.9-preview
+          name: TenRate-Windows-1.1.0.10-preview
           path: |
-            dist/TenRate_Windows_v1.1.0.9_preview_setup.exe
-            dist/TenRate_Windows_v1.1.0.9_preview_setup.exe.sha256
-            dist/TenRate_Windows_v1.1.0.9_preview_portable.zip
-            dist/TenRate_Windows_v1.1.0.9_preview_portable.zip.sha256
+            dist/TenRate_Windows_v1.1.0.10_preview_setup.exe
+            dist/TenRate_Windows_v1.1.0.10_preview_setup.exe.sha256
+            dist/TenRate_Windows_v1.1.0.10_preview_portable.zip
+            dist/TenRate_Windows_v1.1.0.10_preview_portable.zip.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -123,7 +123,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: TenRate-Windows-1.1.0.9-preview
+          name: TenRate-Windows-1.1.0.10-preview
           path: package
       - name: Verify hashes and create candidate GitHub Release
         shell: bash
@@ -135,8 +135,8 @@ jobs:
           from pathlib import Path
           import hashlib
           expected = {
-              'TenRate_Windows_v1.1.0.9_preview_setup.exe',
-              'TenRate_Windows_v1.1.0.9_preview_portable.zip',
+              'TenRate_Windows_v1.1.0.10_preview_setup.exe',
+              'TenRate_Windows_v1.1.0.10_preview_portable.zip',
           }
           actual = {p.name for p in Path('package').iterdir() if p.is_file() and not p.name.endswith('.sha256')}
           if actual != expected:
@@ -148,10 +148,10 @@ jobs:
                   raise SystemExit(f'SHA256 mismatch: {filename}')
           print('Windows preview downloads have verified SHA256 sidecars')
           PY
-          tag="windows-v1.1.0.9-preview-${GITHUB_SHA:0:12}"
+          tag="windows-v1.1.0.10-preview-${GITHUB_SHA:0:12}"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $tag already exists; refusing overwrite" >&2
             exit 1
           fi
-          gh release create "$tag" package/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Windows 1.1.0.9 preview (PR #51)" --notes "Unsigned test installer and portable ZIP built from PR #51. Not a formal desktop/sync-service release; no machine or account sync acceptance performed. Install side by side, and back up data before testing."
+          gh release create "$tag" package/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Windows 1.1.0.10 preview build" --notes "Unsigned test installer and portable ZIP built from the integration source. Not a formal desktop/sync-service release; no machine or account sync acceptance performed. Install side by side, and back up data before testing."
           echo "Preview download: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"

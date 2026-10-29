@@ -14,6 +14,74 @@ include!("sync_legacy_privacy_tests.rs");
 include!("sync_preschema_privacy_tests.rs");
 use std::collections::VecDeque;
 
+#[test]
+fn diagnostic_pending_image_sync_preserves_note_and_history() {
+    let token = "diagnostic-token";
+    let fixture = account_test_store(token, app_data::default_app_data_json(1_000));
+    let mut incoming: Value =
+        serde_json::from_str(&app_data::default_app_data_json(50_000)).unwrap();
+    let id = "12345678-1234-4abc-8abc-123456789abc";
+    let marker = format!("pending:{id}");
+    let placeholder = json!({"id":id,"type":"IMAGE","attachmentId":marker});
+    incoming["notes"] = json!([{
+        "id":"phone-note", "title":"kept", "content":"current text",
+        "createdAtEpochMillis":49_000, "updatedAtEpochMillis":50_000,
+        "document":{"blocks":[{"id":"text","type":"TEXT","text":"current text"},placeholder]},
+        "revisions":[{"id":"history", "title":"old", "content":"historical text", "capturedAtEpochMillis":49_500,
+            "updatedAtEpochMillis":49_500, "document":{"blocks":[placeholder]}}]
+    }]);
+    let body = serde_json::to_string(&SyncSnapshotRequest {
+        request_id: random_token(18),
+        app_data_json: incoming.to_string(),
+        client_updated_at_epoch_millis: 50_000,
+        device_name: "diagnostic".to_string(),
+        ..SyncSnapshotRequest::default()
+    })
+    .unwrap();
+    let request = HttpRequest {
+        headers: vec![("Authorization".to_string(), format!("Bearer {token}"))],
+        body,
+        ..HttpRequest::default()
+    };
+    let (status, result) = handle_sync_mode(&request, &fixture.store, false);
+    assert_eq!(200, status, "{}", result.message);
+    assert!(result.ok);
+    let stored = fixture.store.read_account("user-1").unwrap().app_data_json;
+    assert!(stored.contains("current text"));
+    assert!(stored.contains("historical text"));
+    assert!(stored.contains(&marker));
+    let before_history = fixture.store.snapshot_history_count("user-1").unwrap();
+    let mut next: Value = serde_json::from_str(&stored).unwrap();
+    next["notes"][0]["content"] = json!("updated text");
+    next["notes"][0]["document"]["blocks"][0]["text"] = json!("updated text");
+    let update_time = now_millis();
+    let new_data =
+        app_data::upsert_note_app_data_json(&stored, &next["notes"][0].to_string(), update_time)
+            .expect("local note edit");
+    let body = serde_json::to_string(&SyncSnapshotRequest {
+        request_id: random_token(18),
+        app_data_json: new_data,
+        client_updated_at_epoch_millis: update_time,
+        device_name: "diagnostic".to_string(),
+        ..SyncSnapshotRequest::default()
+    })
+    .unwrap();
+    let request = HttpRequest {
+        headers: vec![("Authorization".to_string(), format!("Bearer {token}"))],
+        body,
+        ..HttpRequest::default()
+    };
+    let (status, result) = handle_sync_mode(&request, &fixture.store, false);
+    assert_eq!(200, status, "{}", result.message);
+    assert!(result.ok);
+    let second = fixture.store.read_account("user-1").unwrap().app_data_json;
+    assert!(second.contains("updated text"));
+    assert!(second.contains("historical text"));
+    assert!(second.contains(&marker));
+    assert!(fixture.store.snapshot_history_count("user-1").unwrap() > before_history);
+    fixture.store.verify_snapshot_storage_integrity().unwrap();
+}
+
 const DESKTOP_MEDIA_SERVER_INSTANCE_ID: &str =
     "1111111111111111111111111111111111111111111111111111111111111111";
 const DESKTOP_MEDIA_ACCOUNT_NAMESPACE: &str =
