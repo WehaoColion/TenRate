@@ -525,3 +525,35 @@ fn knowledge_hierarchy_promoted_origin_cannot_be_removed_or_hidden_by_encryption
     plain_clone.id = clone.id.clone();
     assert!(knowledge_save_allowed(&data, Some(&plain_clone), &clone));
 }
+
+#[test]
+fn creating_a_previously_missing_parent_keeps_dangling_children_compatible() {
+    let raw = create_note_folder_app_data_json(&state(), "legacy", "旧目录", 1001).unwrap();
+    let raw = action(&raw, "create_page", "orphan", "", "孤立子页", 1002);
+    let mut value = serde_json::from_str::<Value>(&raw).unwrap();
+    let orphan = value["notes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|note| note["id"] == "orphan")
+        .unwrap();
+    orphan["document"]["knowledge"]["parentId"] = json!("future");
+    let raw = sanitize_app_data_json(&value.to_string(), 1003).unwrap();
+    let mut expected = parse_app_data_for_mutation(&raw, 1004).unwrap();
+    let mut parent = NoteEntry {
+        id: "future".to_owned(),
+        title: "补建父页面".to_owned(),
+        kind: NoteEntryKind::Document,
+        ..Default::default()
+    };
+    knowledge_ensure_page(&mut parent).parent_id = Some("legacy".to_owned());
+    parent = normalize_note_for_save(&expected, parent, None, 1004).unwrap();
+    expected.notes.push(parent);
+    knowledge_refresh_folder_projection(&mut expected, &HashSet::from(["future".into()]), 1004)
+        .unwrap();
+    let expected = serde_json::to_value(expected.sanitized(1004).unwrap()).unwrap();
+    let actual = action(&raw, "create_page", "future", "legacy", "补建父页面", 1004);
+    assert_eq!(serde_json::from_str::<Value>(&actual).unwrap(), expected);
+    assert_eq!(note(&actual, "orphan")["folderId"], "legacy");
+}
+
