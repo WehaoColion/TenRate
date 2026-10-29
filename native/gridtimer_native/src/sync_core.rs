@@ -6629,7 +6629,9 @@ fn prepare_sync_payload(result: &mut SyncClientResult) -> Result<String, SyncCli
 
         // Only decimal lengths and a bounded warning string change here.
         // No large JSON is serialized during these iterations.
-        for _ in 0..8 {
+        // The old encoder makes at most three corrective passes; preserve
+        // its exact wire result if this boundary needs more iterations.
+        for _ in 0..3 {
             let warning = sync_payload_warning(proposed_len);
             let updated_len = static_len
                 .saturating_add(sync_payload_metadata_wire_len(
