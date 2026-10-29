@@ -178,7 +178,7 @@ jobs:
   publish-candidate:
     name: Publish signed prerelease
     needs: release
-    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57' || github.ref == 'refs/heads/fix/android-empty-document-exit-v2.23.2.59' || github.ref == 'refs/heads/feat/android-inline-children-v2.23.3'
+    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57' || github.ref == 'refs/heads/fix/android-empty-document-exit-v2.23.2.59' || github.ref == 'refs/heads/feat/android-inline-children-v2.23.3' || github.ref == 'refs/heads/perf/android-rust-hierarchy-create-save-2.23.4'
     runs-on: ubuntu-latest
     permissions:
       actions: read
