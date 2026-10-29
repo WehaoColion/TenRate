@@ -551,7 +551,13 @@ fn creating_a_previously_missing_parent_keeps_dangling_children_compatible() {
     expected.notes.push(parent);
     knowledge_refresh_folder_projection(&mut expected, &HashSet::from(["future".into()]), 1004)
         .unwrap();
-    let expected = serde_json::to_value(expected.sanitized(1004).unwrap()).unwrap();
+    // Compare the same JSON wire representation on both sides. Direct
+    // serde_json::to_value(AppData) retains f32 -> f64 precision noise in
+    // finance category shares (e.g. 0.180000007 vs serialized 0.18).
+    let expected = serde_json::from_str::<Value>(
+        &serde_json::to_string(&expected.sanitized(1004).unwrap()).unwrap(),
+    )
+    .unwrap();
     let actual = action(&raw, "create_page", "future", "legacy", "补建父页面", 1004);
     assert_eq!(serde_json::from_str::<Value>(&actual).unwrap(), expected);
     assert_eq!(note(&actual, "orphan")["folderId"], "legacy");
