@@ -1,3 +1,4 @@
+// v2.23.3 - Record compact, complete mobile page children and three-part milestone.
 // v2.23.2.59 - Do not save untouched newly created blank knowledge pages.
 // v2.23.2.57 - Show an interactive workbench shell while verified data loads.
 // v2.23.2.56 - Open sticky notes directly in edit mode.
@@ -49,7 +50,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.2.59";
+pub const LATEST_VERSION: &str = "2.23.3";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -79,6 +80,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.3",
+        updatedAt = "2026-10-29 06:30",
+        summary = "知识页子项默认完整展开，紧凑显示并减少无意义的查看操作",
+        sections = listOf(
+            AndroidUpdateSection("手机端子页面", listOf(
+                "父页面中的直接子页面默认展开，全部列出，不再只显示前3项，也不再需要点击查看全部。",
+                "改为紧凑的可点击行，支持两行长标题；不再为没有下级的页面反复显示0个子项。"
+            )),
+            AndroidUpdateSection("导航和保存", listOf(
+                "保留子项主动折叠和独立完整目录，已有文件夹跳转及排序机制不变。",
+                "展开与收起仅改变本机界面状态，不进入文档保存路径；进入子页面仍遵守现有草稿保存与切换保护。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.2.59",
         updatedAt = "2026-10-28 19:57",
@@ -1206,23 +1222,17 @@ mod tests {
             .split('.')
             .map(|segment| segment.parse::<u32>().expect("numeric release segment"))
             .collect::<Vec<_>>();
-        assert_eq!(latest.len(), 4, "current release must have four segments");
-        assert_eq!(
-            previous.len(),
-            4,
-            "previous release must have four segments"
-        );
-        assert_eq!(
-            &latest[..3],
-            &previous[..3],
-            "release prefix must remain fixed"
-        );
-        // Candidate releases can be prepared on independent PR branches; the
-        // preceding merged version need not be numerically adjacent.
-        assert!(
-            latest[3] > previous[3],
-            "previous merged release must be older than the current candidate"
-        );
+        // A requested three-segment milestone denotes its .0 patch release.
+        // Compare numerically so 2.23.3 correctly succeeds 2.23.2.59.
+        assert!((3..=4).contains(&latest.len()));
+        assert!((3..=4).contains(&previous.len()));
+        let mut latest_normalized = latest.clone();
+        let mut previous_normalized = previous.clone();
+        latest_normalized.resize(4, 0);
+        previous_normalized.resize(4, 0);
+        assert_eq!(&latest_normalized[..2], &previous_normalized[..2]);
+        assert!(latest_normalized > previous_normalized,
+            "previous merged release must be older than the current candidate");
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));
