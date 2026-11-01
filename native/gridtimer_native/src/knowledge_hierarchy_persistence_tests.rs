@@ -563,3 +563,73 @@ fn creating_a_previously_missing_parent_keeps_dangling_children_compatible() {
     assert_eq!(note(&actual, "orphan")["folderId"], "legacy");
 }
 
+#[test]
+fn duplicate_page_creates_sibling_and_independent_nested_tree() {
+    let raw = action(&state(), "create_folder", "folder", "", "资料", 1001);
+    let raw = upsert_note_app_data_json(
+        &raw,
+        &json!({"id":"original","kind":"DOCUMENT","title":"原文","content":"正文与图片引用"}).to_string(),
+        1002,
+    ).unwrap();
+    let raw = action(&raw, "move", "original", "folder", "", 1003);
+    let raw = action(&raw, "create_page", "child", "original", "原子页", 1004);
+    let raw = action(&raw, "create_page", "grandchild", "child", "孙页", 1005);
+    let original_before = note(&raw, "original");
+    let child_before = note(&raw, "child");
+
+    let copied = action(&raw, "duplicate_page", "copy", "original", "", 1006);
+    assert_eq!(note(&copied, "original"), original_before);
+    assert_eq!(note(&copied, "child"), child_before);
+    let root = note(&copied, "copy");
+    assert_eq!(root["title"], "原文（副本）");
+    assert_eq!(root["content"], "正文与图片引用");
+    assert_eq!(root["document"]["knowledge"]["parentId"], "folder");
+    assert_eq!(root["folderId"], "folder");
+    assert!(root["revisions"].as_array().unwrap().is_empty());
+
+    let result: Value = serde_json::from_str(&copied).unwrap();
+    let cloned_children = result["notes"].as_array().unwrap().iter()
+        .filter(|n| n["document"]["knowledge"]["parentId"] == "copy")
+        .collect::<Vec<_>>();
+    assert_eq!(cloned_children.len(), 1);
+    let cloned_child = cloned_children[0];
+    assert_eq!(cloned_child["title"], "原子页");
+    assert_ne!(cloned_child["id"], "child");
+    let cloned_grandchildren = result["notes"].as_array().unwrap().iter()
+        .filter(|n| n["document"]["knowledge"]["parentId"] == cloned_child["id"])
+        .collect::<Vec<_>>();
+    assert_eq!(cloned_grandchildren.len(), 1);
+    assert_eq!(cloned_grandchildren[0]["title"], "孙页");
+    assert_ne!(cloned_grandchildren[0]["id"], "grandchild");
+
+    let again = action(&copied, "duplicate_page", "copy2", "original", "", 1007);
+    assert_eq!(note(&again, "copy2")["title"], "原文（副本 2）");
+    assert_eq!(note(&again, "original"), original_before);
+}
+
+#[test]
+fn duplicate_page_fails_closed_for_protected_or_invalid_sources() {
+    let raw = action(&state(), "create_page", "root", "", "页面", 1001);
+    let raw = action(&raw, "create_page", "child", "root", "孩子", 1002);
+    assert!(knowledge_container_action_app_data_json(
+        &raw, "duplicate_page", "root", "root", "", 1003
+    ).is_none());
+    assert!(knowledge_container_action_app_data_json(
+        &raw, "duplicate_page", "copy", "missing", "", 1003
+    ).is_none());
+    let mut locked = note(&raw, "child");
+    locked["document"]["knowledge"]["locked"] = json!(true);
+    let locked_raw = upsert_note_app_data_json(&raw, &locked.to_string(), 1003).unwrap();
+    assert!(knowledge_container_action_app_data_json(
+        &locked_raw, "duplicate_page", "copy", "root", "", 1004
+    ).is_none());
+    assert!(note(&locked_raw, "root")["id"] == "root");
+}
+
+#[test]
+fn duplicate_root_page_remains_at_root_without_mutating_source() {
+    let raw = action(&state(), "create_page", "root", "", "无父页面", 1001);
+    let copied = action(&raw, "duplicate_page", "other", "root", "", 1002);
+    assert_eq!(note(&copied, "other")["document"]["knowledge"]["parentId"], Value::Null);
+    assert_eq!(note(&copied, "root"), note(&raw, "root"));
+}
