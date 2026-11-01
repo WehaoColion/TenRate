@@ -1,3 +1,4 @@
+// v1.1.0.11 Windows - Align diagnostic update with the next Windows release identity.
 // v2.23.4 Android - Local hierarchy projection and save latency diagnostics.
 // v1.1.0.10 Windows - Fix attachment reference audit for Android image import markers.
 // v2.23.3 Android - Complete compact inline children in knowledge pages.
@@ -118,7 +119,7 @@
 // v2.22.41 Android - Protect newer note generations during privacy cleanup.
 // v2.22.39 - Complete Windows usability, save feedback, and release acceptance.
 
-pub const WINDOWS_APP_VERSION: &str = "1.1.0.10";
+pub const WINDOWS_APP_VERSION: &str = "1.1.0.11";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
 pub const ANDROID_APP_VERSION: &str = "2.23.4";
 pub const ANDROID_VERSION_CODE: i32 = 22330;
@@ -152,9 +153,9 @@ pub const PRODUCT: ProductIdentity = ProductIdentity {
     runtime_log_dir: "GridTimerClientRuntime",
 };
 
-pub const WINDOWS_CLIENT_TITLE: &str = "十倍率 Windows v1.1.0.10";
-pub const SYNC_LAUNCHER_FILE_NAME: &str = "grid_timer_sync_launcher_v1.1.0.10.exe";
-pub const SYNC_SERVER_FILE_NAME: &str = "grid_timer_sync_server_v1.1.0.10.exe";
+pub const WINDOWS_CLIENT_TITLE: &str = "十倍率 Windows v1.1.0.11";
+pub const SYNC_LAUNCHER_FILE_NAME: &str = "grid_timer_sync_launcher_v1.1.0.11.exe";
+pub const SYNC_SERVER_FILE_NAME: &str = "grid_timer_sync_server_v1.1.0.11.exe";
 pub const RELEASE_MANIFEST_FILE_NAME: &str = "release_manifest.json";
 
 pub const BUILD_GIT_COMMIT: &str = match option_env!("GRIDTIMER_GIT_COMMIT") {
@@ -177,6 +178,20 @@ mod tests {
         assert!(SYNC_LAUNCHER_FILE_NAME.contains(WINDOWS_APP_VERSION));
         assert!(SYNC_SERVER_FILE_NAME.contains(WINDOWS_APP_VERSION));
         assert_eq!("gridtimer", PRODUCT.internal_id);
+    }
+
+    #[test]
+    fn windows_preview_distribution_tracks_the_release_version() {
+        let installer = include_str!("../../../tools/windows_preview.iss");
+        let readme = include_str!("../../../tools/windows_preview_README.txt");
+        let workflow = include_str!("../../../.github/workflows/windows-parity.yml");
+        assert!(installer.contains(&format!("#define TenRateVersion \"{}\"", WINDOWS_APP_VERSION)));
+        assert!(readme.contains(&format!("TenRate Windows {}", WINDOWS_APP_VERSION)));
+        assert!(workflow.contains(&format!("TenRate-Windows-{}-preview", WINDOWS_APP_VERSION)));
+        assert!(workflow.contains(&format!(
+            "TenRate_Windows_v{}_preview_setup.exe",
+            WINDOWS_APP_VERSION
+        )));
     }
 
     #[test]

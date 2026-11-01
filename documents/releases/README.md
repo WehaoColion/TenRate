@@ -1,3 +1,5 @@
+Windows 1.1.0.11 历史容量诊断与版本号修正候选：[说明](windows/release_notes_windows_v1.1.0.11.md)。
+
 Android 2.23.4 Rust 新建页面局部层级投影和保存耗时诊断候选：[说明](android/release_notes_v2.23.4.md)。
 
 Windows 1.1.0.10 附件引用核验修复：[说明](windows/release_notes_windows_v1.1.0.10.md)。
