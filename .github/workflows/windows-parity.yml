@@ -66,7 +66,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $root = $env:GITHUB_WORKSPACE
           $identity = Get-Content (Join-Path $root 'native/gridtimer_native/src/product_identity.rs') -Raw
-          if ($identity -notmatch 'pub const WINDOWS_APP_VERSION: &str = "1\.1\.0\.10";') {
+          if ($identity -notmatch 'pub const WINDOWS_APP_VERSION: &str = "1\.1\.0\.11";') {
             throw 'Refusing to package: Windows identity is not 1.1.0.11'
           }
           $exe = Join-Path $root 'native/gridtimer_native/target/release/timer_windows_client.exe'
