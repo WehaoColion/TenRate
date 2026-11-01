@@ -5019,7 +5019,7 @@ fn authenticated_response_identity_is_stable_and_always_uses_token_owner() {
         &request,
         "/v1/media/upload",
         &store.store,
-        (507, snapshot_history_quota_exceeded_result(10, 20, 15)),
+        (507, snapshot_history_quota_exceeded_result(10, 20, 15, None)),
     );
     assert_eq!(507, quota_status);
     assert_eq!("user-1", quota_result.user_id);
