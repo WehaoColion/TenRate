@@ -249,6 +249,17 @@ pub struct SyncClientResult {
     pub snapshot_history_limit_bytes: i64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub snapshot_history_warning: String,
+    // Optional, additive diagnostics only. Older clients can ignore these fields.
+    #[serde(default)]
+    pub snapshot_history_json_bytes: i64,
+    #[serde(default)]
+    pub snapshot_history_media_bytes: i64,
+    #[serde(default)]
+    pub snapshot_history_metadata_bytes: i64,
+    #[serde(default)]
+    pub snapshot_history_revision_count: i64,
+    #[serde(default)]
+    pub snapshot_history_media_reference_count: i64,
     #[serde(default)]
     pub sync_payload_usage_bytes: i64,
     #[serde(default)]
@@ -5608,6 +5619,7 @@ fn handle_sync_mode(
                         usage_bytes,
                         projected_bytes,
                         limit_bytes,
+                        store.snapshot_history_space_breakdown(&user_id).ok(),
                     ),
                 );
             }
@@ -5880,7 +5892,12 @@ fn handle_media_upload(
             limit_bytes,
         }) => (
             507,
-            snapshot_history_quota_exceeded_result(usage_bytes, projected_bytes, limit_bytes),
+            snapshot_history_quota_exceeded_result(
+                usage_bytes,
+                projected_bytes,
+                limit_bytes,
+                store.snapshot_history_space_breakdown(&user_id).ok(),
+            ),
         ),
         Err(StoreError::Integrity(message))
             if message == "attachment id already belongs to different content" =>
@@ -6504,8 +6521,9 @@ fn snapshot_history_quota_exceeded_result(
     usage_bytes: i64,
     projected_bytes: i64,
     limit_bytes: i64,
+    breakdown: Option<crate::server_store::SnapshotHistorySpaceBreakdown>,
 ) -> SyncClientResult {
-    SyncClientResult {
+    let mut result = SyncClientResult {
         ok: false,
         message:
             "服务器历史空间已满，本次同步未写入；本地数据仍完整保留。请先导出或明确删除历史后重试。"
@@ -6518,7 +6536,31 @@ fn snapshot_history_quota_exceeded_result(
         retryable: false,
         current_committed: false,
         ..SyncClientResult::default()
+    };
+    // Only report the breakdown if it still matches the rejected transaction.
+    // A concurrent writer may have changed history after the rollback.
+    if let Some(breakdown) = breakdown.filter(|value| value.charged_bytes == usage_bytes) {
+        let metadata_bytes = breakdown
+            .snapshot_row_bytes
+            .saturating_add(breakdown.media_row_bytes)
+            .saturating_add(breakdown.media_metadata_bytes);
+        result.snapshot_history_json_bytes = breakdown.snapshot_json_bytes;
+        result.snapshot_history_media_bytes = breakdown.media_content_bytes;
+        result.snapshot_history_metadata_bytes = metadata_bytes;
+        result.snapshot_history_revision_count = breakdown.history_rows;
+        result.snapshot_history_media_reference_count = breakdown.media_rows;
+        let mib = 1024.0 * 1024.0;
+        result.message.push_str(&format!(
+            " 历史占用：快照 {:.2} MiB、媒体 {:.2} MiB、引用元数据 {:.2} MiB，共 {} 个版本和 {} 条媒体引用；本次预计新增 {:.2} MiB。",
+            breakdown.snapshot_json_bytes as f64 / mib,
+            breakdown.media_content_bytes as f64 / mib,
+            metadata_bytes as f64 / mib,
+            breakdown.history_rows,
+            breakdown.media_rows,
+            projected_bytes.saturating_sub(usage_bytes) as f64 / mib,
+        ));
     }
+    result
 }
 
 fn sync_payload_warning(usage_bytes: usize) -> &'static str {
