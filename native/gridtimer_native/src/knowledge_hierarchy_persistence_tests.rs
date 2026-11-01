@@ -584,7 +584,9 @@ fn duplicate_page_creates_sibling_and_independent_nested_tree() {
     assert_eq!(root["title"], "原文（副本）");
     assert_eq!(root["content"], "正文与图片引用");
     assert_eq!(root["document"]["knowledge"]["parentId"], "folder");
-    assert_eq!(root["folderId"], "folder");
+    // Modern knowledge folders are typed pages, not legacy NoteFolder rows.
+    // The authoritative parentId already proves the sibling relationship.
+    assert_eq!(root["folderId"], Value::Null);
     assert!(root["revisions"].as_array().unwrap().is_empty());
 
     let result: Value = serde_json::from_str(&copied).unwrap();
