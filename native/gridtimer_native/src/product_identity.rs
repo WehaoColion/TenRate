@@ -192,6 +192,13 @@ mod tests {
             "TenRate_Windows_v{}_preview_setup.exe",
             WINDOWS_APP_VERSION
         )));
+        // The PowerShell packaging guard stores dots as escaped regex tokens;
+        // checking only artifact filenames missed a stale validation version.
+        let escaped_version = WINDOWS_APP_VERSION.replace('.', "\\.");
+        assert!(workflow.contains(&format!(
+            r#"pub const WINDOWS_APP_VERSION: &str = "{}";"#,
+            escaped_version
+        )));
     }
 
     #[test]
