@@ -3544,6 +3544,7 @@ impl ArchivedTask {
 
 include!("knowledge_app_data.rs");
 include!("knowledge_hierarchy_app_data.rs");
+include!("note_trash_retention.rs");
 
 impl NoteEntry {
     fn sanitized(mut self, _valid_folder_ids: &HashSet<String>, now: i64) -> Option<Self> {
