@@ -79,6 +79,8 @@ mod android_legal_workflow;
 mod android_local_startup;
 #[path = "../sourcegen/android_note_background.rs"]
 mod android_note_background;
+#[path = "../sourcegen/android_trash_retention.rs"]
+mod android_trash_retention;
 #[path = "../sourcegen/android_image_import_performance.rs"]
 mod android_image_import_performance;
 #[path = "../sourcegen/android_note_collection_recovery.rs"]
@@ -508,8 +510,16 @@ fn run() -> io::Result<()> {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_image_import_performance::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_trash_retention::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
+
+    write_source(
+        &output_root,
+        android_trash_retention::JOB_PATH,
+        android_trash_retention::JOB_CONTENTS,
+    )?;
 
     write_source(
         &output_root,
@@ -623,7 +633,9 @@ fn run() -> io::Result<()> {
     )?;
 
     for source in android_sources::SOURCES {
-        write_source(&output_root, source.path, source.contents)?;
+        let rendered = android_trash_retention::render_manifest(source.path, source.contents)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        write_source(&output_root, source.path, &rendered)?;
     }
 
     write_source(

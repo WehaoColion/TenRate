@@ -51,7 +51,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.1";
+pub const LATEST_VERSION: &str = "2.23.4.2";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -81,6 +81,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.2",
+        updatedAt = "2026-11-02 14:50",
+        summary = "安卓回收站内容保留100天，到期自动执行永久清理",
+        sections = listOf(
+            AndroidUpdateSection("自动清理", listOf(
+                "便签与知识文档移入回收站后按删除时间保留100天，恢复后不再参与清理。",
+                "后台周期任务、应用启动或账户同步完成后检查到期内容。安卓省电限制可能延迟实际清理时间。"
+            )),
+            AndroidUpdateSection("数据保护", listOf(
+                "到期清理由Rust批量执行，继续保留同步删除墓碑及其他文档仍在使用的共享附件。",
+                "当前工作区未发生到期清理时不产生新的保存操作；Windows端不执行定期清理任务。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.1",
         updatedAt = "2026-11-02 02:00",

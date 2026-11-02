@@ -3416,6 +3416,23 @@ pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nat
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativePurgeExpiredNoteTrashAppDataJson(
+    mut env: JNIEnv,
+    _class: JClass,
+    app_data_json: JString,
+    now: jlong,
+) -> jstring {
+    let app_data_json: String = match env.get_string(&app_data_json) {
+        Ok(value) => value.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match app_data::purge_expired_note_trash_app_data_json(&app_data_json, now) {
+        Some(value) => new_java_string(&mut env, &value),
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeEmptyNoteTrashAppDataJson(
     mut env: JNIEnv,
     _class: JClass,
