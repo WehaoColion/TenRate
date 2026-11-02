@@ -51,7 +51,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.2";
+pub const LATEST_VERSION: &str = "2.23.4.3";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -81,6 +81,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.3",
+        updatedAt = "2026-11-02 23:28",
+        summary = "知识页面再次打开时统一进入正文，目录管理保留独立入口",
+        sections = listOf(
+            AndroidUpdateSection("进入页面", listOf(
+                "从知识目录、页面子项、创建页面及创建副本进入知识页面时，关闭先前的目录管理状态，直接进入页面正文。",
+                "再次返回和打开同一个页面时，不再因目录模式残留而显示不同的管理界面。"
+            )),
+            AndroidUpdateSection("目录与数据", listOf(
+                "原有目录管理、文件夹浏览与子项排序功能保留，明确选择目录时仍能进行管理。",
+                "仅修正安卓导航状态，不变更正文、页面层级、存储快照或同步协议。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.2",
         updatedAt = "2026-11-02 14:50",

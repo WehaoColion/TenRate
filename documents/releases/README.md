@@ -1,3 +1,4 @@
+Android 2.23.4.3 知识页面重复进入一致性候选：[说明](android/release_notes_v2.23.4.3.md)。
 Android 2.23.4.2 回收站 100 天自动清理候选：[说明](android/release_notes_v2.23.4.2.md)。
 
 Android 2.23.4.1 知识文档同级创建副本候选：[说明](android/release_notes_v2.23.4.1.md)。
