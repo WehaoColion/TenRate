@@ -62,14 +62,42 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             "    val scope = rememberCoroutineScope()",
             &format!("    val scope = rememberCoroutineScope()\n{STUDIO_STATE}"),
         )?;
+        // Earlier source transformations can rewrite the pending draft's
+        // initializer. Insert at the stable boundary before folder selection
+        // instead, and verify both captured editor states are already declared.
+        let navigation_anchor = studio
+            .find("    val selectedFolderId =")
+            .ok_or("hierarchy editor state boundary missing")?;
+        let selected_declaration = studio
+            .find("    var selectedNoteId ")
+            .ok_or("hierarchy selected note state missing")?;
+        let pending_declaration = studio
+            .find("    var pendingCreatedNote ")
+            .ok_or("hierarchy pending draft state missing")?;
+        if navigation_anchor <= selected_declaration || navigation_anchor <= pending_declaration {
+            return Err("hierarchy navigation functions must follow editor state declarations".into());
+        }
+        studio.insert_str(navigation_anchor, STUDIO_NAVIGATION);
         replace(&mut studio, "            if (frame == null) {\n                NoteCollectionContent(", &format!("            if (frame == null) {{\n                if (hierarchyVisible) {{\n                    androidx.compose.runtime.CompositionLocalProvider(LocalDocumentTransitionActive provides interactiveFrame) {{\n{HIERARCHY_BROWSER}\n                    }}\n                }} else NoteCollectionContent("))?;
         replace(&mut studio, "                    onManageFolders = { if (isCurrentFrame()) folderManagerVisible = true },", "                    onManageFolders = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
         replace(&mut studio,"                    appData = appData,", "                    appData = appData,\n                    onOpenHierarchy = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
-        replace(&mut studio,"                    note = documentNote,", "                    note = documentNote,\n                    hierarchyLocation = hierarchyIndex.location(documentNote.id),\n                    hasHierarchyChildren = hierarchyIndex.children(documentNote.id).isNotEmpty(),\n                    hierarchyContent = { rawNavigate ->\n                        val navigate: (() -> Unit) -> Unit = { action ->\n                            if (isCurrentFrame() && frameAccess.mayInteract()) rawNavigate {\n                                if (isCurrentFrame() && frameAccess.mayInteract()) action()\n                            }\n                        }\n                        KnowledgeHierarchyPanel(index = hierarchyIndex, parentId = documentNote.id,\n                            busy = hierarchyBusy, onBrowse = { parent -> navigate {\n                                hierarchyParentId = parent; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                            } }, onOpen = { node -> navigate {\n                                if (node.isFolder) { hierarchyParentId = node.id; hierarchyVisible = true; selectedNoteId = null }\n                                else node.note?.let { child ->\n                                    if (child.isEncryptionLocked()) { hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null; unlockedNote = null; unlockTarget = child; unlockError = \"\" }\n                                    else { hierarchyParentId = hierarchyIndex.parentOf(child.id); hierarchyVisible = true; selectedNoteId = child.id; pendingCreatedNote = null; unlockedNote = null }\n                                }\n                            } }, onRequest = { request -> navigate { hierarchyRequest = request; hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null } })\n                    },\n                    onHierarchyLocationChosen = { _ ->\n                        if (isCurrentFrame() && frameAccess.mayInteract()) {\n                            val currentLocation = viewModel.appData.value.knowledgeHierarchy().location(documentNote.id)\n                            hierarchyRequest = KnowledgeHierarchyRequest(\"move\", documentNote.id, currentLocation.parentId); hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                        }\n                    },")?;
+        replace(&mut studio,"                    note = documentNote,", "                    note = documentNote,\n                    hierarchyLocation = hierarchyIndex.location(documentNote.id),\n                    hasHierarchyChildren = hierarchyIndex.children(documentNote.id).isNotEmpty(),\n                    hierarchyContent = { rawNavigate ->\n                        val navigate: (() -> Unit) -> Unit = { action ->\n                            if (isCurrentFrame() && frameAccess.mayInteract()) rawNavigate {\n                                if (isCurrentFrame() && frameAccess.mayInteract()) action()\n                            }\n                        }\n                        KnowledgeHierarchyPanel(index = hierarchyIndex, parentId = documentNote.id,\n                            busy = hierarchyBusy, onBrowse = { parent -> navigate {\n                                pushKnowledgeReturn(); hierarchyParentId = parent; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                            } }, onOpen = { node -> navigate {\n                                if (node.isFolder) { pushKnowledgeReturn(); hierarchyParentId = node.id; hierarchyVisible = true; selectedNoteId = null }\n                                else node.note?.let { child ->\n                                    if (child.isEncryptionLocked()) { pushKnowledgeReturn(); hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null; unlockedNote = null; unlockTarget = child; unlockError = \"\"; pendingUnlockRoute = \"child\" }\n                                    else { pushKnowledgeReturn(); hierarchyVisible = false; selectedNoteId = child.id; pendingCreatedNote = null; unlockedNote = null }\n                                }\n                            } }, onRequest = { request -> navigate { pushKnowledgeReturn(); hierarchyRequest = request; hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null } })\n                    },\n                    onHierarchyLocationChosen = { _ ->\n                        if (isCurrentFrame() && frameAccess.mayInteract()) {\n                            val currentLocation = viewModel.appData.value.knowledgeHierarchy().location(documentNote.id)\n                            pushKnowledgeReturn(); hierarchyRequest = KnowledgeHierarchyRequest(\"move\", documentNote.id, currentLocation.parentId); hierarchyParentId = documentNote.id; hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                        }\n                    },")?;
         replace(&mut studio,
             "                    hierarchyLocation = hierarchyIndex.location(documentNote.id),",
-            "                    hierarchyLocation = hierarchyIndex.location(documentNote.id),\n                    onDuplicatePage = {\n                        if (isCurrentFrame() && frameAccess.mayInteract() && !hierarchyBusy) {\n                            val sourceId = documentNote.id\n                            val copyId = java.util.UUID.randomUUID().toString()\n                            hierarchyBusy = true; hierarchyMessage = \"\"\n                            hierarchyParentId = hierarchyIndex.parentOf(sourceId)\n                            hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                            viewModel.knowledgeContainerAction(\"duplicate_page\", copyId, sourceId, \"\", workspaceKey) { ok, detail ->\n                                if (hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {\n                                    hierarchyBusy = false\n                                    if (ok) {\n                                        hierarchyParentId = viewModel.appData.value.knowledgeHierarchy().parentOf(copyId)\n                                        selectedNoteId = copyId; hierarchyMessage = \"\"\n                                    } else hierarchyMessage = detail\n                                }\n                            }\n                        }\n                    },",
+            "                    hierarchyLocation = hierarchyIndex.location(documentNote.id),\n                    onDuplicatePage = {\n                        if (isCurrentFrame() && frameAccess.mayInteract() && !hierarchyBusy) {\n                            val sourceId = documentNote.id\n                            val copyId = java.util.UUID.randomUUID().toString()\n                            hierarchyBusy = true; hierarchyMessage = \"\"\n                            pushKnowledgeReturn()\n                            hierarchyParentId = hierarchyIndex.parentOf(sourceId)\n                            hierarchyVisible = true; selectedNoteId = null; pendingCreatedNote = null\n                            viewModel.knowledgeContainerAction(\"duplicate_page\", copyId, sourceId, \"\", workspaceKey) { ok, detail ->\n                                if (hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {\n                                    hierarchyBusy = false\n                                    if (ok) {\n                                        hierarchyVisible = false\n                                        selectedNoteId = copyId; hierarchyMessage = \"\"\n                                    } else hierarchyMessage = detail\n                                }\n                            }\n                        }\n                    },",
         )?;
+        replace(&mut studio,
+            "                        unlockedNote = null\n                        selectedNoteId = null\n                        pendingCreatedNote = null\n                    },",
+            "                        unlockedNote = null\n                        if (!restoreKnowledgeReturn()) { selectedNoteId = null; hierarchyVisible = false; hierarchyParentId = null }\n                        pendingCreatedNote = null\n                    },")?;
+        replace(&mut studio,
+            "                    onOpenNote = open@ { note ->\n                        if (!isCurrentFrame()) return@open",
+            "                    onOpenNote = open@ { note ->\n                        if (!isCurrentFrame()) return@open\n                        knowledgeBackStack = arrayListOf()\n                        hierarchyVisible = false; hierarchyParentId = null; pendingUnlockRoute = null")?;
+        replace(&mut studio,
+            "                        selectedNoteId = unlocked.id\n                        searchLocateQuery = null",
+            "                        if (pendingUnlockRoute == \"browser\") pushKnowledgeReturn()\n                        if (pendingUnlockRoute != null) hierarchyVisible = false\n                        pendingUnlockRoute = null\n                        selectedNoteId = unlocked.id\n                        searchLocateQuery = null")?;
+        replace(&mut studio,
+            "                    unlockTarget = null\n                    unlockError = \"\"",
+            "                    unlockTarget = null\n                    unlockError = \"\"\n                    if (pendingUnlockRoute == \"child\") restoreKnowledgeReturn()\n                    pendingUnlockRoute = null")?;
         // The request owns a workspace-scoped callback. A stale callback cannot select another account's page.
         let end = "    unlockTarget?.let { target ->";
         replace(&mut studio, end, &format!("{STUDIO_DIALOG}\n{end}"))?;
@@ -326,6 +354,43 @@ const STUDIO_STATE: &str = r####"    val hierarchyIndex = remember(appData.notes
     LaunchedEffect(hierarchyIndex, hierarchyParentId) {
         if (hierarchyParentId != null && !hierarchyIndex.nodes.containsKey(hierarchyParentId)) hierarchyParentId = null
     }
+
+    // Record view and location separately from the visible editor selection.
+    // Store four saved-state-safe strings per frame without touching the note data.
+    var knowledgeBackStack by rememberSaveable(workspaceKey) { mutableStateOf(arrayListOf<String>()) }
+    var pendingUnlockRoute by remember(workspaceKey) { mutableStateOf<String?>(null) }
+
+"####;
+const STUDIO_NAVIGATION: &str = r####"    fun pushKnowledgeReturn() {
+        knowledgeBackStack = ArrayList(knowledgeBackStack).apply {
+            add(when { selectedNoteId != null -> "document"; hierarchyVisible -> "directory"; else -> "collection" })
+            add(selectedNoteId.orEmpty())
+            add(if (hierarchyVisible) "1" else "0")
+            add(hierarchyParentId.orEmpty())
+        }
+    }
+    fun restoreKnowledgeReturn(): Boolean {
+        while (knowledgeBackStack.size >= 4) {
+            val frame = knowledgeBackStack.takeLast(4)
+            knowledgeBackStack = ArrayList(knowledgeBackStack.dropLast(4))
+            val noteId = frame[1].takeIf { it.isNotEmpty() }
+            if (frame[0] == "document") {
+                val source = noteId?.let(hierarchyIndex.nodes::get)?.note
+                if (source == null || source.isDeleted() || source.isEncryptionLocked()) continue
+            }
+            hierarchyVisible = frame[2] == "1"
+            hierarchyParentId = frame[3].takeIf { it.isNotEmpty() && hierarchyIndex.nodes.containsKey(it) }
+            selectedNoteId = if (frame[0] == "document") noteId else null
+            pendingCreatedNote = null
+            return true
+        }
+        return false
+    }
+    fun knowledgeReturnIsDocument(id: String?): Boolean {
+        val frame = knowledgeBackStack
+        return id != null && frame.size >= 4 && frame[frame.size - 4] == "document" &&
+            frame[frame.size - 3] == id
+    }
 "####;
 const HIERARCHY_BROWSER: &str = r####"                    KnowledgeHierarchyBrowser(index = hierarchyIndex, parentId = hierarchyParentId,
                         currentScope = {
@@ -338,17 +403,24 @@ const HIERARCHY_BROWSER: &str = r####"                    KnowledgeHierarchyBrow
                         },
                         busy = hierarchyBusy, message = hierarchyMessage, onBack = {
                             if (isCurrentFrame() && !hierarchyBusy) {
-                                if (hierarchyParentId == null) hierarchyVisible = false
-                                else hierarchyParentId = hierarchyIndex.parentOf(hierarchyParentId!!)
+                                val parent = hierarchyParentId?.let(hierarchyIndex::parentOf)
+                                if (knowledgeReturnIsDocument(hierarchyParentId) || knowledgeReturnIsDocument(parent)) {
+                                    restoreKnowledgeReturn()
+                                } else if (hierarchyParentId != null) hierarchyParentId = parent
+                                else if (!restoreKnowledgeReturn()) hierarchyVisible = false
                             }
-                        }, onBrowse = { if (isCurrentFrame() && !hierarchyBusy) hierarchyParentId = it }, onOpen = { node ->
+                        }, onBrowse = { if (isCurrentFrame() && !hierarchyBusy) {
+                            if (knowledgeReturnIsDocument(it)) restoreKnowledgeReturn() else hierarchyParentId = it
+                        } }, onOpen = { node ->
                             if (isCurrentFrame() && !hierarchyBusy && hierarchyIndex.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT) node.note?.let { note ->
-                                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = "" }
-                                else { pendingCreatedNote = null; unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }
+                                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = ""; pendingUnlockRoute = "browser" }
+                                else { pushKnowledgeReturn(); hierarchyVisible = false; pendingCreatedNote = null; unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }
                             }
                         }, onRequest = { if (isCurrentFrame() && !hierarchyBusy) hierarchyRequest = it })
 "####;
-const STUDIO_DIALOG: &str = r####"    hierarchyRequest?.let { request ->
+const STUDIO_DIALOG: &str = r####"    // A document and the directory manager are mutually exclusive routes.
+    // This also handles unlocked documents and restored editor selections.
+    hierarchyRequest?.let { request ->
         val requestLocation = request.id?.let(hierarchyIndex::location)
         KnowledgeHierarchyActionDialog(request = request, index = hierarchyIndex, busy = hierarchyBusy,
             error = hierarchyMessage, onDismiss = { if (!hierarchyBusy) { hierarchyRequest = null; hierarchyMessage = "" } },
@@ -371,11 +443,17 @@ const STUDIO_DIALOG: &str = r####"    hierarchyRequest?.let { request ->
                             hierarchyBusy = false
                             if (ok) {
                                 hierarchyRequest = null
-                                if (request.action == "create_page") { hierarchyParentId = parent; hierarchyVisible = true; selectedNoteId = id }
+                                if (request.action == "create_page") {
+                                    if (!knowledgeReturnIsDocument(parent)) pushKnowledgeReturn()
+                                    hierarchyVisible = false; selectedNoteId = id
+                                }
                                 if (request.action == "create_folder" || request.action == "to_folder") {
                                     hierarchyVisible = true; hierarchyParentId = id; selectedNoteId = null; pendingCreatedNote = null
                                 }
-                                if (request.action == "to_page") { hierarchyVisible = true; hierarchyParentId = parent; selectedNoteId = id }
+                                if (request.action == "to_page") {
+                                    hierarchyParentId = parent; pushKnowledgeReturn()
+                                    hierarchyVisible = false; selectedNoteId = id
+                                }
                             } else hierarchyMessage = detail
                         }
                     }
@@ -1091,6 +1169,59 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } })
 }
 "####;
+
+#[cfg(test)]
+mod knowledge_page_reentry_tests {
+    use super::*;
+
+    #[test]
+    fn navigation_functions_are_placed_after_selected_note_state() {
+        assert!(STUDIO_NAVIGATION.contains("fun pushKnowledgeReturn()"));
+        assert!(STUDIO_NAVIGATION.contains("fun restoreKnowledgeReturn(): Boolean"));
+        assert!(STUDIO_NAVIGATION.contains("selectedNoteId = if (frame[0]"));
+        assert!(!STUDIO_STATE.contains("fun pushKnowledgeReturn()"));
+        let src = include_str!("android_knowledge_hierarchy_ui.rs");
+        assert!(src.contains("var pendingCreatedNote "));
+        assert!(src.contains("var selectedNoteId "));
+        assert!(src.contains("let navigation_anchor = studio"));
+        assert!(src.contains("studio.insert_str(navigation_anchor, STUDIO_NAVIGATION)"));
+    }
+
+    #[test]
+    fn restoration_records_exact_document_directory_and_workspaces() {
+        assert!(STUDIO_STATE.contains("knowledgeBackStack by rememberSaveable(workspaceKey)"));
+        assert!(STUDIO_NAVIGATION.contains("fun pushKnowledgeReturn()"));
+        assert!(STUDIO_NAVIGATION.contains("fun restoreKnowledgeReturn(): Boolean"));
+        assert!(STUDIO_NAVIGATION.contains("val frame = knowledgeBackStack.takeLast(4)"));
+        assert!(STUDIO_NAVIGATION.contains("hierarchyVisible = frame[2] == \"1\""));
+        assert!(STUDIO_NAVIGATION.contains("hierarchyParentId = frame[3].takeIf"));
+        assert!(STUDIO_NAVIGATION.contains("source.isDeleted() || source.isEncryptionLocked()"));
+        assert!(!STUDIO_DIALOG.contains("LaunchedEffect(workspaceKey, selectedNoteId)"));
+    }
+
+    #[test]
+    fn directory_navigation_preserves_back_origin_and_breadcrumb_parent() {
+        assert!(HIERARCHY_BROWSER.contains("pushKnowledgeReturn(); hierarchyVisible = false"));
+        assert!(HIERARCHY_BROWSER.contains("knowledgeReturnIsDocument(hierarchyParentId)"));
+        assert!(HIERARCHY_BROWSER.contains("knowledgeReturnIsDocument(parent)"));
+        assert!(HIERARCHY_BROWSER.contains("else if (!restoreKnowledgeReturn()) hierarchyVisible = false"));
+        assert!(HIERARCHY_BROWSER.contains("if (knowledgeReturnIsDocument(it)) restoreKnowledgeReturn()"));
+    }
+
+    #[test]
+    fn create_and_convert_routes_do_not_drop_the_parent_page() {
+        assert!(STUDIO_DIALOG.contains("if (!knowledgeReturnIsDocument(parent)) pushKnowledgeReturn()"));
+        assert!(STUDIO_DIALOG.contains("hierarchyParentId = parent; pushKnowledgeReturn()"));
+        assert!(STUDIO_DIALOG.contains("if (request.action == \"create_folder\" || request.action == \"to_folder\")"));
+    }
+
+    #[test]
+    fn encrypted_child_cancel_can_restore_parent_without_exposing_locked_source() {
+        assert!(HIERARCHY_BROWSER.contains("pendingUnlockRoute = \"browser\""));
+        assert!(STUDIO_STATE.contains("pendingUnlockRoute by remember(workspaceKey)"));
+        assert!(STUDIO_NAVIGATION.contains("source.isEncryptionLocked()"));
+    }
+}
 
 #[cfg(test)]
 mod mobile_inline_children_tests {
