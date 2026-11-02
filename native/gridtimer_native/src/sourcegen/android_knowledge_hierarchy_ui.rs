@@ -62,13 +62,22 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             "    val scope = rememberCoroutineScope()",
             &format!("    val scope = rememberCoroutineScope()\n{STUDIO_STATE}"),
         )?;
-        // Declare navigation functions after the editor selection variables.
-        // Kotlin local functions cannot capture declarations that appear later.
-        replace(
-            &mut studio,
-            "    var pendingCreatedNote by remember { mutableStateOf<NoteEntry?>(null) }",
-            &format!("    var pendingCreatedNote by remember {{ mutableStateOf<NoteEntry?>(null) }}\n{STUDIO_NAVIGATION}"),
-        )?;
+        // Earlier source transformations can rewrite the pending draft's
+        // initializer. Insert at the stable boundary before folder selection
+        // instead, and verify both captured editor states are already declared.
+        let navigation_anchor = studio
+            .find("    val selectedFolderId =")
+            .ok_or("hierarchy editor state boundary missing")?;
+        let selected_declaration = studio
+            .find("    var selectedNoteId ")
+            .ok_or("hierarchy selected note state missing")?;
+        let pending_declaration = studio
+            .find("    var pendingCreatedNote ")
+            .ok_or("hierarchy pending draft state missing")?;
+        if navigation_anchor <= selected_declaration || navigation_anchor <= pending_declaration {
+            return Err("hierarchy navigation functions must follow editor state declarations".into());
+        }
+        studio.insert_str(navigation_anchor, STUDIO_NAVIGATION);
         replace(&mut studio, "            if (frame == null) {\n                NoteCollectionContent(", &format!("            if (frame == null) {{\n                if (hierarchyVisible) {{\n                    androidx.compose.runtime.CompositionLocalProvider(LocalDocumentTransitionActive provides interactiveFrame) {{\n{HIERARCHY_BROWSER}\n                    }}\n                }} else NoteCollectionContent("))?;
         replace(&mut studio, "                    onManageFolders = { if (isCurrentFrame()) folderManagerVisible = true },", "                    onManageFolders = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
         replace(&mut studio,"                    appData = appData,", "                    appData = appData,\n                    onOpenHierarchy = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
@@ -1172,8 +1181,10 @@ mod knowledge_page_reentry_tests {
         assert!(STUDIO_NAVIGATION.contains("selectedNoteId = if (frame[0]"));
         assert!(!STUDIO_STATE.contains("fun pushKnowledgeReturn()"));
         let src = include_str!("android_knowledge_hierarchy_ui.rs");
-        assert!(src.contains("var pendingCreatedNote by remember { mutableStateOf<NoteEntry?>(null) }"));
-        assert!(src.contains("{STUDIO_NAVIGATION}"));
+        assert!(src.contains("var pendingCreatedNote "));
+        assert!(src.contains("var selectedNoteId "));
+        assert!(src.contains("let navigation_anchor = studio"));
+        assert!(src.contains("studio.insert_str(navigation_anchor, STUDIO_NAVIGATION)"));
     }
 
     #[test]
