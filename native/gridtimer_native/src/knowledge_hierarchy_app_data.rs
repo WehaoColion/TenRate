@@ -258,6 +258,120 @@ pub fn knowledge_container_action_app_data_json(
     }
     let parent = (!parent_id.is_empty()).then_some(parent_id);
     match action {
+        // The client passes the freshly allocated copy ID as id and the
+        // source note ID as parent_id. The real parent is read here from the
+        // current durable snapshot, never from a potentially stale UI.
+        "duplicate_page" => {
+            let source = data.notes.iter().find(|note| note.id == parent_id)?;
+            if source.kind != NoteEntryKind::Document
+                || !knowledge_container_mutable(source)
+                || knowledge_legacy_folder_origin(source)
+                || knowledge_identity_conflict(&data, parent_id)
+                || data.notes.iter().any(|note| note.id == id)
+                || data.note_folders.iter().any(|folder| folder.id == id)
+            {
+                return None;
+            }
+            let root_parent = knowledge_effective_parent(&data, source).map(str::to_owned);
+            if !knowledge_parent_allowed(&data, parent_id, root_parent.as_deref())
+                || !knowledge_parent_allowed(&data, id, root_parent.as_deref())
+            {
+                return None;
+            }
+
+            // Copy the complete live subtree, never reparent the original.
+            // Validate every source before writing anything, including locked
+            // and encrypted children. Bound the operation to avoid a huge,
+            // accidental UI transaction.
+            let mut source_ids = vec![parent_id.to_owned()];
+            let mut visited = HashSet::from([parent_id.to_owned()]);
+            let mut cursor = 0;
+            while cursor < source_ids.len() {
+                let current = source_ids[cursor].clone();
+                for child in data.notes.iter().filter(|note| {
+                    note.kind == NoteEntryKind::Document
+                        && note.deleted_at_epoch_millis.is_none()
+                        && knowledge_effective_parent(&data, note) == Some(current.as_str())
+                }) {
+                    if !visited.insert(child.id.clone()) {
+                        return None;
+                    }
+                    source_ids.push(child.id.clone());
+                    if source_ids.len() > 500 {
+                        return None;
+                    }
+                }
+                cursor += 1;
+            }
+            let sources = source_ids.iter().map(|source_id| {
+                let original = data.notes.iter().find(|note| &note.id == source_id)?;
+                if !knowledge_container_mutable(original)
+                    || knowledge_identity_conflict(&data, source_id)
+                    || knowledge_legacy_folder_origin(original)
+                {
+                    return None;
+                }
+                Some(original.clone())
+            }).collect::<Option<Vec<_>>>()?;
+
+            let mut ids = HashMap::from([(parent_id.to_owned(), id.to_owned())]);
+            for source in sources.iter().skip(1) {
+                let mut fresh;
+                loop {
+                    fresh = format!("copy-{:032x}", rand::random::<u128>());
+                    if !ids.values().any(|value| value == &fresh)
+                        && !data.notes.iter().any(|note| note.id == fresh)
+                        && !data.note_folders.iter().any(|folder| folder.id == fresh)
+                    {
+                        break;
+                    }
+                }
+                ids.insert(source.id.clone(), fresh);
+            }
+
+            let source_name = sources[0].title.trim();
+            let short_name = source_name.chars().take(100).collect::<String>();
+            let base_name = if short_name.is_empty() { "无标题" } else { &short_name };
+            let mut duplicate_name = format!("{base_name}（副本）");
+            let mut index = 2;
+            while data.notes.iter().any(|note| {
+                note.kind == NoteEntryKind::Document
+                    && note.deleted_at_epoch_millis.is_none()
+                    && note.title == duplicate_name
+                    && knowledge_effective_parent(&data, note) == root_parent.as_deref()
+            }) {
+                duplicate_name = format!("{base_name}（副本 {index}）");
+                index += 1;
+            }
+            for original in sources {
+                let mut copy = original.clone();
+                copy.id = ids.get(&original.id)?.clone();
+                copy.title = if original.id == parent_id {
+                    duplicate_name.clone()
+                } else {
+                    original.title.clone()
+                };
+                copy.folder_id = None;
+                copy.pinned = false;
+                copy.created_at_epoch_millis = 0;
+                copy.updated_at_epoch_millis = 0;
+                copy.deleted_at_epoch_millis = None;
+                copy.revisions.clear();
+                copy.versions.clear();
+                copy.latest_version_id.clear();
+                let new_parent = if original.id == parent_id {
+                    root_parent.clone()
+                } else {
+                    let old_parent = knowledge_effective_parent(&data, &original)?;
+                    Some(ids.get(old_parent)?.clone())
+                };
+                knowledge_ensure_page(&mut copy).parent_id = new_parent;
+                copy = normalize_note_for_save(&data, copy, None, now)?;
+                data.notes.push(copy);
+            }
+            knowledge_refresh_folder_projection(&mut data, &HashSet::from_iter(ids.into_values()), now)?;
+            return serde_json::to_string(&data.sanitized(now)?).ok();
+        }
         "create_page" | "create_folder" => {
             if data.notes.iter().any(|note| note.id == id)
                 || data.note_folders.iter().any(|folder| folder.id == id)

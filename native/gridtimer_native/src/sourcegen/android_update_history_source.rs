@@ -51,7 +51,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4";
+pub const LATEST_VERSION: &str = "2.23.4.1";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -81,6 +81,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.1",
+        updatedAt = "2026-11-02 02:00",
+        summary = "知识文档可在同一父级目录一键创建独立副本",
+        sections = listOf(
+            AndroidUpdateSection("创建副本", listOf(
+                "在文档右上角的更多菜单中点击创建副本，先可靠保存当前编辑内容，再在原父级位置创建完整的同级页面。",
+                "若页面包含子页面，则复制可访问的完整子树，每个节点获得新的独立标识；标题自动追加副本标识并避开重名。"
+            )),
+            AndroidUpdateSection("内容与安全", listOf(
+                "保留正文、结构块、图片与附件引用及页面属性，原页面及历史版本不变，新副本从独立历史开始。",
+                "Rust 一次性完成复制与层级投影，受保护或不可访问的子节点会让整个操作失败，不会留下半个副本。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4",
         updatedAt = "2026-10-29 08:40",
