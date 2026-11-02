@@ -88,6 +88,33 @@ fn replace_once(source: &mut String, anchor: &str, replacement: &str) -> Result<
     Ok(())
 }
 
+// Patch the original document template before earlier source generators
+// replace whole collection sections. The final renderer runs after those
+// transforms, so literal UI text anchors cannot safely be patched there.
+pub fn render_note_studio_early(path: &str, base: &str) -> Result<String, String> {
+    if path != NOTE_STUDIO {
+        return Ok(base.to_owned());
+    }
+    let mut source = base.to_owned();
+            replace_once(
+                &mut source,
+                r####"subtitle = if (trashMode) "已删除页面" else "本地知识页","####,
+                r####"subtitle = if (trashMode) "保留 100 天，到期自动清除" else "本地知识页","####,
+            )?;
+            replace_once(
+                &mut source,
+                r####"text = "误删内容会在这里。","####,
+                r####"text = "回收站内容保留 100 天，到期自动清除。","####,
+            )?;
+            replace_once(
+                &mut source,
+                r####""删掉的文档会先来到这里，之后随时可以恢复。""####,
+                r####""删除后的文档保留 100 天，到期自动永久清除。""####,
+            )?;
+        }
+    Ok(source)
+}
+
 pub fn render(path: &str, base: &str) -> Result<String, String> {
     let mut source = base.to_owned();
     match path {
@@ -203,23 +230,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "import com.ofairyo.gridtimer.data.NoteTrashRetentionJobService\nimport com.ofairyo.gridtimer.data.TimerRepository",
             )?;
         }
-        NOTE_STUDIO => {
-            replace_once(
-                &mut source,
-                r####"subtitle = if (trashMode) "已删除页面" else "本地知识页","####,
-                r####"subtitle = if (trashMode) "保留 100 天，到期自动清除" else "本地知识页","####,
-            )?;
-            replace_once(
-                &mut source,
-                r####"text = "误删内容会在这里。","####,
-                r####"text = "回收站内容保留 100 天，到期自动清除。","####,
-            )?;
-            replace_once(
-                &mut source,
-                r####""删掉的文档会先来到这里，之后随时可以恢复。""####,
-                r####""删除后的文档保留 100 天，到期自动永久清除。""####,
-            )?;
-        }
+        NOTE_STUDIO => {}
         _ => {}
     }
     Ok(source)
@@ -254,6 +265,10 @@ mod tests {
 
     #[test]
     fn builds_android_retention_integration_without_touching_windows() {
+        let studio = render_note_studio_early(NOTE_STUDIO, base(NOTE_STUDIO)).unwrap();
+        assert!(studio.contains("保留 100 天，到期自动清除"));
+        assert!(studio.contains("回收站内容保留 100 天，到期自动清除。"));
+        assert_eq!(render(NOTE_STUDIO, &studio).unwrap(), studio);
         let bridge = render(BRIDGE, base(BRIDGE)).unwrap();
         assert!(bridge.contains("nativePurgeExpiredNoteTrashAppDataJson"));
         let repo = render(REPOSITORY, base(REPOSITORY)).unwrap();
