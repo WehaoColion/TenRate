@@ -108,7 +108,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             )?;
             replace_once(
                 &mut source,
-                "    private external fun nativeEmptyNoteTrashAppDataJson(",
+                "    @JvmStatic\n    private external fun nativeEmptyNoteTrashAppDataJson(",
                 r####"    @JvmStatic
     private external fun nativePurgeExpiredNoteTrashAppDataJson(
         appDataJson: String,
