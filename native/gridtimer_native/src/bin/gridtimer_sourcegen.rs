@@ -431,6 +431,8 @@ fn run() -> io::Result<()> {
             &rendezvous_identity,
             &bootstrap_public_sync_server_url,
         )?;
+        let rendered = android_trash_retention::render_note_studio_early(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_performance_override::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_responsiveness::render(source.path, &rendered)
