@@ -111,7 +111,6 @@ pub fn render_note_studio_early(path: &str, base: &str) -> Result<String, String
                 r####""删掉的文档会先来到这里，之后随时可以恢复。""####,
                 r####""删除后的文档保留 100 天，到期自动永久清除。""####,
             )?;
-        }
     Ok(source)
 }
 
