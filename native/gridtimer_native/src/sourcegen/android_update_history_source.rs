@@ -84,7 +84,7 @@ internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
     AndroidUpdateEntry(
         version = "2.23.4.3",
         updatedAt = "2026-11-02 23:28",
-        summary = "知识页面再次打开时统一进入正文，目录管理保留独立入口",
+        summary = "知识页面进入正文稳定，返回时恢复原页面与原目录",
         sections = listOf(
             AndroidUpdateSection("进入页面", listOf(
                 "从知识目录、页面子项、创建页面及创建副本进入知识页面时，关闭先前的目录管理状态，直接进入页面正文。",
