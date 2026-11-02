@@ -62,6 +62,13 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             "    val scope = rememberCoroutineScope()",
             &format!("    val scope = rememberCoroutineScope()\n{STUDIO_STATE}"),
         )?;
+        // Declare navigation functions after the editor selection variables.
+        // Kotlin local functions cannot capture declarations that appear later.
+        replace(
+            &mut studio,
+            "    var pendingCreatedNote by remember { mutableStateOf<NoteEntry?>(null) }",
+            &format!("    var pendingCreatedNote by remember {{ mutableStateOf<NoteEntry?>(null) }}\n{STUDIO_NAVIGATION}"),
+        )?;
         replace(&mut studio, "            if (frame == null) {\n                NoteCollectionContent(", &format!("            if (frame == null) {{\n                if (hierarchyVisible) {{\n                    androidx.compose.runtime.CompositionLocalProvider(LocalDocumentTransitionActive provides interactiveFrame) {{\n{HIERARCHY_BROWSER}\n                    }}\n                }} else NoteCollectionContent("))?;
         replace(&mut studio, "                    onManageFolders = { if (isCurrentFrame()) folderManagerVisible = true },", "                    onManageFolders = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
         replace(&mut studio,"                    appData = appData,", "                    appData = appData,\n                    onOpenHierarchy = { if (isCurrentFrame()) { hierarchyVisible = true; hierarchyParentId = null } },")?;
@@ -343,7 +350,9 @@ const STUDIO_STATE: &str = r####"    val hierarchyIndex = remember(appData.notes
     // Store four saved-state-safe strings per frame without touching the note data.
     var knowledgeBackStack by rememberSaveable(workspaceKey) { mutableStateOf(arrayListOf<String>()) }
     var pendingUnlockRoute by remember(workspaceKey) { mutableStateOf<String?>(null) }
-    fun pushKnowledgeReturn() {
+
+"####;
+const STUDIO_NAVIGATION: &str = r####"    fun pushKnowledgeReturn() {
         knowledgeBackStack = ArrayList(knowledgeBackStack).apply {
             add(when { selectedNoteId != null -> "document"; hierarchyVisible -> "directory"; else -> "collection" })
             add(selectedNoteId.orEmpty())
@@ -1157,14 +1166,25 @@ mod knowledge_page_reentry_tests {
     use super::*;
 
     #[test]
+    fn navigation_functions_are_placed_after_selected_note_state() {
+        assert!(STUDIO_NAVIGATION.contains("fun pushKnowledgeReturn()"));
+        assert!(STUDIO_NAVIGATION.contains("fun restoreKnowledgeReturn(): Boolean"));
+        assert!(STUDIO_NAVIGATION.contains("selectedNoteId = if (frame[0]"));
+        assert!(!STUDIO_STATE.contains("fun pushKnowledgeReturn()"));
+        let src = include_str!("android_knowledge_hierarchy_ui.rs");
+        assert!(src.contains("var pendingCreatedNote by remember { mutableStateOf<NoteEntry?>(null) }"));
+        assert!(src.contains("{STUDIO_NAVIGATION}"));
+    }
+
+    #[test]
     fn restoration_records_exact_document_directory_and_workspaces() {
         assert!(STUDIO_STATE.contains("knowledgeBackStack by rememberSaveable(workspaceKey)"));
-        assert!(STUDIO_STATE.contains("fun pushKnowledgeReturn()"));
-        assert!(STUDIO_STATE.contains("fun restoreKnowledgeReturn(): Boolean"));
-        assert!(STUDIO_STATE.contains("val frame = knowledgeBackStack.takeLast(4)"));
-        assert!(STUDIO_STATE.contains("hierarchyVisible = frame[2] == \"1\""));
-        assert!(STUDIO_STATE.contains("hierarchyParentId = frame[3].takeIf"));
-        assert!(STUDIO_STATE.contains("source.isDeleted() || source.isEncryptionLocked()"));
+        assert!(STUDIO_NAVIGATION.contains("fun pushKnowledgeReturn()"));
+        assert!(STUDIO_NAVIGATION.contains("fun restoreKnowledgeReturn(): Boolean"));
+        assert!(STUDIO_NAVIGATION.contains("val frame = knowledgeBackStack.takeLast(4)"));
+        assert!(STUDIO_NAVIGATION.contains("hierarchyVisible = frame[2] == \"1\""));
+        assert!(STUDIO_NAVIGATION.contains("hierarchyParentId = frame[3].takeIf"));
+        assert!(STUDIO_NAVIGATION.contains("source.isDeleted() || source.isEncryptionLocked()"));
         assert!(!STUDIO_DIALOG.contains("LaunchedEffect(workspaceKey, selectedNoteId)"));
     }
 
@@ -1188,7 +1208,7 @@ mod knowledge_page_reentry_tests {
     fn encrypted_child_cancel_can_restore_parent_without_exposing_locked_source() {
         assert!(HIERARCHY_BROWSER.contains("pendingUnlockRoute = \"browser\""));
         assert!(STUDIO_STATE.contains("pendingUnlockRoute by remember(workspaceKey)"));
-        assert!(STUDIO_STATE.contains("source.isEncryptionLocked()"));
+        assert!(STUDIO_NAVIGATION.contains("source.isEncryptionLocked()"));
     }
 }
 
