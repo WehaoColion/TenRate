@@ -1,3 +1,5 @@
+Android 2.23.4.2 回收站 100 天自动清理候选：[说明](android/release_notes_v2.23.4.2.md)。
+
 Android 2.23.4.1 知识文档同级创建副本候选：[说明](android/release_notes_v2.23.4.1.md)。
 
 Windows 1.1.0.11 历史容量诊断与版本号修正候选：[说明](windows/release_notes_windows_v1.1.0.11.md)。
