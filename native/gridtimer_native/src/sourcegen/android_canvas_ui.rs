@@ -124,6 +124,22 @@ class KnowledgeCanvasTest {
         assertFalse(model.lastSucceeded); assertSame(committed,model.reply)
         model.close(); assertTrue(backend.closed.await(5,TimeUnit.SECONDS))
     }
+    @Test fun overviewContainsAllCardsAndPreservesLegacyZoomBounds() {
+        val nodes = listOf(node("far-left",-9000f,-4000f),node("far-right",12000f,9000f))
+        val area = IntSize(400,700)
+        val overview = fitCanvasOverview(nodes,area)
+        nodes.forEach { n ->
+            val a = overview.screenAt(Offset(n.x,n.y))
+            val b = overview.screenAt(Offset(n.x+n.width,n.y+n.height))
+            assertTrue(a.x >= 23f && a.y >= 23f)
+            assertTrue(b.x <= area.width-23f && b.y <= area.height-23f)
+            val roundTrip = overview.worldAt(a)
+            assertEquals(n.x,roundTrip.x,0.02f)
+            assertEquals(n.y,roundTrip.y,0.02f)
+        }
+        val empty = fitCanvasOverview(emptyList(),area)
+        assertTrue(empty.scale > 0f)
+    }
     @Test fun zoomKeepsTheTouchedWorldPointUnderTheMovingFingers() {
         val size = IntSize(1080,1800)
         val view = CanvasViewport(300f,120f,0.9f)
@@ -380,6 +396,26 @@ internal fun canvasVisible(node: CanvasNode, viewport: CanvasViewport, size: Int
     val halfWidth = size.width / (2f * viewport.zoom * density)
     val halfHeight = size.height / (2f * viewport.zoom * density)
     return node.x + node.width >= viewport.x - halfWidth && node.x <= viewport.x + halfWidth && node.y + node.height >= viewport.y - halfHeight && node.y <= viewport.y + halfHeight
+}
+// View-only overview: never persist a zoom smaller than the legacy 0.35 limit.
+internal data class CanvasOverviewTransform(val originX: Float, val originY: Float, val scale: Float) {
+    fun screenAt(world: Offset): Offset = Offset(originX + world.x * scale, originY + world.y * scale)
+    fun worldAt(screen: Offset): Offset = Offset((screen.x - originX) / scale, (screen.y - originY) / scale)
+}
+internal fun fitCanvasOverview(nodes: List<CanvasNode>, size: IntSize): CanvasOverviewTransform {
+    val left = nodes.minOfOrNull { it.x } ?: -128f
+    val right = nodes.maxOfOrNull { it.x + it.width } ?: 128f
+    val top = nodes.minOfOrNull { it.y } ?: -84f
+    val bottom = nodes.maxOfOrNull { it.y + it.height } ?: 84f
+    val availableWidth = (size.width.toFloat() - 48f).coerceAtLeast(1f)
+    val availableHeight = (size.height.toFloat() - 48f).coerceAtLeast(1f)
+    val scale = min(availableWidth / (right - left).coerceAtLeast(1f),
+        availableHeight / (bottom - top).coerceAtLeast(1f)).coerceAtLeast(0.000001f)
+    return CanvasOverviewTransform(
+        size.width / 2f - (left + right) / 2f * scale,
+        size.height / 2f - (top + bottom) / 2f * scale,
+        scale
+    )
 }
 internal fun canvasPageLabel(note: NoteEntry?): Pair<String, String> = when {
     note == null || note.isDeleted() -> "页面不可用" to "页面已删除或尚未同步"
@@ -681,11 +717,26 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
     val zoomPercent = remember(canvas.id) { derivedStateOf { (viewport.zoom * 100).roundToInt() } }
     var dragId by remember(canvas.id) { mutableStateOf<String?>(null) }
     var dragDelta by remember(canvas.id) { mutableStateOf(Offset.Zero) }
+    var overview by remember(canvas.id) { mutableStateOf(false) }
+    var committedViewport by remember(canvas.id) { mutableStateOf(CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)) }
     val currentCanvas by rememberUpdatedState(canvas)
     val currentConnect by rememberUpdatedState(connectFrom)
     val currentSelect by rememberUpdatedState(onSelect)
     val currentOnConnect by rememberUpdatedState(onConnect)
-    LaunchedEffect(modelState.serial, canvas.id) { viewport = CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom); dragId = null; dragDelta = Offset.Zero }
+    LaunchedEffect(modelState.serial, canvas.id) {
+        val next = CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)
+        if (next != committedViewport) viewport = next
+        committedViewport = next
+        dragId = null; dragDelta = Offset.Zero
+    }
+    // An added or list-selected card must not remain invisible off screen.
+    LaunchedEffect(selected, canvas.id, size) {
+        val node = canvas.nodes.firstOrNull { it.id == selected }
+        if (node != null && size.width > 0 && size.height > 0 &&
+            !canvasVisible(node, viewport, size, density)) {
+            viewport = viewport.copy(x = node.x + node.width / 2f, y = node.y + node.height / 2f)
+        }
+    }
     // Retire old previews when pages change, including deletion and encryption.
     val textCache = remember(canvas.id, pages) { CanvasTextCache() }
     val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
@@ -783,10 +834,12 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                 val nodes=canvas.nodes
                 if(nodes.isNotEmpty() && size.width>0 && size.height>0) {
                     val left=nodes.minOf { it.x }; val right=nodes.maxOf { it.x+it.width }; val top=nodes.minOf { it.y }; val bottom=nodes.maxOf { it.y+it.height }
-                    val zoom=min(size.width/density/(right-left+64),size.height/density/(bottom-top+64)).coerceIn(0.35f,2.5f)
-                    model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",zoom) })
+                    val fitZoom=min(size.width/density/(right-left+64),size.height/density/(bottom-top+64))
+                    if (fitZoom < 0.35f) overview = true
+                    else model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",fitZoom.coerceAtMost(2.5f)) })
                 } else model.submit(canvasRequest("view") { put("x",0f); put("y",0f); put("zoom",1f) })
             }) { Text("适应") }
+            TextButton(enabled=!model.busy && canvas.nodes.isNotEmpty(), onClick={ overview = true }) { Text("总览") }
             TextButton(enabled=!model.busy, onClick={ model.submit(canvasRequest("view") { put("x",viewport.x); put("y",viewport.y); put("zoom",1f) }) }) { CanvasZoomLabel(zoomPercent) }
         }
     }
