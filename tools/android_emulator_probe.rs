@@ -20,14 +20,20 @@ fn foreground()->bool{
     activity_ok||window_ok
 }
 fn clear_launcher_anr(){
-    if let Ok(xml)=dump(){
-        if xml.contains("Pixel Launcher isn&#39;t responding")||xml.contains("Pixel Launcher isn't responding"){
-            eprintln!("TEST INFRA: Pixel Launcher ANR system dialog; dismissing launcher overlay");
-            if let Some((node,_))=find(&xml,&["Close app"],false){
-                let _=tap(&node);
-                sleep(Duration::from_millis(1100));
-            }
-        }
+    for _ in 0..4 {
+        let Ok(xml)=dump() else{break};
+        let action=if xml.contains("Allow tenfold to send you notifications?"){
+            eprintln!("TEST: allowing TenRate notification permission requested by timer");
+            Some("Allow")
+        }else if xml.contains("Pixel Launcher isn't responding")||xml.contains("Pixel Launcher isn&#39;t responding"){
+            eprintln!("TEST INFRA: closing unresponsive Pixel Launcher overlay");
+            Some("Close app")
+        }else{None};
+        let Some(label)=action else{break};
+        if let Some((node,_))=find(&xml,&[label],false){
+            let _=tap(&node);
+            sleep(Duration::from_millis(1000));
+        }else{break}
     }
 }
 fn bring_foreground()->Result<(),String>{
@@ -43,7 +49,7 @@ impl Probe{
 fn new(root:PathBuf)->Self{fs::create_dir_all(&root).expect("create evidence directory");Self{root,cases:Vec::new(),fatal:false,shots:0}}
 fn record(&mut self,name:&str,status:&'static str,evidence:impl Into<String>){let evidence=evidence.into();println!("[{status}] {name}: {evidence}");self.fatal|=status=="FAIL";self.cases.push(Case{name:name.into(),status,evidence})}
 fn shot(&mut self,label:&str)->String{self.shots+=1;let name=format!("{:02}_{}",self.shots,label);let png=self.root.join(format!("{name}.png"));let xml=self.root.join(format!("{name}.xml"));let mut info=Vec::new();if let Ok(o)=adb(&["exec-out","screencap","-p"]){if o.status.success()&&o.stdout.starts_with(b"\x89PNG")&&fs::write(&png,&o.stdout).is_ok(){info.push(format!("screenshot={}",png.display()))}}match dump(){Ok(s)=>{let _=fs::write(&xml,&s);info.push(format!("accessibility_nodes={}",nodes(&s).len()));},Err(e)=>info.push(e)}info.join("; ")}
-fn click(&mut self,labels:&[&str],name:&str,bottom:bool)->bool{let before=match dump(){Ok(x)=>x,Err(e)=>{self.record(name,"SKIP",e);return false}};let Some((node,label))=find(&before,labels,bottom)else{self.record(name,"SKIP",format!("labels {:?} unavailable",labels));return false};if let Err(e)=tap(&node){self.record(name,"FAIL",e);return false}sleep(Duration::from_millis(1200));let after=dump().unwrap_or_default();let ok=alive()&&foreground();let evidence=self.shot(name);if !ok{self.record(name,"FAIL",format!("TenRate process absent or app lost foreground after tap {label}; {evidence}"))}else if !after.is_empty()&&after==before{self.record(name,"WARN",format!("tap {label} did not change accessibility tree; {evidence}"))}else{self.record(name,"PASS",format!("tap {label} with process alive; {evidence}"))}ok}
+fn click(&mut self,labels:&[&str],name:&str,bottom:bool)->bool{let before=match dump(){Ok(x)=>x,Err(e)=>{self.record(name,"SKIP",e);return false}};let Some((node,label))=find(&before,labels,bottom)else{self.record(name,"SKIP",format!("labels {:?} unavailable",labels));return false};if let Err(e)=tap(&node){self.record(name,"FAIL",e);return false}sleep(Duration::from_millis(1200));clear_launcher_anr();let after=dump().unwrap_or_default();let ok=alive()&&foreground();let evidence=self.shot(name);if !ok{self.record(name,"FAIL",format!("TenRate process absent or app lost foreground after tap {label}; {evidence}"))}else if !after.is_empty()&&after==before{self.record(name,"WARN",format!("tap {label} did not change accessibility tree; {evidence}"))}else{self.record(name,"PASS",format!("tap {label} with process alive; {evidence}"))}ok}
 fn nav(&mut self,labels:&[&str],name:&str)->bool{
     if let Err(e)=bring_foreground(){self.record(name,"FAIL",e);return false}
     self.click(labels,name,true)
