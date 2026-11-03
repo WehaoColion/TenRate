@@ -1,3 +1,4 @@
+// v2.23.4.7 Android - Prioritize frequently used move destinations.
 // v2.23.4.6 Android - Integrate mobile Agent UX, AI vision and English dashboard localization.
 // v2.23.4.5 Android - Rust-backed multimodal AI conversations.
 // v2.23.4.4 Android - Agent task permissions and safer mobile exits.
@@ -124,8 +125,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.11";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.4.6";
-pub const ANDROID_VERSION_CODE: i32 = 22336;
+pub const ANDROID_APP_VERSION: &str = "2.23.4.7";
+pub const ANDROID_VERSION_CODE: i32 = 22337;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
