@@ -1,4 +1,5 @@
 // v1.1.0.11 Windows - Align diagnostic update with the next Windows release identity.
+// v2.23.4.4 Android - Agent mobile UX with explicit close/cancel feedback.
 // v2.23.4 Android - Local hierarchy projection and save latency diagnostics.
 // v1.1.0.10 Windows - Fix attachment reference audit for Android image import markers.
 // v2.23.3 Android - Complete compact inline children in knowledge pages.
@@ -121,7 +122,7 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.11";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.4.3";
+pub const ANDROID_APP_VERSION: &str = "2.23.4.4";
 pub const ANDROID_VERSION_CODE: i32 = 22333;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
