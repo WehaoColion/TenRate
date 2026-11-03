@@ -23,6 +23,8 @@ mod android_cold_start;
 mod android_local_read_efficiency;
 #[path = "../sourcegen/android_ai_answer_ui.rs"]
 mod android_ai_answer_ui;
+#[path = "../sourcegen/android_ai_image_picker.rs"]
+mod android_ai_image_picker;
 #[path = "../sourcegen/android_agent_workspace_ui.rs"]
 mod android_agent_workspace_ui;
 #[path = "../sourcegen/android_ai_workflow.rs"]
@@ -560,6 +562,11 @@ fn run() -> io::Result<()> {
         &output_root,
         android_ai_workflow::PATH,
         android_ai_workflow::CONTENTS,
+    )?;
+    write_source(
+        &output_root,
+        android_ai_image_picker::PATH,
+        android_ai_image_picker::CONTENTS,
     )?;
     write_source(
         &output_root,
