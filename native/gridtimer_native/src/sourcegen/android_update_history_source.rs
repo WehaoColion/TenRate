@@ -1,3 +1,4 @@
+// v2.23.4.5 - Record Rust-backed AI vision input and compatibility.
 // v2.23.4 - Record scoped Rust hierarchy writes and latency diagnostics.
 // v2.23.3 - Record compact, complete mobile page children and three-part milestone.
 // v2.23.2.59 - Do not save untouched newly created blank knowledge pages.
@@ -51,7 +52,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.3";
+pub const LATEST_VERSION: &str = "2.23.4.5";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -81,6 +82,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.5",
+        updatedAt = "2026-11-03 13:30",
+        summary = "安卓 AI 可选取图片进行原生视觉问答，保留纯文字兼容",
+        sections = listOf(
+            AndroidUpdateSection("图片问答", listOf(
+                "从系统图库选择最多 5 张图片并预览、移除，识别图片、截图和图表；支持显式重新引用上一轮图片。",
+                "Rust 校验实际图片格式、单张和总量限制，只在点击发送时将选中图片附加到当前请求。"
+            )),
+            AndroidUpdateSection("接口与隐私", listOf(
+                "DeepSeek Flash 支持图片；Pro 保持文字和结构化测试，不会因图片不可用而误报连接失败。",
+                "纯文字调用不变，图片不写入知识库和同步记录；超限及不支持格式会显示明确提示。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.3",
         updatedAt = "2026-11-02 23:28",
