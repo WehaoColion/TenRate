@@ -27,8 +27,9 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
 
     // Opening Agent from a knowledge page suggests that exact page as the initial
     // selection. It remains a local selection until the normal explicit send gate.
+    // Preserve the original saveable keys to avoid resetting selections unexpectedly.
     replace_once(&mut source,
-        "    val agentSelectedIds = remember(workspaceKey, identity, selectedFolderId, priorityNoteId) { mutableStateListOf<String>() }",
+        "    val agentSelectedIds = rememberSaveable(workspaceKey, identity, selectedFolderId) { mutableStateListOf<String>().apply { priorityNoteId?.let { add(it) } } }",
         "    val agentSelectedIds = remember(workspaceKey, identity, selectedFolderId, priorityNoteId) { mutableStateListOf<String>().apply { priorityNoteId?.let { add(it) } } }",
     )?;
 
