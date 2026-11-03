@@ -25,6 +25,8 @@ mod android_local_read_efficiency;
 mod android_ai_answer_ui;
 #[path = "../sourcegen/android_agent_workspace_ui.rs"]
 mod android_agent_workspace_ui;
+#[path = "../sourcegen/android_agent_mobile_ux.rs"]
+mod android_agent_mobile_ux;
 #[path = "../sourcegen/android_ai_workflow.rs"]
 mod android_ai_workflow;
 #[path = "../sourcegen/android_backup_availability.rs"]
@@ -839,6 +841,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_snapshot_row_read::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_agent_workspace_ui::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_agent_mobile_ux::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_finance_navigation::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

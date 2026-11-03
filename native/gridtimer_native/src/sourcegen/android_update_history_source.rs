@@ -1,3 +1,4 @@
+// v2.23.4.4 - Improve mobile Agent task setup, permissions and running-state feedback.
 // v2.23.4 - Record scoped Rust hierarchy writes and latency diagnostics.
 // v2.23.3 - Record compact, complete mobile page children and three-part milestone.
 // v2.23.2.59 - Do not save untouched newly created blank knowledge pages.
@@ -51,7 +52,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.3";
+pub const LATEST_VERSION: &str = "2.23.4.4";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -81,6 +82,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.4",
+        updatedAt = "2026-11-03 05:24",
+        summary = "任务助手快速发起、资料推荐与退出防误触",
+        sections = listOf(
+            AndroidUpdateSection("更少操作", listOf(
+                "从知识页打开任务助手时预选当前页，仍需逐次核对并明确授权后才会发送内容。",
+                "可按任务文本在本机匹配资料标题与文档库，选择加入推荐资料后继续核对；有已选资料时跳过重复的选资料步骤。"
+            )),
+            AndroidUpdateSection("移动端阅读和反馈", listOf(
+                "发送预览默认展示资料清单，点按每条资料可展开完整正文，授权范围不变。",
+                "运行中关闭任务面板前需要确认，明确提示当前版本切到后台会取消任务。"
+            )),
+            AndroidUpdateSection("保留边界", listOf(
+                "仍限制最多30条未删除未加密资料；保留接收方和授权范围确认，以及深度复核与保存门禁。",
+                "本版未加入后台持续运行、跨进程恢复和多轮修改能力，避免误称这些功能已经交付。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.3",
         updatedAt = "2026-11-02 23:28",
