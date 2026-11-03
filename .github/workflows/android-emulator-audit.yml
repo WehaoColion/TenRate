@@ -61,8 +61,7 @@ jobs:
           script: |
             set -eu
             adb devices
-            APK="$(find emulator_apk -type f -name '*.apk' | head -n 1)"
-            adb install -r "$APK"
+            adb install -r "$(find emulator_apk -type f -name '*.apk' -print -quit)"
             mkdir -p "emulator_evidence/api_${{ matrix.api-level }}"
             ./android_emulator_probe "emulator_evidence/api_${{ matrix.api-level }}"
 
