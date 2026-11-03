@@ -59,7 +59,7 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
-            set -euo pipefail
+            set -eu
             adb devices
             APK="$(find emulator_apk -type f -name '*.apk' | head -n 1)"
             adb install -r "$APK"
