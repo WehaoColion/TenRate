@@ -6,7 +6,7 @@
 // v2.22.39 - Verify and reuse shared document formatting for Windows.
 // v2.22.25 - Export unified identity, endpoint validation, and managed Windows jobs.
 use jni::objects::{
-    JBooleanArray, JClass, JFloatArray, JIntArray, JLongArray, JObject, JObjectArray, JString,
+    JBooleanArray, JByteArray, JClass, JFloatArray, JIntArray, JLongArray, JObject, JObjectArray, JString,
 };
 use jni::sys::{
     jboolean, jbooleanArray, jdoubleArray, jfloat, jint, jintArray, jlong, jlongArray,
@@ -20,6 +20,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub mod ai_client;
+mod android_ai_images;
 mod android_agent_progress;
 #[cfg(any(target_os = "android", test))]
 mod android_agent_registry;
@@ -2688,6 +2689,77 @@ pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nat
         &source_excerpts,
         &history_json,
     );
+    let ok = if result.ok { "true" } else { "false" };
+    let values = [ok, result.message.as_str(), result.content.as_str()];
+    string_array_from_slice(&mut env, &values)
+}
+
+// The selected image list crosses JNI only for this explicit user-initiated
+// request. Its bytes never enter persistent notes, account sync, or AI logs.
+#[no_mangle]
+pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeCompleteAndroidAiConversationWithImages(
+    mut env: JNIEnv,
+    _class: JClass,
+    api_key: JString,
+    base_url: JString,
+    model: JString,
+    mode: JString,
+    question: JString,
+    source_titles: JObjectArray,
+    source_folders: JObjectArray,
+    source_excerpts: JObjectArray,
+    history_json: JString,
+    images: JObjectArray,
+) -> jobjectArray {
+    let api_key = string_from_jstring(&mut env, &api_key);
+    let base_url = string_from_jstring(&mut env, &base_url);
+    let model = string_from_jstring(&mut env, &model);
+    let mode = string_from_jstring(&mut env, &mode);
+    let question = string_from_jstring(&mut env, &question);
+    let history_json = string_from_jstring(&mut env, &history_json);
+    let (source_titles, source_folders, source_excerpts) = if mode == "direct" {
+        (Vec::new(), Vec::new(), Vec::new())
+    } else {
+        (
+            string_array_values(&mut env, &source_titles).unwrap_or_default(),
+            string_array_values(&mut env, &source_folders).unwrap_or_default(),
+            string_array_values(&mut env, &source_excerpts).unwrap_or_default(),
+        )
+    };
+
+    let image_result = (|| -> Result<Vec<Vec<u8>>, String> {
+        let count = env.get_array_length(&images).map_err(|_| "图片列表无法读取。")? as usize;
+        if count > crate::android_ai_images::MAX_IMAGES {
+            return Err(format!("每轮最多发送 {} 张图片。", crate::android_ai_images::MAX_IMAGES));
+        }
+        let mut decoded = Vec::with_capacity(count);
+        let mut total = 0usize;
+        for index in 0..count {
+            let image = env.get_object_array_element(&images, index as i32)
+                .map_err(|_| "读取所选图片失败。")?;
+            if image.is_null() {
+                return Err("所选图片无效，请重新选择。".into());
+            }
+            let bytes = env.convert_byte_array(&JByteArray::from(image))
+                .map_err(|_| "读取所选图片失败。")?;
+            total = total.saturating_add(bytes.len());
+            if bytes.is_empty() || bytes.len() > crate::android_ai_images::MAX_IMAGE_BYTES
+                || total > crate::android_ai_images::MAX_TOTAL_IMAGE_BYTES
+            {
+                return Err("所选图片超出单张 6 MiB、合计 20 MiB 的发送限制。".into());
+            }
+            decoded.push(bytes);
+        }
+        Ok(decoded)
+    })();
+    let result = match image_result {
+        Ok(images) => ai_client::complete_android_conversation_with_images(
+            &api_key, &base_url, &model, &mode, &question,
+            &source_titles, &source_folders, &source_excerpts,
+            &history_json, &images,
+        ),
+        Err(message) => ai_client::AiCompletionResult::error(message),
+    };
     let ok = if result.ok { "true" } else { "false" };
     let values = [ok, result.message.as_str(), result.content.as_str()];
     string_array_from_slice(&mut env, &values)

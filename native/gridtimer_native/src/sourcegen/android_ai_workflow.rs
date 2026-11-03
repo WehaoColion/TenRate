@@ -640,6 +640,25 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         }.getOrNull()?.takeIf { it.size >= 3 }
     }
 
+    fun completeAndroidAiConversationWithImages(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>,
+        historyJson: String,
+        images: Array<ByteArray>
+    ): Array<String>? {
+        if (!nativeAvailable) return null
+        return runCatching {
+            nativeCompleteAndroidAiConversationWithImages(apiKey, baseUrl, model, mode, question,
+                sourceTitles, sourceFolders, sourceExcerpts, historyJson, images)
+        }.getOrNull()?.takeIf { it.size >= 3 }
+    }
+
 "####,
             )?;
             replace(
@@ -680,6 +699,20 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         sourceFolders: Array<String>,
         sourceExcerpts: Array<String>,
         historyJson: String
+    ): Array<String>?
+
+    @JvmStatic
+    private external fun nativeCompleteAndroidAiConversationWithImages(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>,
+        historyJson: String,
+        images: Array<ByteArray>
     ): Array<String>?
 
 "####,
@@ -900,7 +933,8 @@ const KNOWLEDGE_DIALOG: &str = r####"private fun buildKnowledgeAgentDraftNote(
 private data class KnowledgeConversationEntry(
     val id: String = UUID.randomUUID().toString(),
     val turn: KnowledgeConversationTurn,
-    val sources: List<KnowledgeSourceCandidate>
+    val sources: List<KnowledgeSourceCandidate>,
+    val imageUris: List<android.net.Uri> = emptyList()
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -933,6 +967,10 @@ private fun KnowledgeAiDialog(
     val agentBoundary = remember(workspaceKey, identity, priorityNoteId) { KnowledgeAgentRequestBoundary() }
     val latestAgentBoundary by rememberUpdatedState(agentBoundary)
     var question by rememberSaveable(workspaceKey, priorityNoteId) { mutableStateOf("") }
+    // Image URIs are session-scoped, never persisted with notes or sync.
+    var selectedImageUris by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf<List<android.net.Uri>>(emptyList()) }
+    val imageModelUnsupported = selectedImageUris.isNotEmpty() && configuration.isDeepSeek &&
+        configuration.model.trim() !in setOf("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp")
     var searchScope by rememberSaveable(workspaceKey, priorityNoteId, selectedFolderId) {
         mutableStateOf(if (selectedFolderId == null) KnowledgeSearchScope.ALL else KnowledgeSearchScope.CURRENT_FOLDER)
     }
@@ -994,6 +1032,7 @@ private fun KnowledgeAiDialog(
     val sourceSignature = sourceCandidates.map { listOf(it.note.id, it.note.displayTitle(), it.folderName, it.excerpt) }
     val latestSourceSignature by rememberUpdatedState(sourceSignature)
     val latestQuestion by rememberUpdatedState(question)
+    val latestImageUris by rememberUpdatedState(selectedImageUris)
     val latestSelectedAgentDocuments by rememberUpdatedState(selectedAgentDocuments)
     val latestAgentMode by rememberUpdatedState(agentMode)
     val latestAgentTaskId by rememberUpdatedState(agentTaskId)
@@ -1031,6 +1070,7 @@ private fun KnowledgeAiDialog(
         invalidateAnswer()
         agentBoundary.invalidate()
         agentMode = enabled
+        selectedImageUris = emptyList()
         showSendingContent = false
         agentPreviewAcknowledged = false
         agentDraft = null; agentDraftContext = null; agentDraftTitle = ""; agentDraftBody = ""; agentResultSources = emptyList(); agentTrace = emptyList()
@@ -1042,6 +1082,7 @@ private fun KnowledgeAiDialog(
         boundary.changeMode(next)
         invalidateAnswer()
         queryMode = next
+        selectedImageUris = emptyList()
         showSendingContent = false
         if (busy) statusText = "模式已切换，旧请求结束前不能重复发送。"
     }
@@ -1082,6 +1123,7 @@ private fun KnowledgeAiDialog(
     fun requestAnswer() {
         if (agentMode || agentBusy) return
         val safeQuestion = question.trim()
+        val requestImageUris = selectedImageUris.toList()
         val sources = sourceCandidates.toList()
         val previousTurns = knowledgeConversationContext(conversation.map { it.turn })
         val historyJson = JSONArray().apply {
@@ -1101,8 +1143,9 @@ private fun KnowledgeAiDialog(
                 val result = withContext(Dispatchers.IO) {
                     if (!boundary.isCurrent(ticket) || latestBoundary !== boundary || viewModel.currentWorkspaceKey() != workspaceKey ||
                         latestIdentity != requestIdentity || latestConfiguration != requestConfiguration ||
-                        latestQuestion.trim() != safeQuestion || latestMode != requestMode || latestSourceSignature != requestSignature) null
-                    else NativeOptimizerBridge.completeAndroidAiQuery(
+                        latestQuestion.trim() != safeQuestion || latestMode != requestMode ||
+                        latestSourceSignature != requestSignature || latestImageUris != requestImageUris) null
+                    else if (requestImageUris.isEmpty()) NativeOptimizerBridge.completeAndroidAiQuery(
                         apiKey = requestConfiguration.apiKey.trim(),
                         baseUrl = requestConfiguration.baseUrl.trim(),
                         model = requestConfiguration.model.trim(),
@@ -1112,18 +1155,38 @@ private fun KnowledgeAiDialog(
                         sourceFolders = sources.map(KnowledgeSourceCandidate::folderName).toTypedArray(),
                         sourceExcerpts = sources.map(KnowledgeSourceCandidate::excerpt).toTypedArray(),
                         historyJson = historyJson
-                    )
+                    ) else {
+                        // Bounded content-URI read occurs on Dispatchers.IO.
+                        val prepared = runCatching { readSelectedAiImages(context, requestImageUris) }
+                        val images = prepared.getOrNull()
+                        if (images == null) arrayOf("false",
+                            prepared.exceptionOrNull()?.message ?: "所选图片无法读取，请重新选择。", "")
+                        else NativeOptimizerBridge.completeAndroidAiConversationWithImages(
+                            apiKey = requestConfiguration.apiKey.trim(),
+                            baseUrl = requestConfiguration.baseUrl.trim(),
+                            model = requestConfiguration.model.trim(),
+                            mode = requestMode.wireValue,
+                            question = safeQuestion,
+                            sourceTitles = sources.map { it.note.displayTitle() }.toTypedArray(),
+                            sourceFolders = sources.map(KnowledgeSourceCandidate::folderName).toTypedArray(),
+                            sourceExcerpts = sources.map(KnowledgeSourceCandidate::excerpt).toTypedArray(),
+                            historyJson = historyJson,
+                            images = images
+                        )
+                    }
                 }
                 val current = latestBoundary === boundary && latestIdentity == requestIdentity && latestConfiguration == requestConfiguration &&
                     viewModel.currentWorkspaceKey() == workspaceKey && latestQuestion.trim() == safeQuestion &&
-                    latestMode == requestMode && latestSourceSignature == requestSignature
+                    latestMode == requestMode && latestSourceSignature == requestSignature &&
+                    latestImageUris == requestImageUris
                 val outcome = boundary.finish(ticket, current, result?.getOrNull(0)?.toBooleanStrictOrNull() == true,
                     result?.getOrNull(2).orEmpty(), result?.getOrNull(1).orEmpty())
                 if (outcome != null && latestBoundary === boundary) {
                     if (outcome.ok) {
                         answer = outcome.text; answerQuestion = safeQuestion; answerSources = sources
-                        conversation.add(KnowledgeConversationEntry(turn = KnowledgeConversationTurn(safeQuestion, outcome.text), sources = sources))
+                        conversation.add(KnowledgeConversationEntry(turn = KnowledgeConversationTurn(safeQuestion, outcome.text), sources = sources, imageUris = requestImageUris))
                         question = ""
+                        selectedImageUris = emptyList()
                         statusText = if (requestMode == KnowledgeAiMode.DIRECT) "AI 回答完成" else "回答完成 · ${sources.size} 个来源"
                     } else statusText = outcome.message
                 }
@@ -1281,7 +1344,7 @@ private fun KnowledgeAiDialog(
                         Text(if (agentMode) "AI Agent" else "AI 问答", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (!agentMode) TextButton(enabled = !busy, onClick = {
-                                boundary.invalidate(); conversation.clear(); invalidateAnswer(); question = ""; statusText = ""
+                                boundary.invalidate(); conversation.clear(); invalidateAnswer(); question = ""; selectedImageUris = emptyList(); statusText = ""
                             }) { Text("新对话") }
                             CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() })
                         }
@@ -1397,6 +1460,16 @@ private fun KnowledgeAiDialog(
                                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                                     Text("你", style = MaterialTheme.typography.labelSmall, color = notesAccentColor)
                                     Text(entry.turn.question, style = MaterialTheme.typography.bodyLarge)
+                                    if (entry.imageUris.isNotEmpty()) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("附图 " + entry.imageUris.size + " 张", style = MaterialTheme.typography.labelSmall)
+                                            TextButton(enabled = !busy && !agentBusy, onClick = {
+                                                selectedImageUris = entry.imageUris
+                                                if (question.isBlank()) question = "继续分析这些图片"
+                                                invalidateAnswer()
+                                            }) { Text("再次引用图片") }
+                                        }
+                                    }
                                 }
                             }
                             Text("AI", style = MaterialTheme.typography.labelSmall)
@@ -1482,13 +1555,29 @@ private fun KnowledgeAiDialog(
                     KnowledgeQuestionField(question = question,
                         hint = if (conversation.isEmpty()) "输入问题" else "继续追问，AI 会参考最近的对话",
                         onQuestionChange = { if (!busy) { question = it; statusText = "" } })
+                    KnowledgeAiImagePicker(
+                        selected = selectedImageUris,
+                        enabled = !busy && !agentBusy,
+                        onChange = { images ->
+                            if (!busy && !agentBusy) {
+                                invalidateAnswer()
+                                selectedImageUris = images
+                                if (question.isBlank() && images.isNotEmpty()) question = "请分析这些图片"
+                            }
+                        }
+                    )
+                    if (imageModelUnsupported) {
+                        TextButton(enabled = !busy, onClick = onOpenAiSettings) {
+                            Text("当前 DeepSeek 模型不支持图片，点此切换到 deepseek-flash")
+                        }
+                    }
                 }
                 PhysicalButton(label = if (busy) "正在回答" else if (conversation.isEmpty()) "发送" else "继续提问",
                     icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
-                    enabled = !busy && !agentBusy && configuration.testable && question.isNotBlank() &&
+                    enabled = !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() &&
                         (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
                     modifier = Modifier.fillMaxWidth(), onClick = ::requestAnswer)
-                Text("当前面板内保留问答；每次携带最近最多 8 轮、24,000 字符。", style = MaterialTheme.typography.labelSmall,
+                Text("最多保留 8 轮、24,000 字符的文本历史；图片只在明确选择时发送，追问可手动再次引用。", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
             }
           }
