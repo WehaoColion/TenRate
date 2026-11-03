@@ -1434,7 +1434,7 @@ private fun KnowledgeAiDialog(
                     PhysicalButton(label = when { agentMode && agentBusy -> if (agentCancelling) "正在停止后续步骤" else "Agent 正在执行"; agentMode -> "授权本次范围并运行 Agent"; busy -> if (cancelling) "等待本次请求结束" else "AI 正在回答"; else -> "发送问题" }, icon = Icons.Rounded.Title,
                         accent = if (agentMode) accentFor("green") else notesAccentColor, filled = true,
                         enabled = if (agentMode) !agentBusy && !agentSaving && showSendingContent && agentPreviewAcknowledged && configuration.testable && question.isNotBlank() && selectedAgentDocuments.isNotEmpty()
-                            else !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() && (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
+                            else !busy && !agentBusy && configuration.testable && question.isNotBlank() && (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
                         modifier = Modifier.fillMaxWidth(), onClick = if (agentMode) ::requestAgent else ::requestAnswer)
                     }
                 }
