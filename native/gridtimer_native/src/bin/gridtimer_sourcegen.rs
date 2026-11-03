@@ -27,6 +27,8 @@ mod android_ai_answer_ui;
 mod android_ai_image_picker;
 #[path = "../sourcegen/android_agent_workspace_ui.rs"]
 mod android_agent_workspace_ui;
+#[path = "../sourcegen/android_agent_mobile_ux.rs"]
+mod android_agent_mobile_ux;
 #[path = "../sourcegen/android_ai_workflow.rs"]
 mod android_ai_workflow;
 #[path = "../sourcegen/android_backup_availability.rs"]
@@ -135,6 +137,8 @@ mod android_timer_latency;
 mod android_timer_layout;
 #[path = "../sourcegen/android_ui_localization.rs"]
 mod android_ui_localization;
+#[path = "../sourcegen/android_english_home.rs"]
+mod android_english_home;
 #[path = "../sourcegen/android_update_history_source.rs"]
 mod android_update_history_source;
 #[path = "../sourcegen/diagnostics_collection_backend.rs"]
@@ -514,6 +518,8 @@ fn run() -> io::Result<()> {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_trash_retention::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_english_home::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
 
@@ -556,7 +562,7 @@ fn run() -> io::Result<()> {
     write_source(
         &output_root,
         my_account_source::PATH,
-        my_account_source::CONTENTS,
+        &android_ui_localization::render(my_account_source::PATH, my_account_source::CONTENTS),
     )?;
     write_source(
         &output_root,
@@ -657,7 +663,9 @@ fn run() -> io::Result<()> {
         android_ui_localization::KOTLIN_CONTENTS,
     )?;
     for &(path, contents) in android_ui_localization::RESOURCES {
-        write_source(&output_root, path, contents)?;
+        let rendered = android_ui_localization::render_resource(path, contents)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        write_source(&output_root, path, &rendered)?;
     }
 
     if let Some(android_test_output_root) = android_test_output_root {
@@ -846,6 +854,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_snapshot_row_read::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_agent_workspace_ui::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_agent_mobile_ux::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_finance_navigation::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

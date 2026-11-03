@@ -1,4 +1,6 @@
+// v2.23.4.6 - Consolidate Agent UX, AI vision and English UI localization.
 // v2.23.4.5 - Record Rust-backed AI vision input and compatibility.
+// v2.23.4.4 - Improve mobile Agent task setup and exit feedback.
 // v2.23.4 - Record scoped Rust hierarchy writes and latency diagnostics.
 // v2.23.3 - Record compact, complete mobile page children and three-part milestone.
 // v2.23.2.59 - Do not save untouched newly created blank knowledge pages.
@@ -52,7 +54,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.5";
+pub const LATEST_VERSION: &str = "2.23.4.6";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -83,6 +85,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
     AndroidUpdateEntry(
+        version = "2.23.4.6",
+        updatedAt = "2026-11-03 19:15",
+        summary = "整合移动端 Agent、图片问答及英文界面本地化",
+        sections = listOf(
+            AndroidUpdateSection("整合版本", listOf(
+                "包含 2.23.4.4 的移动端 Agent 任务交互改进，以及 2.23.4.5 的 Rust 原生图片问答。",
+                "修复英语环境下计时主页动态摘要、默认任务名、时长及部分知识库、记账、账户标签仍显示中文的问题。"
+            )),
+            AndroidUpdateSection("升级说明", listOf(
+                "Android 版本统一更新为 2.23.4.6，版本代码 22336；与主分支 2.23.4.3 使用同一原始签名证书。",
+                "仅对已收录的界面文案翻译；用户输入的中文标题、正文和备注保持不变。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
         version = "2.23.4.5",
         updatedAt = "2026-11-03 13:30",
         summary = "安卓 AI 可选取图片进行原生视觉问答，保留纯文字兼容",
@@ -94,6 +111,25 @@ internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
             AndroidUpdateSection("接口与隐私", listOf(
                 "DeepSeek Flash 支持图片；Pro 保持文字和结构化测试，不会因图片不可用而误报连接失败。",
                 "纯文字调用不变，图片不写入知识库和同步记录；超限及不支持格式会显示明确提示。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "2.23.4.4",
+        updatedAt = "2026-11-03 05:24",
+        summary = "任务助手快速发起、资料推荐与退出防误触",
+        sections = listOf(
+            AndroidUpdateSection("更少操作", listOf(
+                "从知识页打开任务助手时预选当前页，仍需逐次核对并明确授权后才会发送内容。",
+                "可按任务文本在本机匹配资料标题与文档库，选择加入推荐资料后继续核对；有已选资料时跳过重复的选资料步骤。"
+            )),
+            AndroidUpdateSection("移动端阅读和反馈", listOf(
+                "发送预览默认展示资料清单，点按每条资料可展开完整正文，授权范围不变。",
+                "运行中关闭任务面板前需要确认，明确提示当前版本切到后台会取消任务。"
+            )),
+            AndroidUpdateSection("保留边界", listOf(
+                "仍限制最多30条未删除未加密资料；保留接收方和授权范围确认，以及深度复核与保存门禁。",
+                "本版未加入后台持续运行、跨进程恢复和多轮修改能力，避免误称这些功能已经交付。"
             ))
         )
     ),
