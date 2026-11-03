@@ -843,6 +843,77 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             TextButton(enabled=!model.busy, onClick={ model.submit(canvasRequest("view") { put("x",viewport.x); put("y",viewport.y); put("zoom",1f) }) }) { CanvasZoomLabel(zoomPercent) }
         }
     }
+
+    if (overview) {
+        Dialog(onDismissRequest = { overview = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxWidth().fillMaxHeight(0.84f).padding(horizontal = 12.dp), shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("画布总览", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = { overview = false }) { Text("关闭") }
+                    }
+                    Text("点击概览中的位置跳转。这里仅浏览，不会改变已保存的缩放范围。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    var overviewSize by remember(canvas.id) { mutableStateOf(IntSize.Zero) }
+                    val transform = remember(canvas.nodes, overviewSize) { fitCanvasOverview(canvas.nodes, overviewSize) }
+                    val index = remember(canvas.nodes) { canvas.nodes.associateBy { it.id } }
+                    val overviewPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
+                    Canvas(Modifier.fillMaxWidth().weight(1f).onSizeChanged { overviewSize = it }
+                        .semantics { contentDescription = "画布总览，点击任意位置跳转" }
+                        .pointerInput(canvas.id, overviewSize) {
+                            detectTapGestures { point ->
+                                if (!model.busy && overviewSize.width > 0 && overviewSize.height > 0) {
+                                    val world = transform.worldAt(point)
+                                    if (model.submit(canvasRequest("view") {
+                                        put("x", world.x.coerceIn(-250000f, 250000f))
+                                        put("y", world.y.coerceIn(-250000f, 250000f))
+                                        put("zoom", 1f)
+                                    })) overview = false
+                                }
+                            }
+                        }) {
+                        val native = drawContext.canvas.nativeCanvas
+                        overviewPaint.style = Paint.Style.STROKE
+                        overviewPaint.strokeWidth = 1.3f
+                        overviewPaint.color = lineColor
+                        canvas.edges.forEach { edge ->
+                            val from = index[edge.from]
+                            val to = index[edge.to]
+                            if (from != null && to != null) {
+                                val a = transform.screenAt(Offset(from.x + from.width / 2f, from.y + from.height / 2f))
+                                val b = transform.screenAt(Offset(to.x + to.width / 2f, to.y + to.height / 2f))
+                                native.drawLine(a.x, a.y, b.x, b.y, overviewPaint)
+                            }
+                        }
+                        canvas.nodes.forEach { node ->
+                            val a = transform.screenAt(Offset(node.x, node.y))
+                            val w = max(2.5f, node.width * transform.scale)
+                            val h = max(2.5f, node.height * transform.scale)
+                            overviewPaint.style = Paint.Style.FILL
+                            overviewPaint.color = canvasTint(node.color).toArgb()
+                            native.drawRoundRect(a.x, a.y, a.x + w, a.y + h, 2f, 2f, overviewPaint)
+                            if (node.id == selected) {
+                                overviewPaint.style = Paint.Style.STROKE
+                                overviewPaint.strokeWidth = 2f
+                                overviewPaint.color = primary
+                                native.drawRoundRect(a.x - 2f, a.y - 2f, a.x + w + 2f, a.y + h + 2f, 3f, 3f, overviewPaint)
+                            }
+                        }
+                        if (size.width > 0 && size.height > 0) {
+                            val halfWidth = size.width / (2f * viewport.zoom * density)
+                            val halfHeight = size.height / (2f * viewport.zoom * density)
+                            val upperLeft = transform.screenAt(Offset(viewport.x - halfWidth, viewport.y - halfHeight))
+                            val lowerRight = transform.screenAt(Offset(viewport.x + halfWidth, viewport.y + halfHeight))
+                            overviewPaint.style = Paint.Style.STROKE
+                            overviewPaint.strokeWidth = 2f
+                            overviewPaint.color = primary
+                            native.drawRect(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, overviewPaint)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
