@@ -133,6 +133,8 @@ mod android_timer_latency;
 mod android_timer_layout;
 #[path = "../sourcegen/android_ui_localization.rs"]
 mod android_ui_localization;
+#[path = "../sourcegen/android_english_home.rs"]
+mod android_english_home;
 #[path = "../sourcegen/android_update_history_source.rs"]
 mod android_update_history_source;
 #[path = "../sourcegen/diagnostics_collection_backend.rs"]
@@ -511,6 +513,8 @@ fn run() -> io::Result<()> {
         let rendered = android_image_import_performance::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_trash_retention::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_english_home::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }
