@@ -1580,6 +1580,16 @@ where
         return result;
     }
     let mut body = connection_probe_body(&result.model);
+    // Official DeepSeek Pro is text-only. Never fail a text connection test
+    // merely because the model correctly rejects an attached image.
+    let text_only_deepseek = is_deepseek_endpoint(&base_url)
+        && result.model == "deepseek-v4-pro";
+    if text_only_deepseek {
+        if let Some(parts) = body.pointer_mut("/input/1/content").and_then(Value::as_array_mut) {
+            parts.retain(|part| part.get("type").and_then(Value::as_str) != Some("input_image"));
+        }
+        body["input"][0]["content"] = json!("仅测试文字和 JSON Schema 能力，没有附图。输出 imageShape=unknown、imageColor=unknown，marker 按要求填写。");
+    }
     apply_provider_instruction_role(&base_url, &mut body);
     result.requests = 1;
     let raw = match transport(api_key, &base_url, body) {
@@ -1613,9 +1623,12 @@ where
         return result;
     };
     result.structured = true;
-    result.vision = output.image_shape == "square" && output.image_color == "blue";
-    result.ok = result.vision;
-    result.message = if result.ok {
+    result.vision = !text_only_deepseek
+        && output.image_shape == "square" && output.image_color == "blue";
+    result.ok = result.vision || text_only_deepseek;
+    result.message = if text_only_deepseek {
+        "文字连接与结构化输出已通过；当前 DeepSeek Pro 不支持图片，请选 deepseek-flash 使用图片功能。"
+    } else if result.vision {
         "连接测试通过，已验证结构化输出和测试图片识别"
     } else {
         "结构化输出已通过，但测试图片未正确识别，请更换具备图片能力的模型"
@@ -2335,6 +2348,25 @@ mod tests {
             assert_eq!(result.ok, expected);
             assert_eq!(result.requests, 1);
         }
+    }
+
+    #[test]
+    fn deepseek_pro_connection_tests_text_without_sending_images() {
+        let result = test_connection_with_transport(
+            "key", "https://api.deepseek.com", "deepseek-v4-pro",
+            |_, _, body| {
+                assert_eq!(body["store"], false);
+                let parts = body["input"][1]["content"].as_array().unwrap();
+                assert_eq!(parts.len(), 1);
+                assert_eq!(parts[0]["type"], "input_text");
+                Ok(probe_reply("unknown", "unknown"))
+            },
+        );
+        assert!(result.ok);
+        assert!(result.structured);
+        assert!(!result.vision);
+        assert_eq!(result.requests, 1);
+        assert!(result.message.contains("不支持图片"));
     }
 
     #[test]
