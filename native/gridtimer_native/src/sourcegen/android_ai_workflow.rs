@@ -969,6 +969,8 @@ private fun KnowledgeAiDialog(
     var question by rememberSaveable(workspaceKey, priorityNoteId) { mutableStateOf("") }
     // Image URIs are session-scoped, never persisted with notes or sync.
     var selectedImageUris by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf<List<android.net.Uri>>(emptyList()) }
+    val imageModelUnsupported = selectedImageUris.isNotEmpty() && configuration.isDeepSeek &&
+        configuration.model.trim() !in setOf("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp")
     var searchScope by rememberSaveable(workspaceKey, priorityNoteId, selectedFolderId) {
         mutableStateOf(if (selectedFolderId == null) KnowledgeSearchScope.ALL else KnowledgeSearchScope.CURRENT_FOLDER)
     }
@@ -1432,7 +1434,7 @@ private fun KnowledgeAiDialog(
                     PhysicalButton(label = when { agentMode && agentBusy -> if (agentCancelling) "正在停止后续步骤" else "Agent 正在执行"; agentMode -> "授权本次范围并运行 Agent"; busy -> if (cancelling) "等待本次请求结束" else "AI 正在回答"; else -> "发送问题" }, icon = Icons.Rounded.Title,
                         accent = if (agentMode) accentFor("green") else notesAccentColor, filled = true,
                         enabled = if (agentMode) !agentBusy && !agentSaving && showSendingContent && agentPreviewAcknowledged && configuration.testable && question.isNotBlank() && selectedAgentDocuments.isNotEmpty()
-                            else !busy && !agentBusy && configuration.testable && question.isNotBlank() && (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
+                            else !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() && (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
                         modifier = Modifier.fillMaxWidth(), onClick = if (agentMode) ::requestAgent else ::requestAnswer)
                     }
                 }
@@ -1564,10 +1566,15 @@ private fun KnowledgeAiDialog(
                             }
                         }
                     )
+                    if (imageModelUnsupported) {
+                        TextButton(enabled = !busy, onClick = onOpenAiSettings) {
+                            Text("当前 DeepSeek 模型不支持图片，点此切换到 deepseek-flash")
+                        }
+                    }
                 }
                 PhysicalButton(label = if (busy) "正在回答" else if (conversation.isEmpty()) "发送" else "继续提问",
                     icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
-                    enabled = !busy && !agentBusy && configuration.testable && question.isNotBlank() &&
+                    enabled = !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() &&
                         (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
                     modifier = Modifier.fillMaxWidth(), onClick = ::requestAnswer)
                 Text("最多保留 8 轮、24,000 字符的文本历史；图片只在明确选择时发送，追问可手动再次引用。", style = MaterialTheme.typography.labelSmall,
