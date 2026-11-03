@@ -933,7 +933,8 @@ const KNOWLEDGE_DIALOG: &str = r####"private fun buildKnowledgeAgentDraftNote(
 private data class KnowledgeConversationEntry(
     val id: String = UUID.randomUUID().toString(),
     val turn: KnowledgeConversationTurn,
-    val sources: List<KnowledgeSourceCandidate>
+    val sources: List<KnowledgeSourceCandidate>,
+    val imageUris: List<android.net.Uri> = emptyList()
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -966,6 +967,8 @@ private fun KnowledgeAiDialog(
     val agentBoundary = remember(workspaceKey, identity, priorityNoteId) { KnowledgeAgentRequestBoundary() }
     val latestAgentBoundary by rememberUpdatedState(agentBoundary)
     var question by rememberSaveable(workspaceKey, priorityNoteId) { mutableStateOf("") }
+    // Image URIs are session-scoped, never persisted with notes or sync.
+    var selectedImageUris by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf<List<android.net.Uri>>(emptyList()) }
     var searchScope by rememberSaveable(workspaceKey, priorityNoteId, selectedFolderId) {
         mutableStateOf(if (selectedFolderId == null) KnowledgeSearchScope.ALL else KnowledgeSearchScope.CURRENT_FOLDER)
     }
@@ -1027,6 +1030,7 @@ private fun KnowledgeAiDialog(
     val sourceSignature = sourceCandidates.map { listOf(it.note.id, it.note.displayTitle(), it.folderName, it.excerpt) }
     val latestSourceSignature by rememberUpdatedState(sourceSignature)
     val latestQuestion by rememberUpdatedState(question)
+    val latestImageUris by rememberUpdatedState(selectedImageUris)
     val latestSelectedAgentDocuments by rememberUpdatedState(selectedAgentDocuments)
     val latestAgentMode by rememberUpdatedState(agentMode)
     val latestAgentTaskId by rememberUpdatedState(agentTaskId)
@@ -1064,6 +1068,7 @@ private fun KnowledgeAiDialog(
         invalidateAnswer()
         agentBoundary.invalidate()
         agentMode = enabled
+        selectedImageUris = emptyList()
         showSendingContent = false
         agentPreviewAcknowledged = false
         agentDraft = null; agentDraftContext = null; agentDraftTitle = ""; agentDraftBody = ""; agentResultSources = emptyList(); agentTrace = emptyList()
@@ -1075,6 +1080,7 @@ private fun KnowledgeAiDialog(
         boundary.changeMode(next)
         invalidateAnswer()
         queryMode = next
+        selectedImageUris = emptyList()
         showSendingContent = false
         if (busy) statusText = "模式已切换，旧请求结束前不能重复发送。"
     }
@@ -1115,6 +1121,7 @@ private fun KnowledgeAiDialog(
     fun requestAnswer() {
         if (agentMode || agentBusy) return
         val safeQuestion = question.trim()
+        val requestImageUris = selectedImageUris.toList()
         val sources = sourceCandidates.toList()
         val previousTurns = knowledgeConversationContext(conversation.map { it.turn })
         val historyJson = JSONArray().apply {
@@ -1134,8 +1141,9 @@ private fun KnowledgeAiDialog(
                 val result = withContext(Dispatchers.IO) {
                     if (!boundary.isCurrent(ticket) || latestBoundary !== boundary || viewModel.currentWorkspaceKey() != workspaceKey ||
                         latestIdentity != requestIdentity || latestConfiguration != requestConfiguration ||
-                        latestQuestion.trim() != safeQuestion || latestMode != requestMode || latestSourceSignature != requestSignature) null
-                    else NativeOptimizerBridge.completeAndroidAiQuery(
+                        latestQuestion.trim() != safeQuestion || latestMode != requestMode ||
+                        latestSourceSignature != requestSignature || latestImageUris != requestImageUris) null
+                    else if (requestImageUris.isEmpty()) NativeOptimizerBridge.completeAndroidAiQuery(
                         apiKey = requestConfiguration.apiKey.trim(),
                         baseUrl = requestConfiguration.baseUrl.trim(),
                         model = requestConfiguration.model.trim(),
@@ -1145,11 +1153,29 @@ private fun KnowledgeAiDialog(
                         sourceFolders = sources.map(KnowledgeSourceCandidate::folderName).toTypedArray(),
                         sourceExcerpts = sources.map(KnowledgeSourceCandidate::excerpt).toTypedArray(),
                         historyJson = historyJson
-                    )
+                    ) else {
+                        // Bounded content-URI read occurs on Dispatchers.IO.
+                        val prepared = runCatching { readSelectedAiImages(context, requestImageUris) }
+                        val images = prepared.getOrNull()
+                        if (images == null) arrayOf("false",
+                            prepared.exceptionOrNull()?.message ?: "所选图片无法读取，请重新选择。", "")
+                        else NativeOptimizerBridge.completeAndroidAiConversationWithImages(
+                            apiKey = requestConfiguration.apiKey.trim(),
+                            baseUrl = requestConfiguration.baseUrl.trim(),
+                            model = requestMode.wireValue,
+                            question = safeQuestion,
+                            sourceTitles = sources.map { it.note.displayTitle() }.toTypedArray(),
+                            sourceFolders = sources.map(KnowledgeSourceCandidate::folderName).toTypedArray(),
+                            sourceExcerpts = sources.map(KnowledgeSourceCandidate::excerpt).toTypedArray(),
+                            historyJson = historyJson,
+                            images = images
+                        )
+                    }
                 }
                 val current = latestBoundary === boundary && latestIdentity == requestIdentity && latestConfiguration == requestConfiguration &&
                     viewModel.currentWorkspaceKey() == workspaceKey && latestQuestion.trim() == safeQuestion &&
-                    latestMode == requestMode && latestSourceSignature == requestSignature
+                    latestMode == requestMode && latestSourceSignature == requestSignature &&
+                    latestImageUris == requestImageUris
                 val outcome = boundary.finish(ticket, current, result?.getOrNull(0)?.toBooleanStrictOrNull() == true,
                     result?.getOrNull(2).orEmpty(), result?.getOrNull(1).orEmpty())
                 if (outcome != null && latestBoundary === boundary) {
