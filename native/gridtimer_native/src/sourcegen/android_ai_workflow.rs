@@ -640,6 +640,25 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         }.getOrNull()?.takeIf { it.size >= 3 }
     }
 
+    fun completeAndroidAiConversationWithImages(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>,
+        historyJson: String,
+        images: Array<ByteArray>
+    ): Array<String>? {
+        if (!nativeAvailable) return null
+        return runCatching {
+            nativeCompleteAndroidAiConversationWithImages(apiKey, baseUrl, model, mode, question,
+                sourceTitles, sourceFolders, sourceExcerpts, historyJson, images)
+        }.getOrNull()?.takeIf { it.size >= 3 }
+    }
+
 "####,
             )?;
             replace(
@@ -680,6 +699,20 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         sourceFolders: Array<String>,
         sourceExcerpts: Array<String>,
         historyJson: String
+    ): Array<String>?
+
+    @JvmStatic
+    private external fun nativeCompleteAndroidAiConversationWithImages(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        mode: String,
+        question: String,
+        sourceTitles: Array<String>,
+        sourceFolders: Array<String>,
+        sourceExcerpts: Array<String>,
+        historyJson: String,
+        images: Array<ByteArray>
     ): Array<String>?
 
 "####,
