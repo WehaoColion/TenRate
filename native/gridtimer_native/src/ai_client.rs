@@ -171,6 +171,26 @@ pub fn complete_android_conversation(
     source_excerpts: &[String],
     history_json: &str,
 ) -> AiCompletionResult {
+    complete_android_conversation_with_images(
+        api_key, base_url, model, mode, question,
+        source_titles, source_folders, source_excerpts, history_json, &[],
+    )
+}
+
+/// Only the Android picker explicitly provides these bytes. The existing
+/// text-only entry points remain identical for desktop and legacy Android.
+pub fn complete_android_conversation_with_images(
+    api_key: &str,
+    base_url: &str,
+    model: &str,
+    mode: &str,
+    question: &str,
+    source_titles: &[String],
+    source_folders: &[String],
+    source_excerpts: &[String],
+    history_json: &str,
+    image_bytes: &[Vec<u8>],
+) -> AiCompletionResult {
     let api_key = api_key.trim();
     if api_key.is_empty() {
         return AiCompletionResult::error("请先填写 AI API Key");
@@ -179,22 +199,35 @@ pub fn complete_android_conversation(
         Ok(value) => value,
         Err(message) => return AiCompletionResult::error(message),
     };
+    if !image_bytes.is_empty() && is_deepseek_endpoint(&base_url)
+        && !matches!(model.trim(), "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4-flash-vision-exp")
+    {
+        return AiCompletionResult::error("当前 DeepSeek 模型不支持图片，请在 AI 设置中选择 deepseek-flash 后重试。");
+    }
     let request_body = match build_android_query_request_body(
-        model,
-        mode,
-        question,
-        source_titles,
-        source_folders,
-        source_excerpts,
+        model, mode, question, source_titles, source_folders, source_excerpts,
     ) {
         Ok(value) => value,
         Err(message) => return AiCompletionResult::error(message),
     };
-    let request_body =
-        match crate::android_ai_conversation::with_history(request_body, history_json) {
-            Ok(body) => body,
+    let mut request_body = match crate::android_ai_conversation::with_history(request_body, history_json) {
+        Ok(body) => body,
+        Err(message) => return AiCompletionResult::error(message),
+    };
+    if !image_bytes.is_empty() {
+        let Some(last_message) = request_body.get_mut("input")
+            .and_then(Value::as_array_mut).and_then(|messages| messages.last_mut()) else {
+            return AiCompletionResult::error("AI 图片请求结构无效。");
+        };
+        let Some(text) = last_message.get("content").and_then(Value::as_str) else {
+            return AiCompletionResult::error("AI 图片请求内容无效。");
+        };
+        let content = match crate::android_ai_images::content_with_images(text, image_bytes) {
+            Ok(content) => content,
             Err(message) => return AiCompletionResult::error(message),
         };
+        last_message["content"] = content;
+    }
     execute_response_request(api_key, &base_url, request_body)
 }
 
