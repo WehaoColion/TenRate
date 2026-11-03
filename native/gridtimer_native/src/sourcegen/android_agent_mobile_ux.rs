@@ -25,17 +25,13 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     }
     let mut source = source.to_owned();
 
-    // Opening Agent from a knowledge page suggests that exact page as the initial
-    // selection. It remains a local selection until the normal explicit send gate.
-    // Preserve the original saveable keys to avoid resetting selections unexpectedly.
-    replace_once(&mut source,
-        "    val agentSelectedIds = rememberSaveable(workspaceKey, identity, selectedFolderId) { mutableStateListOf<String>() }",
-        "    val agentSelectedIds = rememberSaveable(workspaceKey, identity, selectedFolderId) { mutableStateListOf<String>().apply { priorityNoteId?.let { add(it) } } }",
-    )?;
+    // The existing selection state is owned by the knowledge UI. A Compose
+    // effect below safely preselects a currently eligible page once per task;
+    // it never bypasses the existing explicit send confirmation.
 
     replace_once(&mut source,
         "    var agentResetConfirmation by remember(agentBoundary) { mutableStateOf(false) }",
-        "    var agentResetConfirmation by remember(agentBoundary) { mutableStateOf(false) }\n    var agentExitConfirmation by remember(agentBoundary) { mutableStateOf(false) }\n    val agentExpandedPreviewIds = remember(agentBoundary) { mutableStateListOf<String>() }",
+        "    var agentResetConfirmation by remember(agentBoundary) { mutableStateOf(false) }\n    var agentExitConfirmation by remember(agentBoundary) { mutableStateOf(false) }\n    var agentInitialSourcePicked by remember(agentBoundary) { mutableStateOf(false) }\n    val agentExpandedPreviewIds = remember(agentBoundary) { mutableStateListOf<String>() }",
     )?;
 
     replace_once(&mut source,
@@ -46,7 +42,17 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         else if (agentMode && !busy) requestAgentWorkspaceReset(false, "close")
         else onDismiss()
     }
-    LaunchedEffect(agentMode) { if (agentMode && !agentBusy && !agentSaving) agentWorkspaceStep = 0 }"####,
+    LaunchedEffect(agentMode) { if (agentMode && !agentBusy && !agentSaving) agentWorkspaceStep = 0 }
+    LaunchedEffect(agentMode, priorityNoteId, agentAvailableDocuments) {
+        if (agentMode && !agentInitialSourcePicked) {
+            agentInitialSourcePicked = true
+            val currentId = priorityNoteId
+            if (currentId != null && agentAvailableDocuments.any { it.id == currentId } &&
+                currentId !in agentSelectedIds && agentSelectedIds.size < 30) {
+                agentSelectedIds.add(currentId)
+            }
+        }
+    }"####,
     )?;
     replace_once(&mut source,
         "    if (agentResetConfirmation) {",
