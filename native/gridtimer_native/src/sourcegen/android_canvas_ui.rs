@@ -732,9 +732,15 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
     // An added or list-selected card must not remain invisible off screen.
     LaunchedEffect(selected, canvas.id, size) {
         val node = canvas.nodes.firstOrNull { it.id == selected }
-        if (node != null && size.width > 0 && size.height > 0 &&
-            !canvasVisible(node, viewport, size, density)) {
-            viewport = viewport.copy(x = node.x + node.width / 2f, y = node.y + node.height / 2f)
+        if (node != null && size.width > 0 && size.height > 0) {
+            val centerX = node.x + node.width / 2f
+            val centerY = node.y + node.height / 2f
+            val halfWidth = size.width / (2f * viewport.zoom * density)
+            val halfHeight = size.height / (2f * viewport.zoom * density)
+            if (abs(centerX - viewport.x) > halfWidth * 0.6f ||
+                abs(centerY - viewport.y) > halfHeight * 0.6f) {
+                viewport = viewport.copy(x = centerX, y = centerY)
+            }
         }
     }
     // Retire old previews when pages change, including deletion and encryption.
