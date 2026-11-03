@@ -1162,7 +1162,8 @@ private fun KnowledgeAiDialog(
                         else NativeOptimizerBridge.completeAndroidAiConversationWithImages(
                             apiKey = requestConfiguration.apiKey.trim(),
                             baseUrl = requestConfiguration.baseUrl.trim(),
-                            model = requestMode.wireValue,
+                            model = requestConfiguration.model.trim(),
+                            mode = requestMode.wireValue,
                             question = safeQuestion,
                             sourceTitles = sources.map { it.note.displayTitle() }.toTypedArray(),
                             sourceFolders = sources.map(KnowledgeSourceCandidate::folderName).toTypedArray(),
@@ -1181,8 +1182,9 @@ private fun KnowledgeAiDialog(
                 if (outcome != null && latestBoundary === boundary) {
                     if (outcome.ok) {
                         answer = outcome.text; answerQuestion = safeQuestion; answerSources = sources
-                        conversation.add(KnowledgeConversationEntry(turn = KnowledgeConversationTurn(safeQuestion, outcome.text), sources = sources))
+                        conversation.add(KnowledgeConversationEntry(turn = KnowledgeConversationTurn(safeQuestion, outcome.text), sources = sources, imageUris = requestImageUris))
                         question = ""
+                        selectedImageUris = emptyList()
                         statusText = if (requestMode == KnowledgeAiMode.DIRECT) "AI 回答完成" else "回答完成 · ${sources.size} 个来源"
                     } else statusText = outcome.message
                 }
@@ -1340,7 +1342,7 @@ private fun KnowledgeAiDialog(
                         Text(if (agentMode) "AI Agent" else "AI 问答", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (!agentMode) TextButton(enabled = !busy, onClick = {
-                                boundary.invalidate(); conversation.clear(); invalidateAnswer(); question = ""; statusText = ""
+                                boundary.invalidate(); conversation.clear(); invalidateAnswer(); question = ""; selectedImageUris = emptyList(); statusText = ""
                             }) { Text("新对话") }
                             CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() })
                         }
@@ -1456,6 +1458,16 @@ private fun KnowledgeAiDialog(
                                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                                     Text("你", style = MaterialTheme.typography.labelSmall, color = notesAccentColor)
                                     Text(entry.turn.question, style = MaterialTheme.typography.bodyLarge)
+                                    if (entry.imageUris.isNotEmpty()) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("附图 " + entry.imageUris.size + " 张", style = MaterialTheme.typography.labelSmall)
+                                            TextButton(enabled = !busy && !agentBusy, onClick = {
+                                                selectedImageUris = entry.imageUris
+                                                if (question.isBlank()) question = "继续分析这些图片"
+                                                invalidateAnswer()
+                                            }) { Text("再次引用图片") }
+                                        }
+                                    }
                                 }
                             }
                             Text("AI", style = MaterialTheme.typography.labelSmall)
@@ -1541,13 +1553,24 @@ private fun KnowledgeAiDialog(
                     KnowledgeQuestionField(question = question,
                         hint = if (conversation.isEmpty()) "输入问题" else "继续追问，AI 会参考最近的对话",
                         onQuestionChange = { if (!busy) { question = it; statusText = "" } })
+                    KnowledgeAiImagePicker(
+                        selected = selectedImageUris,
+                        enabled = !busy && !agentBusy,
+                        onChange = { images ->
+                            if (!busy && !agentBusy) {
+                                invalidateAnswer()
+                                selectedImageUris = images
+                                if (question.isBlank() && images.isNotEmpty()) question = "请分析这些图片"
+                            }
+                        }
+                    )
                 }
                 PhysicalButton(label = if (busy) "正在回答" else if (conversation.isEmpty()) "发送" else "继续提问",
                     icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
                     enabled = !busy && !agentBusy && configuration.testable && question.isNotBlank() &&
                         (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
                     modifier = Modifier.fillMaxWidth(), onClick = ::requestAnswer)
-                Text("当前面板内保留问答；每次携带最近最多 8 轮、24,000 字符。", style = MaterialTheme.typography.labelSmall,
+                Text("最多保留 8 轮、24,000 字符的文本历史；图片只在明确选择时发送，追问可手动再次引用。", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
             }
           }
