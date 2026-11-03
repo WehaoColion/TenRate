@@ -179,6 +179,79 @@ pub const RESOURCES: &[(&str, &str)] = &[
     ("res/raw/ui_ja.json", include_str!("ui_locales/ui_ja.json")),
 ];
 
+// Additions for literal UI text seen in English-language Android simulator audits.
+// Preserve reviewed translations in the bundled catalog; only fill missing keys.
+const EN_UI_GAP_TRANSLATIONS: &[(&str, &str)] = &[
+    ("搜索", "Search"),
+    ("目录", "Directory"),
+    ("文档库", "Document library"),
+    ("页面与文件夹", "Pages and folders"),
+    ("AI 对话", "AI chat"),
+    ("连续追问，保留本轮问答", "Ask follow-up questions in this conversation"),
+    ("开始对话", "Start chat"),
+    ("结构页", "Structured pages"),
+    ("在手机上编辑待办、折叠内容、表格与属性。", "Edit to-dos, collapsible content, tables and properties on your phone."),
+    ("排序", "Sort"),
+    ("全部文档", "All documents"),
+    ("还没有文档", "No documents yet"),
+    ("点击新建，添加第一篇文档。", "Select New to create your first document."),
+    ("快捷记入今天", "Quick entry for today"),
+    ("风险分析", "Risk analysis"),
+    ("记支出", "Record expense"),
+    ("记收入", "Record income"),
+    ("日账", "Daily ledger"),
+    ("月快照", "Monthly snapshot"),
+    ("当日收入", "Income today"),
+    ("当日支出", "Expenses today"),
+    ("今日备注", "Today's notes"),
+    ("新增收入", "Add income"),
+    ("新增支出", "Add expense"),
+    ("查看当日统计与预算", "View today's totals and budget"),
+    ("点新增收入，或直接套用上面的模板。这里只保留你真正填写过的记录。", "Tap Add income or use a template. Only records you enter are saved."),
+    ("没有支出就让它空着。要补账时，新增一行或套用常用支出模板。", "Leave this blank if you spent nothing. Add a row or use a template to catch up."),
+    ("收支与快照", "Transactions and snapshots"),
+    ("查看日期", "Choose date"),
+    ("季度", "Quarterly"),
+    ("年度", "Yearly"),
+    ("日期", "Date"),
+    ("待填写 API Key", "API key required"),
+    ("问 AI", "Ask AI"),
+    ("直接提问，或依据知识页回答", "Ask directly or use knowledge pages as context"),
+    ("先配置", "Configure first"),
+    ("法律风险线索", "Legal risk indicators"),
+    ("先查看扫描范围和发送预览，再由你确认发送", "Review scan scope and message preview before sending"),
+    ("登录 / 充值 / 创建密钥", "Sign in / Add credit / Create key"),
+    ("保存并检测连接", "Save and test connection"),
+    ("正在保存配置", "Saving configuration"),
+    ("正在检测连接", "Testing connection"),
+    ("接口信息待补全", "Complete endpoint details"),
+    ("配置有修改，尚未保存", "Unsaved configuration changes"),
+    ("已连接 · 文字和图片可用", "Connected · Text and images available"),
+    ("已连接 · 部分能力可用", "Connected · Limited capabilities"),
+    ("配置已保存 · 连接未通过", "Saved · Connection test failed"),
+    ("配置已保存 · 可以进入 AI 功能", "Saved · AI is available"),
+    ("接收：api.deepseek.com · 模型：deepseek-flash", "Endpoint: api.deepseek.com · Model: deepseek-flash"),
+    ("修改接口与模型", "Change endpoint and model"),
+    ("正在运行", "Running"),
+    ("显示", "Showing"),
+    ("页", "pages"),
+    ("搜索文档回收站", "Search document trash"),
+    ("标题、正文、文档库都能搜", "Search titles, content, and libraries"),
+    ("今日", "Today"),
+    ("进行中", "Running"),
+];
+
+pub fn render_resource(path: &str, contents: &str) -> Result<String, String> {
+    if path != "res/raw/ui_en.json" { return Ok(contents.to_owned()); }
+    let mut dictionary: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(contents).map_err(|error| error.to_string())?;
+    for (source, english) in EN_UI_GAP_TRANSLATIONS {
+        dictionary.entry((*source).to_string())
+            .or_insert_with(|| serde_json::Value::String((*english).to_string()));
+    }
+    serde_json::to_string(&dictionary).map_err(|error| error.to_string())
+}
+
 pub fn render(path: &str, source: &str) -> String {
     let should_localize = matches!(
         path,
@@ -191,6 +264,7 @@ pub fn render(path: &str, source: &str) -> String {
             | "com/ofairyo/gridtimer/ui/DiagnosticsExportUi.kt"
             | "com/ofairyo/gridtimer/ui/KnowledgeCanvasScreen.kt"
             | "com/ofairyo/gridtimer/ui/StructuredKnowledgeReader.kt"
+            | "com/ofairyo/gridtimer/ui/MyAccountScreen.kt"
     );
     if !should_localize {
         return source.to_owned();
@@ -302,4 +376,36 @@ pub fn render(path: &str, source: &str) -> String {
         return localized;
     }
     localized
+}
+
+#[cfg(test)]
+mod english_ui_regression_tests {
+    use super::{render, render_resource, RESOURCES};
+
+    #[test]
+    fn sourcegen_localizes_account_text_without_global_user_content_replacement() {
+        let source = crate::my_account_source::CONTENTS;
+        let generated = render(crate::my_account_source::PATH, source);
+        assert!(generated.contains("import com.ofairyo.gridtimer.i18n.Text"));
+        assert!(generated.contains("import com.ofairyo.gridtimer.i18n.localizedUiText"));
+        assert!(!generated.contains("import androidx.compose.material3.Text\n"));
+        assert!(generated.contains("syncSession.email"));
+    }
+
+    #[test]
+    fn english_simulator_ui_labels_have_catalog_entries() {
+        let english = RESOURCES.iter().find(|(path, _)| *path == "res/raw/ui_en.json").unwrap().1;
+        let merged = render_resource("res/raw/ui_en.json", english).unwrap();
+        let catalog: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&merged).unwrap();
+        for key in [
+            "搜索", "AI 对话", "快捷记入今天", "文档库",
+            "待填写 API Key", "法律风险线索", "风险分析",
+        ] {
+            assert!(catalog.get(key).and_then(|value| value.as_str()).is_some_and(|text| !text.is_empty()), "missing English catalog key: {key}");
+        }
+        let original: serde_json::Map<String, serde_json::Value> = serde_json::from_str(english).unwrap();
+        for (key, value) in original {
+            assert_eq!(catalog.get(&key), Some(&value), "previously reviewed English translation changed: {key}");
+        }
+    }
 }
