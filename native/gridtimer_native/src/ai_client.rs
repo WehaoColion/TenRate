@@ -214,21 +214,30 @@ pub fn complete_android_conversation_with_images(
         Ok(body) => body,
         Err(message) => return AiCompletionResult::error(message),
     };
-    if !image_bytes.is_empty() {
-        let Some(last_message) = request_body.get_mut("input")
-            .and_then(Value::as_array_mut).and_then(|messages| messages.last_mut()) else {
-            return AiCompletionResult::error("AI 图片请求结构无效。");
-        };
-        let Some(text) = last_message.get("content").and_then(Value::as_str) else {
-            return AiCompletionResult::error("AI 图片请求内容无效。");
-        };
-        let content = match crate::android_ai_images::content_with_images(text, image_bytes) {
-            Ok(content) => content,
-            Err(message) => return AiCompletionResult::error(message),
-        };
-        last_message["content"] = content;
+    if let Err(message) = attach_android_images(&mut request_body, image_bytes) {
+        return AiCompletionResult::error(message);
     }
     execute_response_request(api_key, &base_url, request_body)
+}
+
+/// A pure transformation: history stays role-ordered, only the last user
+/// message gains images, and no previous assistant message gets image parts.
+fn attach_android_images(body: &mut Value, images: &[Vec<u8>]) -> Result<(), String> {
+    if images.is_empty() {
+        return Ok(());
+    }
+    let last = body.get_mut("input")
+        .and_then(Value::as_array_mut)
+        .and_then(|messages| messages.last_mut())
+        .ok_or("AI 图片请求结构无效。")?;
+    if last.get("role").and_then(Value::as_str) != Some("user") {
+        return Err("图片只能附在当前用户消息。".into());
+    }
+    let text = last.get("content").and_then(Value::as_str)
+        .ok_or("AI 图片请求内容无效。")?;
+    let content = crate::android_ai_images::content_with_images(text, images)?;
+    last["content"] = content;
+    Ok(())
 }
 
 const ANDROID_AGENT_MAX_DOCUMENTS: usize = 30;
@@ -2259,6 +2268,39 @@ mod tests {
             assert!(!result.ok);
             assert!(!AiCompletionResult::ok(text.to_string()).ok);
         }
+    }
+
+    #[test]
+    fn android_images_attach_only_to_last_user_turn_after_history() {
+        let mut body = build_android_query_request_body(
+            "deepseek-flash", "direct", "图中写着什么", &[], &[], &[],
+        ).unwrap();
+        body = crate::android_ai_conversation::with_history(
+            body, r#"[{"question":"你好","answer":"你好"}]"#,
+        ).unwrap();
+        let image = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0];
+        attach_android_images(&mut body, &[image]).unwrap();
+        let messages = body["input"].as_array().unwrap();
+        assert_eq!(messages.len(), 4);
+        assert!(messages[1]["content"].is_string());
+        assert!(messages[2]["content"].is_string());
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"][0]["type"], "input_text");
+        assert_eq!(messages[3]["content"][1]["type"], "input_image");
+        assert_eq!(body["store"], false);
+        let mut no_image = build_android_query_request_body(
+            "deepseek-flash", "direct", "普通问答", &[], &[], &[],
+        ).unwrap();
+        attach_android_images(&mut no_image, &[]).unwrap();
+        assert!(no_image["input"][1]["content"].is_string());
+    }
+
+    #[test]
+    fn android_images_never_attach_to_history_or_assistant_roles() {
+        let mut bad = json!({"input":[{"role":"assistant","content":"text"}]});
+        assert!(attach_android_images(&mut bad, &[vec![0xff, 0xd8, 0xff]]).is_err());
+        let mut bad = json!({"input":[{"role":"user","content": [{"type":"input_text","text":"a"}]}]});
+        assert!(attach_android_images(&mut bad, &[vec![0xff, 0xd8, 0xff]]).is_err());
     }
 
     #[test]
