@@ -359,6 +359,7 @@ pub const SOURCES: &[AndroidSource] = &[
     <include domain="file" path="timer_state.json" requireFlags="clientSideEncryption" />
     <include domain="file" path="timer_state_backup.json" requireFlags="clientSideEncryption" />
     <include domain="file" path="state_workspaces/" requireFlags="clientSideEncryption" />
+    <include domain="file" path="knowledge_canvases/" requireFlags="clientSideEncryption" />
     <include domain="file" path="note_media/" requireFlags="clientSideEncryption" />
     <include domain="database" path="app_state.db" requireFlags="clientSideEncryption" />
     <include domain="database" path="app_state.db-wal" requireFlags="clientSideEncryption" />
@@ -374,6 +375,7 @@ pub const SOURCES: &[AndroidSource] = &[
         <include domain="file" path="timer_state.json" />
         <include domain="file" path="timer_state_backup.json" />
         <include domain="file" path="state_workspaces/" />
+        <include domain="file" path="knowledge_canvases/" />
         <include domain="file" path="note_media/" />
         <include domain="database" path="app_state.db" />
         <include domain="database" path="app_state.db-wal" />
@@ -382,6 +384,7 @@ pub const SOURCES: &[AndroidSource] = &[
         <include domain="file" path="timer_state.json" />
         <include domain="file" path="timer_state_backup.json" />
         <include domain="file" path="state_workspaces/" />
+        <include domain="file" path="knowledge_canvases/" />
         <include domain="file" path="note_media/" />
         <include domain="database" path="app_state.db" />
         <include domain="database" path="app_state.db-wal" />
@@ -463,5 +466,45 @@ mod tests {
         assert!(!manifest.contains("android.permission.READ_CONTACTS"));
         assert!(!manifest.contains("android.permission.WRITE_EXTERNAL_STORAGE"));
         assert!(manifest.contains("android:maxSdkVersion=\"32\""));
+    }
+}
+
+#[cfg(test)]
+mod canvas_backup_tests {
+    use super::SOURCES;
+
+    #[test]
+    fn android_backup_and_device_transfer_explicitly_include_account_scoped_canvases() {
+        let entries = [
+            "res/xml/backup_rules.xml",
+            "res/xml/data_extraction_rules.xml",
+        ];
+        for path in entries {
+            let content = SOURCES
+                .iter()
+                .find(|source| source.path == path)
+                .expect("expected generated backup rule")
+                .contents;
+            assert!(
+                content.contains("path=\"knowledge_canvases/\""),
+                "{path} must include local canvases"
+            );
+        }
+        let cloud_rules = SOURCES
+            .iter()
+            .find(|source| source.path == "res/xml/backup_rules.xml")
+            .unwrap()
+            .contents;
+        assert!(
+            cloud_rules.contains(
+                "<include domain=\"file\" path=\"knowledge_canvases/\" requireFlags=\"clientSideEncryption\" />"
+            )
+        );
+        let transfers = SOURCES
+            .iter()
+            .find(|source| source.path == "res/xml/data_extraction_rules.xml")
+            .unwrap()
+            .contents;
+        assert_eq!(transfers.matches("path=\"knowledge_canvases/\"").count(), 2);
     }
 }
