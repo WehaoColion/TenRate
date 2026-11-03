@@ -89,6 +89,7 @@ mod tests {
         assert!(content_with_images("x", &[vec![0u8; MAX_IMAGE_BYTES + 1]]).is_err());
         let mut large = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10];
         large.resize(5 * 1024 * 1024, 0);
-        assert!(content_with_images("x", &[large; 5]).is_err());
+        let many_large = (0..5).map(|_| large.clone()).collect::<Vec<_>>();
+        assert!(content_with_images("x", &many_large).is_err());
     }
 }
