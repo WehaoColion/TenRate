@@ -1,3 +1,4 @@
+Android 2.23.4.7 移动目标按使用频率排序候选：[说明](android/release_notes_v2.23.4.7.md)。
 Android 2.23.4.6 Agent、视觉问答与英文界面整合候选：[说明](android/release_notes_v2.23.4.6.md)。
 Android 2.23.4.5 Rust 原生多模态 AI 图片问答候选：[说明](android/release_notes_v2.23.4.5.md)。
 Android 2.23.4.4 Agent 移动端任务交互候选：[说明](android/release_notes_v2.23.4.4.md)。

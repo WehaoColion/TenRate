@@ -1,3 +1,4 @@
+// v2.23.4.7 - Present frequently used move destinations first.
 // v2.23.4.6 - Consolidate Agent UX, AI vision and English UI localization.
 // v2.23.4.5 - Record Rust-backed AI vision input and compatibility.
 // v2.23.4.4 - Improve mobile Agent task setup and exit feedback.
@@ -54,7 +55,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.6";
+pub const LATEST_VERSION: &str = "2.23.4.7";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -84,6 +85,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.7",
+        updatedAt = "2026-11-04 04:00",
+        summary = "移动到优先显示常用位置，并保留最近使用与全量搜索",
+        sections = listOf(
+            AndroidUpdateSection("常用位置", listOf(
+                "知识库移动到窗口优先显示常用目标、最近使用位置，其余合法位置仍可浏览与搜索。",
+                "成功移动后才在本机统计使用次数，考虑近期活跃度，自动调整推荐顺序。"
+            )),
+            AndroidUpdateSection("安全与兼容", listOf(
+                "使用稳定的目录 ID 按工作区隔离记录，重命名不影响历史；不会同步到其他设备。",
+                "继续排除受保护、不可写、被删除、自身及后代目录，不更改页面正文和附件。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.6",
         updatedAt = "2026-11-03 19:15",

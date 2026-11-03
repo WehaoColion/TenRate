@@ -1,3 +1,4 @@
+// v2.23.4.7 - Prioritize frequently used move destinations on Android.
 // v2.23.4.6 - Integrate Agent UX, vision input and English localization.
 // v2.23.4.5 - Add Rust-backed Android AI image input and capability-aware connectivity.
 // v2.23.4.4 - Improve Agent task setup and cancellation on mobile.
@@ -172,8 +173,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22336
-        versionName '2.23.4.6'
+        versionCode 22337
+        versionName '2.23.4.7'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

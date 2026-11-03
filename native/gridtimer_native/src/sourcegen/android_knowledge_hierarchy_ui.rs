@@ -344,6 +344,7 @@ const VIEW_MODEL: &str = r####"    internal fun knowledgeContainerAction(action:
     }
 "####;
 const STUDIO_STATE: &str = r####"    val hierarchyIndex = remember(appData.notes, appData.noteFolders) { appData.knowledgeHierarchy() }
+    val hierarchyMoveHistoryContext = androidx.compose.ui.platform.LocalContext.current
     var hierarchyVisible by rememberSaveable(workspaceKey) { mutableStateOf(false) }
     var hierarchyParentId by rememberSaveable(workspaceKey) { mutableStateOf<String?>(null) }
     var hierarchyRequest by remember(workspaceKey) { mutableStateOf<KnowledgeHierarchyRequest?>(null) }
@@ -422,7 +423,7 @@ const STUDIO_DIALOG: &str = r####"    // A document and the directory manager ar
     // This also handles unlocked documents and restored editor selections.
     hierarchyRequest?.let { request ->
         val requestLocation = request.id?.let(hierarchyIndex::location)
-        KnowledgeHierarchyActionDialog(request = request, index = hierarchyIndex, busy = hierarchyBusy,
+        KnowledgeHierarchyActionDialog(request = request, index = hierarchyIndex, workspaceKey = workspaceKey, busy = hierarchyBusy,
             error = hierarchyMessage, onDismiss = { if (!hierarchyBusy) { hierarchyRequest = null; hierarchyMessage = "" } },
             onSubmit = submit@ { parent, title ->
                 if (!hierarchyBusy && hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {
@@ -442,6 +443,9 @@ const STUDIO_DIALOG: &str = r####"    // A document and the directory manager ar
                         if (hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {
                             hierarchyBusy = false
                             if (ok) {
+                                if (request.action == "move") runCatching {
+                                    recordKnowledgeMoveDestination(hierarchyMoveHistoryContext, workspaceKey, parent)
+                                }
                                 hierarchyRequest = null
                                 if (request.action == "create_page") {
                                     if (!knowledgeReturnIsDocument(parent)) pushKnowledgeReturn()
@@ -1117,7 +1121,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
 
 @Composable
 internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, index: KnowledgeHierarchy,
-    busy: Boolean, error: String, onDismiss: () -> Unit, onSubmit: (String?, String) -> Unit) {
+    workspaceKey: String, busy: Boolean, error: String, onDismiss: () -> Unit, onSubmit: (String?, String) -> Unit) {
     val node = request.id?.let(index.nodes::get)
     val location = request.id?.let(index::location)
     val moving = request.action == "move"
@@ -1151,13 +1155,56 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
                 Text("目标：" + if (!destinationChosen) "请选择位置" else parent?.let { target ->
                     if (index.nodes.containsKey(target)) "知识目录 / " + index.pathLabel(target) else "所选位置已不存在"
                 }.orEmpty().ifBlank { "知识目录" })
-                val targets = index.moveTargets(request.id.orEmpty()).filter { index.pathLabel(it.id).contains(query.trim(), ignoreCase = true) }
+                // Resolve legal targets only once for this hierarchy snapshot. History contains
+                // stable IDs, not paths or document bodies, and can never grant move rights.
+                val sourceId = request.id.orEmpty()
+                val destinations = remember(index, sourceId) {
+                    buildList<String?> {
+                        if (index.canMoveTo(sourceId, null)) add(null)
+                        val currentParent = index.parentOf(sourceId)
+                        index.moveTargets(sourceId).forEach { target ->
+                            if (target.id != currentParent) add(target.id)
+                        }
+                    }
+                }
+                val context = LocalContext.current
+                val history = remember(context, workspaceKey, request) {
+                    readKnowledgeMoveHistory(context, workspaceKey)
+                }
+                val eligible = destinations.toHashSet()
+                val frequent = rankKnowledgeMoveHistory(history, System.currentTimeMillis())
+                    .map { it.id }.filter { it in eligible }.take(5)
+                val recent = recentKnowledgeMoveHistory(history)
+                    .map { it.id }.filter { it in eligible && it !in frequent }.take(3)
+                val other = destinations.filter { it !in frequent && it !in recent }
+                val search = query.trim()
+                val matches = if (search.isEmpty()) emptyList() else destinations.filter { id ->
+                    if (id == null) "知识目录（根级） root directory".contains(search, ignoreCase = true)
+                    else index.pathLabel(id).contains(search, ignoreCase = true)
+                }
+                val groups = if (search.isNotEmpty()) listOf("搜索结果" to matches)
+                    else listOf("常用位置" to frequent, "最近使用" to recent, "全部位置" to other)
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
-                    item { TextButton(enabled = !busy && location?.canMove == true,
-                        onClick = { parent = null; destinationChosen = true }) { Text("知识目录（根级）") } }
-                    items(targets, key = { it.id }) { target ->
-                        TextButton(enabled = !busy && location?.canMove == true,
-                            onClick = { parent = target.id; destinationChosen = true }) { Text(index.pathLabel(target.id)) }
+                    groups.forEach { (heading, targetIds) ->
+                        if (targetIds.isNotEmpty()) {
+                            item(key = "heading:" + heading) {
+                                Text(com.ofairyo.gridtimer.i18n.localizedUiText(heading),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            items(targetIds, key = { heading + ":" + (it ?: "root") }) { targetId ->
+                                TextButton(enabled = !busy && location?.canMove == true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = { parent = targetId; destinationChosen = true }) {
+                                    Text(if (targetId == null)
+                                        com.ofairyo.gridtimer.i18n.localizedUiText("知识目录（根级）")
+                                        else index.pathLabel(targetId), modifier = Modifier.fillMaxWidth())
+                                }
+                            }
+                        }
+                    }
+                    if (search.isNotEmpty() && matches.isEmpty()) item {
+                        Text(com.ofairyo.gridtimer.i18n.localizedUiText("未找到匹配的位置"))
                     }
                 }
             } else if (!naming) Text("保留正文、附件、页面链接和子项，只更改页面类型。可随时转换回来。")

@@ -73,6 +73,8 @@ mod android_knowledge_filters;
 mod android_knowledge_hierarchy;
 #[path = "../sourcegen/android_knowledge_hierarchy_ui.rs"]
 mod android_knowledge_hierarchy_ui;
+#[path = "../sourcegen/android_move_history.rs"]
+mod android_move_history;
 #[path = "../sourcegen/android_knowledge_navigation.rs"]
 mod android_knowledge_navigation;
 #[path = "../sourcegen/android_legal_integration.rs"]
@@ -198,6 +200,11 @@ fn run() -> io::Result<()> {
             &unit_test_output_root,
             android_knowledge_hierarchy::TEST_PATH,
             android_knowledge_hierarchy::TEST_CONTENTS,
+        )?;
+        write_source(
+            &unit_test_output_root,
+            android_move_history::TEST_PATH,
+            android_move_history::TEST_CONTENTS,
         )?;
         write_source(
             &unit_test_output_root,
@@ -380,6 +387,11 @@ fn run() -> io::Result<()> {
         &output_root,
         android_knowledge_hierarchy_ui::PATH,
         android_knowledge_hierarchy_ui::CONTENTS,
+    )?;
+    write_source(
+        &output_root,
+        android_move_history::PATH,
+        android_move_history::CONTENTS,
     )?;
 
     write_source(

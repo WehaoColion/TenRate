@@ -182,6 +182,12 @@ pub const RESOURCES: &[(&str, &str)] = &[
 // Additions for literal UI text seen in English-language Android simulator audits.
 // Preserve reviewed translations in the bundled catalog; only fill missing keys.
 const EN_UI_GAP_TRANSLATIONS: &[(&str, &str)] = &[
+    ("常用位置", "Frequent destinations"),
+    ("最近使用", "Recently used"),
+    ("全部位置", "All destinations"),
+    ("搜索结果", "Search results"),
+    ("知识目录（根级）", "Knowledge directory (root)"),
+    ("未找到匹配的位置", "No matching destinations"),
     ("搜索", "Search"),
     ("目录", "Directory"),
     ("文档库", "Document library"),
