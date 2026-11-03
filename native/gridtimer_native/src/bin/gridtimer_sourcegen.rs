@@ -558,7 +558,7 @@ fn run() -> io::Result<()> {
     write_source(
         &output_root,
         my_account_source::PATH,
-        my_account_source::CONTENTS,
+        &android_ui_localization::render(my_account_source::PATH, my_account_source::CONTENTS),
     )?;
     write_source(
         &output_root,
@@ -654,7 +654,9 @@ fn run() -> io::Result<()> {
         android_ui_localization::KOTLIN_CONTENTS,
     )?;
     for &(path, contents) in android_ui_localization::RESOURCES {
-        write_source(&output_root, path, contents)?;
+        let rendered = android_ui_localization::render_resource(path, contents)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        write_source(&output_root, path, &rendered)?;
     }
 
     if let Some(android_test_output_root) = android_test_output_root {
