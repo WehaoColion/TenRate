@@ -1,3 +1,4 @@
+// v2.23.4.8 - Record Android canvas overview, placement, and backup rules.
 // v2.23.4.7 - Present frequently used move destinations first.
 // v2.23.4.6 - Consolidate Agent UX, AI vision and English UI localization.
 // v2.23.4.5 - Record Rust-backed AI vision input and compatibility.
@@ -55,7 +56,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.7";
+pub const LATEST_VERSION: &str = "2.23.4.8";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -85,6 +86,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.8",
+        updatedAt = "2026-11-04 06:55",
+        summary = "优化安卓知识画布：新增卡片自动避让、画布总览、系统备份范围",
+        sections = listOf(
+            AndroidUpdateSection("画布交互", listOf(
+                "新建便签和页面引用自动寻找附近空位，减少卡片重叠；已有卡片位置保持不变。",
+                "增加画布总览和点击定位。内容超出适应缩放范围时展示全局概览，不修改旧版允许的缩放区间。"
+            )),
+            AndroidUpdateSection("数据保护", listOf(
+                "安卓加密系统备份和设备迁移规则显式包含本机画布目录，不改变原有同步协议。",
+                "新增 Rust 卡片位置与备份配置测试，画布数据格式不变，系统备份是否执行仍取决于设备条件。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.7",
         updatedAt = "2026-11-04 04:00",
