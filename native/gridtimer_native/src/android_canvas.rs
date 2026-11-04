@@ -470,6 +470,56 @@ fn number(request: &Value, key: &str) -> Result<f32, String> {
         .ok_or_else(|| format!("画布数值无效：{key}"))
 }
 
+// Find the nearest unoccupied position without changing the on-disk canvas schema.
+// Positions are deterministic, respect mixed card sizes, and stay in the validated world.
+fn free_card_position(canvas: &Canvas, width: f32, height: f32) -> Result<(f32, f32), String> {
+    const GAP: f32 = 20.0;
+    let base_x = canvas.center_x - width / 2.0;
+    let base_y = canvas.center_y - height / 2.0;
+    let step_x = width + GAP;
+    let step_y = height + GAP;
+    let fits = |column: i32, row: i32| {
+        let x = base_x + column as f32 * step_x;
+        let y = base_y + row as f32 * step_y;
+        if !coordinate(x)
+            || !coordinate(y)
+            || !coordinate(x + width)
+            || !coordinate(y + height)
+        {
+            return None;
+        }
+        let free = canvas.nodes.iter().all(|node| {
+            x >= node.x + node.width + GAP
+                || node.x >= x + width + GAP
+                || y >= node.y + node.height + GAP
+                || node.y >= y + height + GAP
+        });
+        free.then_some((x, y))
+    };
+    if let Some(position) = fits(0, 0) {
+        return Ok(position);
+    }
+    for ring in 1_i32..=40 {
+        // Prefer a neighboring card over an arbitrary corner of the search ring.
+        for (column, row) in [(ring, 0), (0, ring), (-ring, 0), (0, -ring)] {
+            if let Some(position) = fits(column, row) {
+                return Ok(position);
+            }
+        }
+        for row in -ring..=ring {
+            for column in -ring..=ring {
+                if column.abs().max(row.abs()) != ring {
+                    continue;
+                }
+                if let Some(position) = fits(column, row) {
+                    return Ok(position);
+                }
+            }
+        }
+    }
+    Err("当前位置附近没有足够的卡片空间，请移动画布后重试".into())
+}
+
 fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
     match text(request, "op")? {
         "rename" => canvas.title = text(request, "title")?.trim().into(),
@@ -487,6 +537,7 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             {
                 return Err("此页面已在画布中".into());
             }
+            let (x, y) = free_card_position(canvas, 256.0, 168.0)?;
             canvas.nodes.push(Node {
                 id: identifier(),
                 kind: if page { "page" } else { "note" }.into(),
@@ -496,8 +547,8 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                 } else {
                     text(request, "text")?.into()
                 },
-                x: canvas.center_x - 128.0,
-                y: canvas.center_y - 84.0,
+                x,
+                y,
                 width: 256.0,
                 height: 168.0,
                 color: "blue".into(),

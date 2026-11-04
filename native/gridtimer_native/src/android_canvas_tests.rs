@@ -414,3 +414,62 @@ fn save_failure_does_not_publish_an_uncommitted_canvas_or_history() {
     assert!(session.store.canvases[0].nodes.is_empty());
     assert!(session.undo.is_empty());
 }
+
+#[test]
+fn new_cards_avoid_overlaps_and_preserve_existing_positions() {
+    let mut canvas = Canvas::new("placement");
+    canvas.center_x = 120.0;
+    canvas.center_y = 60.0;
+    for index in 0..80 {
+        let before = canvas
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), node.x, node.y))
+            .collect::<Vec<_>>();
+        edit(
+            &mut canvas,
+            &json!({"op":"addNote","text":format!("card {index}")}),
+        )
+        .unwrap();
+        for (node, (id, x, y)) in canvas.nodes.iter().zip(before) {
+            assert_eq!((&node.id, node.x, node.y), (&id, x, y));
+        }
+    }
+    for (index, node) in canvas.nodes.iter().enumerate() {
+        for other in &canvas.nodes[..index] {
+            let overlaps = node.x < other.x + other.width
+                && node.x + node.width > other.x
+                && node.y < other.y + other.height
+                && node.y + node.height > other.y;
+            assert!(!overlaps, "overlapping cards: {index} and {}", other.id);
+        }
+    }
+    assert_eq!((canvas.center_x, canvas.center_y), (120.0, 60.0));
+}
+
+#[test]
+fn placement_respects_mixed_sizes_and_world_boundaries() {
+    let mut canvas = Canvas::new("mixed");
+    edit(&mut canvas, &json!({"op":"addNote","text":"large"})).unwrap();
+    let first_id = canvas.nodes[0].id.clone();
+    edit(
+        &mut canvas,
+        &json!({"op":"resize","id":first_id,"width":720.0,"height":720.0}),
+    )
+    .unwrap();
+    edit(&mut canvas, &json!({"op":"addNote","text":"nearby"})).unwrap();
+    let first = &canvas.nodes[0];
+    let second = &canvas.nodes[1];
+    assert!(
+        second.x >= first.x + first.width
+            || first.x >= second.x + second.width
+            || second.y >= first.y + first.height
+            || first.y >= second.y + second.height
+    );
+    canvas.center_x = 249_900.0;
+    canvas.center_y = -249_900.0;
+    edit(&mut canvas, &json!({"op":"addNote","text":"world edge"})).unwrap();
+    let edge = canvas.nodes.last().unwrap();
+    assert!(coordinate(edge.x) && coordinate(edge.y));
+    assert!(coordinate(edge.x + edge.width) && coordinate(edge.y + edge.height));
+}

@@ -124,6 +124,22 @@ class KnowledgeCanvasTest {
         assertFalse(model.lastSucceeded); assertSame(committed,model.reply)
         model.close(); assertTrue(backend.closed.await(5,TimeUnit.SECONDS))
     }
+    @Test fun overviewContainsAllCardsAndPreservesLegacyZoomBounds() {
+        val nodes = listOf(node("far-left",-9000f,-4000f),node("far-right",12000f,9000f))
+        val area = IntSize(400,700)
+        val overview = fitCanvasOverview(nodes,area)
+        nodes.forEach { n ->
+            val a = overview.screenAt(Offset(n.x,n.y))
+            val b = overview.screenAt(Offset(n.x+n.width,n.y+n.height))
+            assertTrue(a.x >= 23f && a.y >= 23f)
+            assertTrue(b.x <= area.width-23f && b.y <= area.height-23f)
+            val roundTrip = overview.worldAt(a)
+            assertEquals(n.x,roundTrip.x,0.02f)
+            assertEquals(n.y,roundTrip.y,0.02f)
+        }
+        val empty = fitCanvasOverview(emptyList(),area)
+        assertTrue(empty.scale > 0f)
+    }
     @Test fun zoomKeepsTheTouchedWorldPointUnderTheMovingFingers() {
         val size = IntSize(1080,1800)
         val view = CanvasViewport(300f,120f,0.9f)
@@ -380,6 +396,26 @@ internal fun canvasVisible(node: CanvasNode, viewport: CanvasViewport, size: Int
     val halfWidth = size.width / (2f * viewport.zoom * density)
     val halfHeight = size.height / (2f * viewport.zoom * density)
     return node.x + node.width >= viewport.x - halfWidth && node.x <= viewport.x + halfWidth && node.y + node.height >= viewport.y - halfHeight && node.y <= viewport.y + halfHeight
+}
+// View-only overview: never persist a zoom smaller than the legacy 0.35 limit.
+internal data class CanvasOverviewTransform(val originX: Float, val originY: Float, val scale: Float) {
+    fun screenAt(world: Offset): Offset = Offset(originX + world.x * scale, originY + world.y * scale)
+    fun worldAt(screen: Offset): Offset = Offset((screen.x - originX) / scale, (screen.y - originY) / scale)
+}
+internal fun fitCanvasOverview(nodes: List<CanvasNode>, size: IntSize): CanvasOverviewTransform {
+    val left = nodes.minOfOrNull { it.x } ?: -128f
+    val right = nodes.maxOfOrNull { it.x + it.width } ?: 128f
+    val top = nodes.minOfOrNull { it.y } ?: -84f
+    val bottom = nodes.maxOfOrNull { it.y + it.height } ?: 84f
+    val availableWidth = (size.width.toFloat() - 48f).coerceAtLeast(1f)
+    val availableHeight = (size.height.toFloat() - 48f).coerceAtLeast(1f)
+    val scale = min(availableWidth / (right - left).coerceAtLeast(1f),
+        availableHeight / (bottom - top).coerceAtLeast(1f)).coerceAtLeast(0.000001f)
+    return CanvasOverviewTransform(
+        size.width / 2f - (left + right) / 2f * scale,
+        size.height / 2f - (top + bottom) / 2f * scale,
+        scale
+    )
 }
 internal fun canvasPageLabel(note: NoteEntry?): Pair<String, String> = when {
     note == null || note.isDeleted() -> "页面不可用" to "页面已删除或尚未同步"
@@ -681,11 +717,32 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
     val zoomPercent = remember(canvas.id) { derivedStateOf { (viewport.zoom * 100).roundToInt() } }
     var dragId by remember(canvas.id) { mutableStateOf<String?>(null) }
     var dragDelta by remember(canvas.id) { mutableStateOf(Offset.Zero) }
+    var overview by remember(canvas.id) { mutableStateOf(false) }
+    var committedViewport by remember(canvas.id) { mutableStateOf(CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)) }
     val currentCanvas by rememberUpdatedState(canvas)
     val currentConnect by rememberUpdatedState(connectFrom)
     val currentSelect by rememberUpdatedState(onSelect)
     val currentOnConnect by rememberUpdatedState(onConnect)
-    LaunchedEffect(modelState.serial, canvas.id) { viewport = CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom); dragId = null; dragDelta = Offset.Zero }
+    LaunchedEffect(modelState.serial, canvas.id) {
+        val next = CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)
+        if (next != committedViewport) viewport = next
+        committedViewport = next
+        dragId = null; dragDelta = Offset.Zero
+    }
+    // An added or list-selected card must not remain invisible off screen.
+    LaunchedEffect(selected, canvas.id, size) {
+        val node = canvas.nodes.firstOrNull { it.id == selected }
+        if (node != null && size.width > 0 && size.height > 0) {
+            val centerX = node.x + node.width / 2f
+            val centerY = node.y + node.height / 2f
+            val halfWidth = size.width / (2f * viewport.zoom * density)
+            val halfHeight = size.height / (2f * viewport.zoom * density)
+            if (abs(centerX - viewport.x) > halfWidth * 0.6f ||
+                abs(centerY - viewport.y) > halfHeight * 0.6f) {
+                viewport = viewport.copy(x = centerX, y = centerY)
+            }
+        }
+    }
     // Retire old previews when pages change, including deletion and encryption.
     val textCache = remember(canvas.id, pages) { CanvasTextCache() }
     val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
@@ -783,11 +840,84 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                 val nodes=canvas.nodes
                 if(nodes.isNotEmpty() && size.width>0 && size.height>0) {
                     val left=nodes.minOf { it.x }; val right=nodes.maxOf { it.x+it.width }; val top=nodes.minOf { it.y }; val bottom=nodes.maxOf { it.y+it.height }
-                    val zoom=min(size.width/density/(right-left+64),size.height/density/(bottom-top+64)).coerceIn(0.35f,2.5f)
-                    model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",zoom) })
+                    val fitZoom=min(size.width/density/(right-left+64),size.height/density/(bottom-top+64))
+                    if (fitZoom < 0.35f) overview = true
+                    else model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",fitZoom.coerceAtMost(2.5f)) })
                 } else model.submit(canvasRequest("view") { put("x",0f); put("y",0f); put("zoom",1f) })
             }) { Text("适应") }
+            TextButton(enabled=!model.busy && canvas.nodes.isNotEmpty(), onClick={ overview = true }) { Text("总览") }
             TextButton(enabled=!model.busy, onClick={ model.submit(canvasRequest("view") { put("x",viewport.x); put("y",viewport.y); put("zoom",1f) }) }) { CanvasZoomLabel(zoomPercent) }
+        }
+    }
+
+    if (overview) {
+        Dialog(onDismissRequest = { overview = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxWidth().fillMaxHeight(0.84f).padding(horizontal = 12.dp), shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("画布总览", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = { overview = false }) { Text("关闭") }
+                    }
+                    Text("点击概览中的位置跳转。这里仅浏览，不会改变已保存的缩放范围。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    var overviewSize by remember(canvas.id) { mutableStateOf(IntSize.Zero) }
+                    val transform = remember(canvas.nodes, overviewSize) { fitCanvasOverview(canvas.nodes, overviewSize) }
+                    val index = remember(canvas.nodes) { canvas.nodes.associateBy { it.id } }
+                    val overviewPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
+                    Canvas(Modifier.fillMaxWidth().weight(1f).onSizeChanged { overviewSize = it }
+                        .semantics { contentDescription = "画布总览，点击任意位置跳转" }
+                        .pointerInput(canvas.id, overviewSize) {
+                            detectTapGestures { point ->
+                                if (!model.busy && overviewSize.width > 0 && overviewSize.height > 0) {
+                                    val world = transform.worldAt(point)
+                                    if (model.submit(canvasRequest("view") {
+                                        put("x", world.x.coerceIn(-250000f, 250000f))
+                                        put("y", world.y.coerceIn(-250000f, 250000f))
+                                        put("zoom", 1f)
+                                    })) overview = false
+                                }
+                            }
+                        }) {
+                        val native = drawContext.canvas.nativeCanvas
+                        overviewPaint.style = Paint.Style.STROKE
+                        overviewPaint.strokeWidth = 1.3f
+                        overviewPaint.color = lineColor
+                        canvas.edges.forEach { edge ->
+                            val from = index[edge.from]
+                            val to = index[edge.to]
+                            if (from != null && to != null) {
+                                val a = transform.screenAt(Offset(from.x + from.width / 2f, from.y + from.height / 2f))
+                                val b = transform.screenAt(Offset(to.x + to.width / 2f, to.y + to.height / 2f))
+                                native.drawLine(a.x, a.y, b.x, b.y, overviewPaint)
+                            }
+                        }
+                        canvas.nodes.forEach { node ->
+                            val a = transform.screenAt(Offset(node.x, node.y))
+                            val w = max(2.5f, node.width * transform.scale)
+                            val h = max(2.5f, node.height * transform.scale)
+                            overviewPaint.style = Paint.Style.FILL
+                            overviewPaint.color = canvasTint(node.color).toArgb()
+                            native.drawRoundRect(a.x, a.y, a.x + w, a.y + h, 2f, 2f, overviewPaint)
+                            if (node.id == selected) {
+                                overviewPaint.style = Paint.Style.STROKE
+                                overviewPaint.strokeWidth = 2f
+                                overviewPaint.color = primary
+                                native.drawRoundRect(a.x - 2f, a.y - 2f, a.x + w + 2f, a.y + h + 2f, 3f, 3f, overviewPaint)
+                            }
+                        }
+                        if (size.width > 0 && size.height > 0) {
+                            val halfWidth = size.width / (2f * viewport.zoom * density)
+                            val halfHeight = size.height / (2f * viewport.zoom * density)
+                            val upperLeft = transform.screenAt(Offset(viewport.x - halfWidth, viewport.y - halfHeight))
+                            val lowerRight = transform.screenAt(Offset(viewport.x + halfWidth, viewport.y + halfHeight))
+                            overviewPaint.style = Paint.Style.STROKE
+                            overviewPaint.strokeWidth = 2f
+                            overviewPaint.color = primary
+                            native.drawRect(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, overviewPaint)
+                        }
+                    }
+                }
+            }
         }
     }
 }
