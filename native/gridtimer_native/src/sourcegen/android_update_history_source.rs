@@ -1,4 +1,4 @@
-// v2.23.4.11 - Stabilize Android canvas gestures and native save callbacks.
+// v2.23.4.12 - Stabilize Android canvas gestures and add emulator verification.
 // v2.23.4.10 - Balance header actions, rounded corners and content-sized badges.
 // v2.23.4.9 - Compact the Android timer header badge and single-row controls.
 // v2.23.4.8 - Record Android canvas overview, placement, and backup rules.
@@ -59,7 +59,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.11";
+pub const LATEST_VERSION: &str = "2.23.4.12";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -90,7 +90,7 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
     AndroidUpdateEntry(
-        version = "2.23.4.11",
+        version = "2.23.4.12",
         updatedAt = "2026-11-07 02:40",
         summary = "修复知识画布拖动时工具栏闪烁和卡片跳动",
         sections = listOf(

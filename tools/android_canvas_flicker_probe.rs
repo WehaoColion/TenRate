@@ -73,7 +73,7 @@ fn matching_node(xml: &str, labels: &[&str]) -> Option<Node> {
         if let Some(node) = ui_nodes(xml).into_iter().find(|node| {
             node.right > node.left && node.bottom > node.top &&
             (node.text == *label || node.description == *label ||
-             node.text.contains(label) || node.description.contains(label))
+             node.text.contains(*label) || node.description.contains(*label))
         }) {
             return Some(node);
         }
@@ -232,7 +232,7 @@ fn main() {
         report.push_str("PASS: no large header flash detected, app remains alive after repeated real touch swipes.\n");
         Ok(())
     })();
-    match result {
+    match &result {
         Ok(()) => report.push_str("\nOverall: PASS\n"),
         Err(error) => report.push_str(&format!("\nOverall: NOT VERIFIED / FAIL\n\nReason: {error}\n")),
     }

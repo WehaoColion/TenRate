@@ -93,6 +93,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Knowledge filter Rust regression tests failed' }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib knowledge_hierarchy_persistence_tests
           if ($LASTEXITCODE -ne 0) { throw 'Knowledge hierarchy mutation regression tests failed' }
+      - name: Compile the Android simulator probe early
+        run: |
+          rustc --edition=2021 -D warnings --emit=metadata tools/android_canvas_flicker_probe.rs -o "$env:RUNNER_TEMP\canvas_probe.rmeta"
+          if ($LASTEXITCODE -ne 0) { throw 'Canvas emulator probe does not compile' }
       - name: Restore signing inputs and verify original certificate
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

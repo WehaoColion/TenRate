@@ -1,4 +1,4 @@
-// v2.23.4.11 Android - Stabilize canvas pan and card drag through save acknowledgement.
+// v2.23.4.12 Android - Stabilize canvas pan and card drag through save acknowledgement.
 // v2.22.49.7 Android - Reuse edge geometry and draw buffers; isolate gesture zoom recomposition.
 // v2.22.49.6 Android - Keep multi-canvas creation and selection visible and guard capacity.
 // v2.22.49.5 Android - Reuse committed graph lists when applying validated viewport replies.
