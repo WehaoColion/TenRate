@@ -1,3 +1,4 @@
+// v2.23.4.9 - Keep the Android home header on a single compact row.
 // v2.23.4.8 - Android canvas placement, overview, and backup safeguards.
 // v2.23.4.7 - Prioritize frequently used move destinations on Android.
 // v2.23.4.6 - Integrate Agent UX, vision input and English localization.
@@ -174,8 +175,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22338
-        versionName '2.23.4.8'
+        versionCode 22339
+        versionName '2.23.4.9'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
