@@ -1,3 +1,4 @@
+// v2.23.4.9 - Compact the Android timer header badge and single-row controls.
 // v2.23.4.8 - Record Android canvas overview, placement, and backup rules.
 // v2.23.4.7 - Present frequently used move destinations first.
 // v2.23.4.6 - Consolidate Agent UX, AI vision and English UI localization.
@@ -56,7 +57,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.8";
+pub const LATEST_VERSION: &str = "2.23.4.9";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -86,6 +87,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.9",
+        updatedAt = "2026-11-07 00:00",
+        summary = "计时首页归档标签精简，版本和操作按钮保持单行排布",
+        sections = listOf(
+            AndroidUpdateSection("顶部信息区", listOf(
+                "将「归档状态」简化为「归档」，保留已有的今日时长动态标签。",
+                "版本、状态、历史记录和主题切换排为一行；窄屏按比例分配标签宽度，避免操作按钮换行。"
+            )),
+            AndroidUpdateSection("窄屏兼容", listOf(
+                "极窄内容区用 v 加完整版本号表示应用版本，标签文字过长时单行省略。",
+                "历史记录和主题入口不变；本次不改动计时、归档或同步数据。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.8",
         updatedAt = "2026-11-04 06:55",
