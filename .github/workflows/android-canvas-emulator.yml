@@ -33,7 +33,7 @@ jobs:
           gh run download 42274292440 --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir emulator_apk
           cd emulator_apk
           test -f tenfold_v2.23.4.12.apk
-          sha256sum -c tenfold_v2.23.4.12.apk.sha256
+          tr -d '\r' < tenfold_v2.23.4.12.apk.sha256 | sha256sum -c -
           test "$(find . -name '*.apk' | wc -l)" -eq 1
 
       - name: Enable KVM acceleration
