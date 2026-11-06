@@ -1,3 +1,4 @@
+// v2.23.4.10 - Balance header actions, rounded corners and content-sized badges.
 // v2.23.4.9 - Compact the Android timer header badge and single-row controls.
 // v2.23.4.8 - Record Android canvas overview, placement, and backup rules.
 // v2.23.4.7 - Present frequently used move destinations first.
@@ -57,7 +58,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.9";
+pub const LATEST_VERSION: &str = "2.23.4.10";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -87,6 +88,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.10",
+        updatedAt = "2026-11-07 00:30",
+        summary = "计时首页顶部优化：短标签自适应宽度，历史和主题组成紧凑操作组",
+        sections = listOf(
+            AndroidUpdateSection("布局和视觉", listOf(
+                "不再将版本号与归档标签按比例撑宽；文本胶囊依内容收敛，右侧历史和主题操作对齐为紧凑组合。",
+                "标签和操作按钮统一为柔和圆角矩形，调整间距、边框层次和版本文字权重，减少不必要的留白。"
+            )),
+            AndroidUpdateSection("窄屏和兼容", listOf(
+                "手机端保留 v 加完整版本号，必要时优先省略版本文案，保证归档、历史和主题入口可用。",
+                "维持动态今日时长、已有点击逻辑、英文界面与计时归档数据格式，不修改 Windows 或同步。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.9",
         updatedAt = "2026-11-07 00:00",
