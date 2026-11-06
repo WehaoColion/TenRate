@@ -87,7 +87,32 @@ fn tap(node: &Node) -> Result<(), String> {
         &((node.top + node.bottom) / 2).to_string()]).map(|_| ())
 }
 
+// Android emulator's first boot can show a Pixel Launcher ANR above the app.
+// It is an emulator-infrastructure overlay, not a TenRate failure.
+fn dismiss_emulator_overlays() -> Result<(), String> {
+    for _ in 0..6 {
+        let xml = hierarchy()?;
+        if xml.contains("Pixel Launcher isn't responding") || xml.contains("Pixel Launcher isn&#39;t responding") {
+            let button = matching_node(&xml, &["Close app"])
+                .ok_or("Pixel Launcher ANR is present but its dismissal button is missing")?;
+            tap(&button)?;
+            sleep(Duration::from_millis(800));
+            continue;
+        }
+        if xml.contains("Allow tenfold to send you notifications?") {
+            let button = matching_node(&xml, &["Allow"])
+                .ok_or("notification permission overlay cannot be dismissed")?;
+            tap(&button)?;
+            sleep(Duration::from_millis(800));
+            continue;
+        }
+        return Ok(());
+    }
+    Err("emulator system dialog persists after repeated dismissal".into())
+}
+
 fn tap_label(labels: &[&str]) -> Result<bool, String> {
+    dismiss_emulator_overlays()?;
     let xml = hierarchy()?;
     match matching_node(&xml, labels) {
         Some(node) => {
@@ -117,9 +142,11 @@ fn canvas_visible() -> bool {
     }).unwrap_or(false)
 }
 
-fn open_canvas() -> Result<(), String> {
+fn open_canvas(root: &Path) -> Result<(), String> {
+    dismiss_emulator_overlays()?;
     if canvas_visible() { return Ok(()); }
     for _ in 0..3 {
+        evidence(root, "navigation_step");
         if tap_label(&["画布", "Canvas", "卡片与连线"])? && canvas_visible() {
             return Ok(());
         }
@@ -128,7 +155,7 @@ fn open_canvas() -> Result<(), String> {
         }
     }
     if canvas_visible() { Ok(()) }
-    else { Err("Canvas not reachable on fresh offline emulator. Navigation evidence saved; no gesture pass claimed".into()) }
+    else { evidence(root, "canvas_navigation_failed"); Err("Canvas not reachable after dismissing system overlays; inspect navigation evidence".into()) }
 }
 
 fn create_card() -> Result<bool, String> {
@@ -210,11 +237,12 @@ fn main() {
     let result = (|| -> Result<(), String> {
         command(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
         sleep(Duration::from_secs(5));
+        dismiss_emulator_overlays()?;
         evidence(&root, "app_started");
         let process = command(&["shell", "pidof", PACKAGE])?;
         if process.trim().is_empty() { return Err("APK process not running after launch".into()); }
         report.push_str("PASS: signed APK installed, app process launched.\n\n");
-        open_canvas()?;
+        open_canvas(&root)?;
         evidence(&root, "canvas_open");
         report.push_str("PASS: canvas controls observed in accessibility tree.\n\n");
         let created = create_card()?;
