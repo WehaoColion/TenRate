@@ -1,3 +1,4 @@
+// v2.23.4.11 Android - Stabilize knowledge canvas gestures.
 // v2.23.4.10 Android - Refine header grouping and corners.
 // v2.23.4.9 Android - Keep the home header controls in one row.
 // v2.23.4.8 Android - Keep knowledge canvases navigable and backed up.
@@ -128,8 +129,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.11";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.4.10";
-pub const ANDROID_VERSION_CODE: i32 = 22340;
+pub const ANDROID_APP_VERSION: &str = "2.23.4.11";
+pub const ANDROID_VERSION_CODE: i32 = 22341;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
