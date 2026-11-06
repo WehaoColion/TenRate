@@ -1,3 +1,4 @@
+// v2.23.4.11 Android - Stabilize canvas pan and card drag through save acknowledgement.
 // v2.22.49.7 Android - Reuse edge geometry and draw buffers; isolate gesture zoom recomposition.
 // v2.22.49.6 Android - Keep multi-canvas creation and selection visible and guard capacity.
 // v2.22.49.5 Android - Reuse committed graph lists when applying validated viewport replies.
@@ -56,6 +57,43 @@ class KnowledgeCanvasTest {
         awaitReady(model)
         assertSame(committed,model.reply); assertFalse(model.lastSucceeded); assertTrue(model.error.isNotBlank())
         model.close(); assertTrue(backend.closed.await(5,TimeUnit.SECONDS))
+    }
+    @Test fun gesturesAreVisuallyQuietWithoutRelaxingTheMutationGate() {
+        val backend = Backend()
+        val model = KnowledgeCanvasModel("root", "account-a", backend, Dispatchers.Unconfined, Dispatchers.IO)
+        awaitReady(model)
+        val gesture = buildJsonObject { put("op", "gesture"); put("viewX", 8); put("viewY", 9); put("zoom", 1) }
+        assertTrue(model.submit(gesture))
+        assertTrue(backend.entered.await(5, TimeUnit.SECONDS))
+        assertTrue(model.busy)
+        assertTrue(model.state.value.quietGesture)
+        assertFalse(model.submit(gesture))
+        backend.release.countDown()
+        awaitReady(model)
+        assertFalse(model.state.value.quietGesture)
+        assertTrue(model.lastSucceeded)
+        model.close()
+    }
+    @Test fun regularEditsStillExposeTheSavingState() {
+        val backend = Backend()
+        val model = KnowledgeCanvasModel("root", "account-a", backend, Dispatchers.Unconfined, Dispatchers.IO)
+        awaitReady(model)
+        assertTrue(model.submit(buildJsonObject { put("op", "addNote") }))
+        assertTrue(backend.entered.await(5, TimeUnit.SECONDS))
+        assertTrue(model.busy)
+        assertFalse(model.state.value.quietGesture)
+        backend.release.countDown()
+        awaitReady(model)
+        model.close()
+    }
+    @Test fun dragPreviewKeepsCardAndIncidentEdgesAtTheSamePositionOnAck() {
+        val original = node("a", 100f, 250f)
+        val acknowledged = original.copy(x = 165f, y = 300f)
+        val preview = CanvasDragPreview("a", 165f, 300f)
+        assertEquals(Offset(65f, 50f), preview.offset(original))
+        assertEquals(Offset.Zero, preview.offset(acknowledged))
+        assertEquals(165f, original.x + preview.offset(original).x, 0f)
+        assertEquals(165f, acknowledged.x + preview.offset(acknowledged).x, 0f)
     }
     @Test fun busyOrClosedCanvasCannotQueueAnotherMutation() {
         val backend=Backend(); val model=KnowledgeCanvasModel("root","account-a",backend,Dispatchers.Unconfined,Dispatchers.IO)
@@ -298,7 +336,7 @@ private object DeviceCanvasBackend : CanvasBackend {
 @Serializable internal data class CanvasSummary(val id: String, val title: String)
 @Serializable internal data class CanvasViewReply(val id: String, val centerX: Float, val centerY: Float, val zoom: Float)
 @Serializable internal data class CanvasReply(val ok: Boolean, val token: String = "", val revision: Long = 0, val canvas: CanvasBoard? = null, val canvases: List<CanvasSummary> = emptyList(), val canUndo: Boolean = false, val canRedo: Boolean = false, val warning: String = "", val error: String = "", val viewport: CanvasViewReply? = null, val baseRevision: Long? = null)
-internal data class CanvasWorkerState(val reply: CanvasReply? = null, val busy: Boolean = true, val error: String = "", val serial: Int = 0, val lastSucceeded: Boolean = false)
+internal data class CanvasWorkerState(val reply: CanvasReply? = null, val busy: Boolean = true, val error: String = "", val serial: Int = 0, val lastSucceeded: Boolean = false, val quietGesture: Boolean = false)
 
 internal fun mergeCanvasReply(previous: CanvasReply?, next: CanvasReply): CanvasReply? {
     if (!next.ok || next.token.isBlank()) return null
@@ -319,7 +357,7 @@ internal class KnowledgeCanvasModel(root: String, workspace: String, private val
     val canCreateBoard: Boolean
         get() {
             val current = updates.value
-            return !closed && !current.busy && current.reply?.let { it.canvas != null && it.canvases.size < 128 } == true
+            return !closed && (!current.busy || current.quietGesture) && current.reply?.let { it.canvas != null && it.canvases.size < 128 } == true
         }
     var reply: CanvasReply?
         get() = updates.value.reply
@@ -349,7 +387,7 @@ internal class KnowledgeCanvasModel(root: String, workspace: String, private val
                 for (request in requests) {
                     try { accept(withContext(workDispatcher) { json.decodeFromString<CanvasReply>(backend.command(token, request.toString())) }) }
                     catch (failure: Exception) { lastSucceeded = false; error = "画布保存失败，请重试" }
-                    finally { busy = false; serial++ }
+                    finally { updates.value = updates.value.copy(busy = false, quietGesture = false, serial = updates.value.serial + 1) }
                 }
             } catch (failure: Exception) { error = "画布载入失败，请返回后重试"; busy = false }
             catch (failure: LinkageError) { error = "画布组件不可用，请重新安装正式版本"; busy = false }
@@ -369,14 +407,26 @@ internal class KnowledgeCanvasModel(root: String, workspace: String, private val
     fun submit(request: JsonObject): Boolean {
         if (closed || busy || reply?.canvas == null) return false
         if (request["op"]?.jsonPrimitive?.contentOrNull == "new" && !canCreateBoard) return false
-        busy = true; error = ""
-        if (!requests.trySend(request).isSuccess) { busy = false; error = "画布已关闭，请重新打开"; return false }
+        // Gesture saves still use the native persistence path, but the in-flight
+        // transaction must not blink the header spinner or disable the toolbar.
+        val quiet = request["op"]?.jsonPrimitive?.contentOrNull == "gesture"
+        updates.value = updates.value.copy(busy = true, error = "", quietGesture = quiet)
+        if (!requests.trySend(request).isSuccess) {
+            updates.value = updates.value.copy(busy = false, quietGesture = false, error = "画布已关闭，请重新打开")
+            return false
+        }
         return true
     }
     fun close() { closed = true; requests.close() }
 }
 
 private fun canvasRequest(op: String, values: JsonObjectBuilder.() -> Unit = {}) = buildJsonObject { put("op", op); values() }
+
+// Hold the intended card position in world coordinates. The drawing offset
+// automatically approaches zero when the committed model receives that position.
+internal data class CanvasDragPreview(val id: String, val x: Float, val y: Float) {
+    fun offset(node: CanvasNode): Offset = Offset(x - node.x, y - node.y)
+}
 
 internal data class CanvasViewport(val x: Float, val y: Float, val zoom: Float) {
     fun world(screen: Offset, size: IntSize, density: Float): Offset = Offset(x, y) + (screen - Offset(size.width / 2f, size.height / 2f)) / (zoom * density)
@@ -512,7 +562,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     val canvas = modelState.reply?.canvas
     val pages = remember(appData.notes) { appData.notes.filter { it.kind == NoteEntryKind.DOCUMENT && !it.isDeleted() }.associateBy { it.id } }
     val selectedNode = canvas?.nodes?.find { it.id == selected }
-    val ready = !model.busy && canvas != null
+    val showBusy = modelState.busy && !modelState.quietGesture
+    val ready = !showBusy && canvas != null
     val boards = modelState.reply?.canvases.orEmpty()
     val createCanvas = {
         val titles = boards.map { it.title }.toSet()
@@ -537,7 +588,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 Text(canvas?.title ?: "画布", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                 Text(" ▾")
             }
-            if (model.busy) CircularProgressIndicator(Modifier.padding(12.dp).size(18.dp), strokeWidth = 2.dp)
+            if (showBusy) CircularProgressIndicator(Modifier.padding(12.dp).size(18.dp), strokeWidth = 2.dp)
             else TextButton(onClick = { panel = "more" }, enabled = ready) { Text("更多") }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -711,12 +762,12 @@ private class CanvasTextCache {
 @Composable
 private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit) {
     val modelState by model.state.collectAsState()
+    val visualReady = !modelState.busy || modelState.quietGesture
     val density = LocalDensity.current.density
     var size by remember { mutableStateOf(IntSize.Zero) }
     var viewport by remember(canvas.id) { mutableStateOf(CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)) }
     val zoomPercent = remember(canvas.id) { derivedStateOf { (viewport.zoom * 100).roundToInt() } }
-    var dragId by remember(canvas.id) { mutableStateOf<String?>(null) }
-    var dragDelta by remember(canvas.id) { mutableStateOf(Offset.Zero) }
+    var dragPreview by remember(canvas.id) { mutableStateOf<CanvasDragPreview?>(null) }
     var overview by remember(canvas.id) { mutableStateOf(false) }
     var committedViewport by remember(canvas.id) { mutableStateOf(CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)) }
     val currentCanvas by rememberUpdatedState(canvas)
@@ -727,7 +778,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
         val next = CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)
         if (next != committedViewport) viewport = next
         committedViewport = next
-        dragId = null; dragDelta = Offset.Zero
+        dragPreview = null
     }
     // An added or list-selected card must not remain invisible off screen.
     LaunchedEffect(selected, canvas.id, size) {
@@ -777,9 +828,12 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                                 if (!moving && total.getDistance() > viewConfiguration.touchSlop) moving = true
                                 if (moving) {
                                     if (hit != null && !transformed && currentConnect == null) {
-                                        movedNode = hit; dragId = hit.id
-                                        dragDelta = Offset((hit.x + total.x/(viewport.zoom*density)).coerceIn(-250000f,250000f)-hit.x,(hit.y + total.y/(viewport.zoom*density)).coerceIn(-250000f,250000f)-hit.y)
-                                        currentSelect(hit.id)
+                                        movedNode = hit
+                                        dragPreview = CanvasDragPreview(hit.id,
+                                            (hit.x + total.x / (viewport.zoom * density)).coerceIn(-250000f, 250000f),
+                                            (hit.y + total.y / (viewport.zoom * density)).coerceIn(-250000f, 250000f))
+                                        // Dragging must never switch the selection toolbar midway
+                                        // through the gesture, since that resizes the viewport.
                                     } else viewport = viewport.transformed(change.previousPosition,change.positionChange(),1f,size,density)
                                 }
                             }
@@ -788,10 +842,16 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     } while(event.changes.any { it.pressed })
                     if (moving) {
                         val node = movedNode
-                        if(viewport != startView || node != null) model.submit(canvasRequest("gesture") {
-                            put("viewX",viewport.x); put("viewY",viewport.y); put("zoom",viewport.zoom)
-                            if(node != null) { put("id",node.id); put("x",node.x+dragDelta.x); put("y",node.y+dragDelta.y) }
-                        })
+                        val preview = dragPreview?.takeIf { it.id == node?.id }
+                        if (viewport != startView || preview != null) {
+                            val accepted = model.submit(canvasRequest("gesture") {
+                                put("viewX", viewport.x); put("viewY", viewport.y); put("zoom", viewport.zoom)
+                                if (node != null && preview != null) {
+                                    put("id", node.id); put("x", preview.x); put("y", preview.y)
+                                }
+                            })
+                            if (!accepted) dragPreview = null
+                        }
                     } else if(hit != null && currentConnect != null) currentOnConnect(hit.id) else currentSelect(hit?.id)
                 }
             }) {
@@ -811,11 +871,14 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             paint.color = lineColor; paint.strokeWidth = 2f / viewport.zoom
             // Include half the stroke outside the viewport when culling edge geometry.
             val strokeMargin = 1f / viewport.zoom
-            val lineCount = edgeRenderer.updateVisible(left-strokeMargin, top-strokeMargin, right+strokeMargin, bottom+strokeMargin, dragId, dragDelta)
+            val preview = dragPreview
+            val moved = preview?.let { target -> canvas.nodes.firstOrNull { it.id == target.id } }
+            val previewOffset = if (preview != null && moved != null) preview.offset(moved) else Offset.Zero
+            val lineCount = edgeRenderer.updateVisible(left-strokeMargin, top-strokeMargin, right+strokeMargin, bottom+strokeMargin, preview?.id, previewOffset)
             if (lineCount > 0) native.drawLines(edgeRenderer.visibleLines, 0, lineCount, paint)
             canvas.nodes.forEach { node ->
-                val nodeX = node.x + if(node.id == dragId) dragDelta.x else 0f
-                val nodeY = node.y + if(node.id == dragId) dragDelta.y else 0f
+                val nodeX = preview?.takeIf { it.id == node.id }?.x ?: node.x
+                val nodeY = preview?.takeIf { it.id == node.id }?.y ?: node.y
                 if(nodeX + node.width >= left && nodeX <= right && nodeY + node.height >= top && nodeY <= bottom) {
                     paint.style=Paint.Style.FILL; paint.color=surface
                     native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,12f,12f,paint)
@@ -836,7 +899,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
         }
         if(canvas.nodes.isEmpty()) Text("把想法放在一起", Modifier.align(Alignment.Center), color=MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.align(Alignment.BottomEnd).padding(8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp)), verticalAlignment=Alignment.CenterVertically) {
-            TextButton(enabled=!model.busy, onClick={
+            TextButton(enabled=visualReady, onClick={
                 val nodes=canvas.nodes
                 if(nodes.isNotEmpty() && size.width>0 && size.height>0) {
                     val left=nodes.minOf { it.x }; val right=nodes.maxOf { it.x+it.width }; val top=nodes.minOf { it.y }; val bottom=nodes.maxOf { it.y+it.height }
@@ -845,8 +908,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     else model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",fitZoom.coerceAtMost(2.5f)) })
                 } else model.submit(canvasRequest("view") { put("x",0f); put("y",0f); put("zoom",1f) })
             }) { Text("适应") }
-            TextButton(enabled=!model.busy && canvas.nodes.isNotEmpty(), onClick={ overview = true }) { Text("总览") }
-            TextButton(enabled=!model.busy, onClick={ model.submit(canvasRequest("view") { put("x",viewport.x); put("y",viewport.y); put("zoom",1f) }) }) { CanvasZoomLabel(zoomPercent) }
+            TextButton(enabled=visualReady && canvas.nodes.isNotEmpty(), onClick={ overview = true }) { Text("总览") }
+            TextButton(enabled=visualReady, onClick={ model.submit(canvasRequest("view") { put("x",viewport.x); put("y",viewport.y); put("zoom",1f) }) }) { CanvasZoomLabel(zoomPercent) }
         }
     }
 
