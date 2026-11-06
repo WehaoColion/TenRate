@@ -571,7 +571,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
         while ("画布 $number" in titles) number++
         editorText = "画布 $number"; panel = ""; dialog = "new"
     }
-    val back = { if (!model.busy) { if (connectFrom != null) connectFrom = null else onBack() } }
+    val back = { if (!showBusy) { if (connectFrom != null) connectFrom = null else onBack() } }
     BackHandler { back() }
     LaunchedEffect(canvas?.id) { selected = null; connectFrom = null; panel = "" }
     LaunchedEffect(model.serial) {
@@ -583,7 +583,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     }
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = back, enabled = !model.busy) { Text("返回") }
+            TextButton(onClick = back, enabled = !showBusy) { Text("返回") }
             TextButton(onClick = { panel = "boards" }, enabled = ready, modifier = Modifier.weight(1f)) {
                 Text(canvas?.title ?: "画布", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                 Text(" ▾")
