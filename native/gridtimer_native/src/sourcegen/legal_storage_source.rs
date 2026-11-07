@@ -576,9 +576,13 @@ internal object LegalKnowledgeExclusionStore {
             .put("nodeIds", existing.getJSONArray("nodeIds"))
         PrivateAnalysisStore.write(context, workspaceKey, PURPOSE, next)
         // Disk/key errors must surface; a failed write never becomes an allow-all policy.
-        require(snapshot(context, workspaceKey) == existing.toString()) {
-            "排除规则保存后验证失败，禁止发送。"
-        }
+        val verified = JSONObject(snapshot(context, workspaceKey))
+        require(verified.getBoolean("rootExcluded") == existing.getBoolean("rootExcluded") &&
+            verified.getJSONArray("nodeIds").let { persisted ->
+                val readBack = LinkedHashSet<String>()
+                for (i in 0 until persisted.length()) readBack.add(persisted.getString(i))
+                readBack == ids
+            }) { "排除规则保存后验证失败，禁止发送。" }
     }
 }
 "####;
