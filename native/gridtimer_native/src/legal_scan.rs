@@ -14,6 +14,8 @@ const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_FILE_BYTES: usize = 40 * 1024 * 1024;
 const MAX_ZIP_TEXT_BYTES: usize = 80 * 1024 * 1024;
 
+fn is_zero_usize(value: &usize) -> bool { *value == 0 }
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LegalCoverage {
@@ -21,7 +23,7 @@ pub struct LegalCoverage {
     pub included: usize,
     pub unavailable: usize,
     pub excluded_deleted: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub excluded_user: usize,
 }
 
