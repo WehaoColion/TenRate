@@ -651,6 +651,7 @@ private fun KnowledgeHierarchyInlineRow(
             }
         }
         Spacer(Modifier.width(8.dp))
+        KnowledgeLegalExclusionAction(LocalNoteMediaWorkspaceKey.current, node.id, node.title, index, compact = true)
         Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -773,6 +774,7 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
                 }
             }
         }
+        KnowledgeLegalExclusionAction(workspace, parentId, node?.title.orEmpty(), index)
         if (expanded && children.isNotEmpty()) {
             // All direct children stay on the parent's scroll surface. No three-item preview
             // and no second "view all" screen for the current hierarchy level.
@@ -1061,6 +1063,8 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                 KnowledgeHierarchyActions(index, parentId, !navigationEnabled,
                     onRequest = { request -> navigation { onRequest(request) } },
                     onOpenBody = node?.note?.let { { navigation { onOpen(node) } } })
+                KnowledgeLegalExclusionAction(workspace, parentId,
+                    node?.title?.ifBlank { "无标题" } ?: "整个知识模块", index)
                 if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
                 if (orderMessage.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(orderMessage, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error,
@@ -1096,6 +1100,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                                         handleBounds[id] = surface.localBoundingBoxOf(handle, clipBounds = false)
                                     }
                                 }, contentAlignment = Alignment.Center) { Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                KnowledgeLegalExclusionAction(workspace, child.id, child.title, index, compact = true)
                                 Text("›")
                             }
                         }) {
@@ -1214,6 +1219,126 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
         }
     }, confirmButton = { TextButton(enabled = valid, onClick = { onSubmit(parent, title.trim()) }) { Text("确定") } },
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } })
+}
+
+
+// All exclusion UI is Android-only. The underlying encrypted policy never
+// changes knowledge data, shared synchronization state, or other risk modules.
+private object KnowledgeLegalExclusionRevisions {
+    val values = androidx.compose.runtime.mutableStateMapOf<String, Int>()
+    // One disk/Keystore read per workspace revision, not one per visible row.
+    private val cache = HashMap<String, Pair<Int, Result<org.json.JSONObject>>>()
+
+    @Synchronized
+    fun load(
+        context: android.content.Context,
+        workspaceKey: String,
+        revision: Int
+    ): Result<org.json.JSONObject> {
+        val previous = cache[workspaceKey]
+        if (previous != null && previous.first == revision) return previous.second
+        val current = runCatching {
+            org.json.JSONObject(
+                com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.snapshot(context, workspaceKey)
+            )
+        }
+        cache[workspaceKey] = revision to current
+        return current
+    }
+}
+
+@Composable
+private fun KnowledgeLegalExclusionAction(
+    workspaceKey: String,
+    nodeId: String?,
+    title: String,
+    index: KnowledgeHierarchy,
+    compact: Boolean = false
+) {
+    val context = LocalContext.current.applicationContext
+    val revision = KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0
+    val loaded = remember(workspaceKey, revision) {
+        KnowledgeLegalExclusionRevisions.load(context, workspaceKey, revision)
+    }
+    val policy = loaded.getOrNull()
+    val ids = remember(policy) {
+        buildSet {
+            val all = policy?.optJSONArray("nodeIds")
+            if (all != null) for (i in 0 until all.length()) add(all.optString(i))
+        }
+    }
+    val direct = if (nodeId == null) policy?.optBoolean("rootExcluded") == true else nodeId in ids
+    val inherited = nodeId != null && (
+        policy?.optBoolean("rootExcluded") == true ||
+        index.ancestors(nodeId).any { ancestor -> ancestor.id in ids }
+    )
+    var menuOpen by remember(workspaceKey, nodeId) { mutableStateOf(false) }
+    var confirmation by remember(workspaceKey, nodeId) { mutableStateOf(false) }
+    var failure by remember(workspaceKey, nodeId) { mutableStateOf<String?>(null) }
+    val nextExcluded = !direct
+    val caption = when {
+        inherited -> "继承上级排除"
+        direct -> "恢复参与法律分析"
+        else -> "排除法律风险分析"
+    }
+    val enabled = loaded.isSuccess && !inherited
+
+    if (compact) {
+        Box {
+            TextButton(enabled = loaded.isSuccess, onClick = { menuOpen = true },
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("⋮") }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(caption) },
+                    enabled = enabled,
+                    onClick = { menuOpen = false; confirmation = true }
+                )
+            }
+        }
+    } else {
+        TextButton(enabled = enabled, onClick = { confirmation = true },
+            modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(if (nodeId == null && !direct) "排除整个知识模块" else caption)
+        }
+    }
+    if (loaded.isFailure) {
+        Text("排除规则不可读取，法律分析已阻止发送。", color = MaterialTheme.colorScheme.error)
+    }
+    if (failure != null) {
+        Text(failure.orEmpty(), color = MaterialTheme.colorScheme.error)
+    }
+    if (confirmation) {
+        AlertDialog(
+            onDismissRequest = { confirmation = false },
+            title = { Text(if (nextExcluded) "确认排除法律分析？" else "恢复参与法律分析？") },
+            text = { Text(
+                if (nextExcluded)
+                    "确定后，“" + (title.ifBlank { "知识目录" }) +
+                        "”及其下级知识内容和附件将不再发送给 AI 进行法律风险分析。本机将长期记住此设置，不影响正常知识同步。"
+                else
+                    "恢复后，这个范围将重新参与未来的法律风险分析；仍受其他上级排除规则约束。"
+            ) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val result = runCatching {
+                        com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.update(
+                            context, workspaceKey, nodeId, nextExcluded
+                        )
+                    }
+                    confirmation = false
+                    if (result.isSuccess) {
+                        failure = null
+                        KnowledgeLegalExclusionRevisions.values[workspaceKey] = revision + 1
+                    } else {
+                        failure = "无法保存排除规则：" + result.exceptionOrNull()?.message.orEmpty()
+                    }
+                }) { Text(if (nextExcluded) "确认排除" else "确认恢复") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmation = false }) { Text("取消") }
+            }
+        )
+    }
 }
 "####;
 

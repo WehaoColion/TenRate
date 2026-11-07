@@ -1,3 +1,4 @@
+// v2.23.4.13 - Persist Android knowledge exclusions for legal risk scans.
 // v2.23.4.12 - Verify stable canvas gestures on actual Android simulator.
 // v2.23.4.10 - Refine compact home header spacing and actions.
 // v2.23.4.9 - Keep the Android home header on a single compact row.
@@ -177,8 +178,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22342
-        versionName '2.23.4.12'
+        versionCode 22343
+        versionName '2.23.4.13'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
