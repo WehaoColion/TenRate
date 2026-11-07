@@ -182,6 +182,8 @@ fn create_card() -> Result<(), String> {
 }
 
 fn record_gestures(root: &Path) -> Result<PathBuf, String> {
+    // Resolve the canvas touch bounds before the recording starts so the
+    // accessibility service does not steal any of the timed video frames.
     let remote = "/sdcard/canvas_pan_check.mp4";
     let _ = command(&["shell", "rm", "-f", remote]);
     let mut recorder = Command::new("adb")
