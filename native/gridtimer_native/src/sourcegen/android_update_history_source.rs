@@ -1,3 +1,4 @@
+// v2.23.4.13 - Keep Android legal AI knowledge exclusions encrypted and durable.
 // v2.23.4.12 - Stabilize Android canvas gestures and add emulator verification.
 // v2.23.4.10 - Balance header actions, rounded corners and content-sized badges.
 // v2.23.4.9 - Compact the Android timer header badge and single-row controls.
@@ -59,7 +60,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.12";
+pub const LATEST_VERSION: &str = "2.23.4.13";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -89,6 +90,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.13",
+        updatedAt = "2026-11-08 01:16",
+        summary = "在知识目录、文件夹和页面中长期排除法律分析上传范围",
+        sections = listOf(
+            AndroidUpdateSection("知识模块排除", listOf(
+                "根目录、文件夹和页面可确认排除法律风险分析，子内容继承上级排除，未否定的资料继续正常参与。",
+                "排除规则在本机加密存储，重启后仍生效，支持恢复；不改变普通知识保存与账户同步。"
+            )),
+            AndroidUpdateSection("发送前防护", listOf(
+                "Rust 在准备分析材料时排除知识正文、目录和附件，其他模块默认不受影响。",
+                "排除规则更新后旧发送预览不再可用，阻止使用过时范围上传资料。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.12",
         updatedAt = "2026-11-07 02:40",
