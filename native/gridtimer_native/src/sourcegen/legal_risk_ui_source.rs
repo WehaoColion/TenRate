@@ -218,6 +218,7 @@ import androidx.compose.ui.unit.dp
 import com.ofairyo.gridtimer.core.NativeOptimizerBridge
 import com.ofairyo.gridtimer.data.AppData
 import com.ofairyo.gridtimer.data.LegalLocalStore
+import com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore
 import com.ofairyo.gridtimer.data.NoteEntry
 import com.ofairyo.gridtimer.data.NoteMediaStore
 import com.ofairyo.gridtimer.data.richTextAttachmentIds
