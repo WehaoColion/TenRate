@@ -2,7 +2,7 @@ name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11]
+    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11, feat/android-legal-knowledge-exclusions-20261108]
   workflow_dispatch:
 
 permissions:
@@ -295,5 +295,73 @@ jobs:
         with:
           name: android-canvas-flicker-emulator-evidence
           path: canvas_emulator_evidence/
+          if-no-files-found: warn
+          retention-days: 21
+
+
+  legal-knowledge-emulator:
+    name: Launch signed APK and verify persisted knowledge exclusion on emulator
+    if: github.ref == 'refs/heads/feat/android-legal-knowledge-exclusions-20261108'
+    needs: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout Rust simulator probe
+        uses: actions/checkout@v4
+
+      - name: Download signed candidate from this exact build
+        uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: signed_apk
+
+      - name: Verify package identity and compile Rust acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd signed_apk
+          tr -d '\r' < tenfold_v2.23.4.13.apk.sha256 | sha256sum -c -
+          cd ..
+          rustc --edition=2021 -D warnings -O tools/android_legal_exclusion_probe.rs -o legal_exclusion_probe
+
+      - name: Enable KVM acceleration for actual Android emulator
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+
+      - name: Launch app, exclude root, restart process, verify and restore
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v2.23.4.13.apk
+            ./legal_exclusion_probe legal_exclusion_evidence
+
+      - name: Summarize real simulator acceptance
+        if: always()
+        shell: bash
+        run: |
+          if test -f legal_exclusion_evidence/report.md; then
+            cat legal_exclusion_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No simulator acceptance report. Do not claim emulator pass." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload on-device screenshots and UI hierarchy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-legal-exclusion-emulator-v2.23.4.13
+          path: legal_exclusion_evidence/
           if-no-files-found: warn
           retention-days: 21
