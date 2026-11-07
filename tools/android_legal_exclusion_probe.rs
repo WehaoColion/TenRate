@@ -78,16 +78,25 @@ fn save_evidence(path: &Path, label: &str) {
 
 fn tap_label(labels: &[&str]) -> Result<bool, String> {
     let xml = hierarchy()?;
-    for label in labels {
-        if let Some(node) = nodes(&xml).into_iter().find(|node| {
-            node.bounds[2] > node.bounds[0] && node.bounds[3] > node.bounds[1] &&
-                (node.text.contains(label) || node.description.contains(label))
-        }) {
-            command(&["shell", "input", "tap",
-                &((node.bounds[0] + node.bounds[2]) / 2).to_string(),
-                &((node.bounds[1] + node.bounds[3]) / 2).to_string()])?;
-            sleep(Duration::from_millis(850));
-            return Ok(true);
+    let visible = nodes(&xml);
+    // Prefer exact accessibility labels. A confirmation dialog title such as
+    // “确认排除法律分析？” must not steal a tap intended for “确认排除”.
+    for exact in [true, false] {
+        for label in labels {
+            if let Some(node) = visible.iter().find(|node| {
+                node.bounds[2] > node.bounds[0] && node.bounds[3] > node.bounds[1] &&
+                    if exact {
+                        node.text == *label || node.description == *label
+                    } else {
+                        node.text.contains(label) || node.description.contains(label)
+                    }
+            }) {
+                command(&["shell", "input", "tap",
+                    &((node.bounds[0] + node.bounds[2]) / 2).to_string(),
+                    &((node.bounds[1] + node.bounds[3]) / 2).to_string()])?;
+                sleep(Duration::from_millis(850));
+                return Ok(true);
+            }
         }
     }
     Ok(false)
