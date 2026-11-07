@@ -623,6 +623,11 @@ fn run() -> io::Result<()> {
         legal_storage_source::PATH,
         legal_storage_source::CONTENTS,
     )?;
+    write_source(
+        &output_root,
+        legal_storage_source::KNOWLEDGE_EXCLUSIONS_PATH,
+        legal_storage_source::KNOWLEDGE_EXCLUSIONS_CONTENTS,
+    )?;
 
     write_source(
         &output_root,
