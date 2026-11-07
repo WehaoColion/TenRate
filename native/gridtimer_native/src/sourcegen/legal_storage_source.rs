@@ -33,7 +33,7 @@ data class StoredLegalTombstone(val id: String, val deletedAtEpochMillis: Long, 
  * Local, workspace-bound encrypted files. Android Auto Backup deliberately does not include
  * this directory, since an Android Keystore key cannot be restored on another device.
  */
-private object PrivateAnalysisStore {
+internal object PrivateAnalysisStore {
     private const val ROOT_NAME = "private_analysis_v1"
     private const val KEY_ALIAS = "grid_timer_private_analysis_v1"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -90,7 +90,8 @@ private object PrivateAnalysisStore {
 
     private fun targetFile(context: Context, workspaceKey: String, purpose: String): File {
         require(safeWorkspaceKey.matches(workspaceKey)) { "Invalid workspace key." }
-        require(purpose == "legal_reports" || purpose == "finance_review") {
+        require(purpose == "legal_reports" || purpose == "finance_review" ||
+            purpose == "legal_knowledge_exclusions") {
             "Invalid private analysis storage purpose."
         }
         val digest = MessageDigest.getInstance("SHA-256")
@@ -517,5 +518,67 @@ object FinanceReviewStore {
         .put("zeroAssetsConfirmed", false)
         .put("zeroLiabilitiesConfirmed", false)
         .put("confirmedRecurringKeys", JSONArray())
+}
+"####;
+
+
+/// Android-only exclusion rules are encrypted on-device and never part of
+/// AppData or the account's final legal-report synchronization.
+pub const KNOWLEDGE_EXCLUSIONS_PATH: &str =
+    "com/ofairyo/gridtimer/data/LegalKnowledgeExclusionStore.kt";
+pub const KNOWLEDGE_EXCLUSIONS_CONTENTS: &str = r####"package com.ofairyo.gridtimer.data
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** Denylist for legal AI requests only. Never modifies knowledge or sync state. */
+internal object LegalKnowledgeExclusionStore {
+    private const val PURPOSE = "legal_knowledge_exclusions"
+    private const val LIMIT = 100_000
+    private val validId = Regex("^.{1,512}$")
+
+    @Synchronized
+    fun snapshot(context: Context, workspaceKey: String): String {
+        val stored = PrivateAnalysisStore.read(context, workspaceKey, PURPOSE)
+            ?: PrivateAnalysisStore.empty(workspaceKey, "nodeIds").put("rootExcluded", false)
+        val rootExcluded = stored.opt("rootExcluded")
+        require(rootExcluded is Boolean) { "知识排除规则已损坏，禁止发送。" }
+        val array = stored.optJSONArray("nodeIds")
+            ?: error("知识排除规则不可读取，禁止发送。")
+        require(array.length() <= LIMIT) { "知识排除规则超过上限。" }
+        val ids = LinkedHashSet<String>()
+        for (i in 0 until array.length()) {
+            val id = array.opt(i)
+            require(id is String && validId.matches(id) && ids.add(id)) {
+                "知识排除规则包含无效或重复编号，禁止发送。"
+            }
+        }
+        return JSONObject().put("version", 1).put("rootExcluded", rootExcluded)
+            .put("nodeIds", JSONArray(ids.toList())).toString()
+    }
+
+    @Synchronized
+    fun update(context: Context, workspaceKey: String, nodeId: String?, excluded: Boolean) {
+        require(nodeId == null || validId.matches(nodeId)) { "无效的知识记录编号。" }
+        val existing = JSONObject(snapshot(context, workspaceKey))
+        val nodes = existing.getJSONArray("nodeIds")
+        val ids = LinkedHashSet<String>()
+        for (i in 0 until nodes.length()) ids.add(nodes.getString(i))
+        if (nodeId == null) existing.put("rootExcluded", excluded)
+        else if (excluded) {
+            require(ids.size < LIMIT || nodeId in ids) { "排除数量已达到上限。" }
+            ids.add(nodeId)
+        } else ids.remove(nodeId)
+        existing.put("nodeIds", JSONArray(ids.toList()))
+        val next = PrivateAnalysisStore.empty(workspaceKey, "nodeIds")
+            .put("rootExcluded", existing.getBoolean("rootExcluded"))
+            .put("nodeIds", existing.getJSONArray("nodeIds"))
+        PrivateAnalysisStore.write(context, workspaceKey, PURPOSE, next)
+        // Disk/key errors must surface; a failed write never becomes an allow-all policy.
+        require(snapshot(context, workspaceKey) == existing.toString()) {
+            "排除规则保存后验证失败，禁止发送。"
+        }
+    }
 }
 "####;
