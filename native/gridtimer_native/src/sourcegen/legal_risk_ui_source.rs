@@ -242,7 +242,8 @@ private data class LegalPreview(
     val scanId: String,
     val manifest: JSONObject,
     val evidence: List<JSONObject>,
-    val capturedData: AppData
+    val capturedData: AppData,
+    val knowledgeExclusionSnapshot: String
 )
 
 internal fun legalSendReady(
@@ -402,7 +403,14 @@ fun LegalRiskScreen(
         scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    val rawData = legalInputJson.encodeToString(captured)
+                    // The denylist is read from private, workspace-bound encrypted storage.
+                    // Its payload is transient scan input; it is never written to AppData.
+                    // Any corrupt or unreadable file aborts preparation instead of allowing all.
+                    val knowledgeExclusionSnapshot =
+                        LegalKnowledgeExclusionStore.snapshot(appContext, workspaceKey)
+                    val rawData = JSONObject(legalInputJson.encodeToString(captured))
+                        .put("__androidLegalKnowledgeExclusions", JSONObject(knowledgeExclusionSnapshot))
+                        .toString()
                     val unlockedJson = unlockedNotesJson(unlockedSnapshot)
                     val attachmentJson = attachmentDescriptorsJson(
                         appContext, workspaceKey, captured, unlockedSnapshot
@@ -428,7 +436,7 @@ fun LegalRiskScreen(
                             (0 until array.length()).map { array.getJSONObject(it) }
                         }
                         if (!requests.isCurrent(request)) error("扫描已取消")
-                        LegalPreview(scanId, manifest, evidence, captured)
+                        LegalPreview(scanId, manifest, evidence, captured, knowledgeExclusionSnapshot)
                     } catch (error: Throwable) {
                         scanId?.let(NativeOptimizerBridge::closeLegalScan)
                         preparingScanId.compareAndSet(scanId, null)
@@ -468,6 +476,16 @@ fun LegalRiskScreen(
 
     fun send() {
         val current = preview
+        // An old approved preview cannot override a subsequently added exclusion.
+        // This also refuses sending if the encrypted rules cannot be read.
+        if (current != null && !runCatching {
+            LegalKnowledgeExclusionStore.snapshot(appContext, workspaceKey) ==
+                current.knowledgeExclusionSnapshot
+        }.getOrDefault(false)) {
+            pendingConsent = null
+            message = "知识排除规则已更新或无法读取，请撤销旧预览并重新整理资料。"
+            return
+        }
         val recipient = legalRecipient(syncSession.aiBaseUrl)
         if (!legalSendReady(
             hasPreview = current != null,
@@ -843,7 +861,7 @@ private fun LegalManifestView(manifest: JSONObject) {
         while (keys.hasNext()) names += keys.next()
         names.sorted().forEach { name ->
             val item = coverage.optJSONObject(name) ?: JSONObject()
-            Text("$name：纳入 ${item.optInt("included")}，未覆盖 ${item.optInt("unavailable")}，已删除 ${item.optInt("excludedDeleted")}")
+            Text("$name：纳入 ${item.optInt("included")}，未覆盖 ${item.optInt("unavailable")}，已删除 ${item.optInt("excludedDeleted")}，主动排除 ${item.optInt("excludedUser")}")
         }
         val omissions = manifest.optJSONArray("omissions") ?: JSONArray()
         if (omissions.length() > 0) {
