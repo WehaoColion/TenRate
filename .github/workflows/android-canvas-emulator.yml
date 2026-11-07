@@ -1,0 +1,83 @@
+name: Android canvas gesture emulator verification
+
+on:
+  push:
+    branches: [fix/android-canvas-gesture-flicker-v2.23.4.11]
+    paths:
+      - "tools/android_canvas_flicker_probe.rs"
+      - ".github/workflows/android-canvas-emulator.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  canvas-gesture:
+    name: Verify signed Android 2.23.4.12 on API 35 emulator
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout Rust gesture probe
+        uses: actions/checkout@v4
+
+      - name: Compile Rust UI probe
+        run: |
+          rustc --edition=2021 -D warnings -O tools/android_canvas_flicker_probe.rs -o android_canvas_flicker_probe
+
+      - name: Fetch immutable signed APK from completed candidate build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p emulator_apk
+          gh run download 42274292440 --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir emulator_apk
+          cd emulator_apk
+          test -f tenfold_v2.23.4.12.apk
+          tr -d '\r' < tenfold_v2.23.4.12.apk.sha256 | sha256sum -c -
+          test "$(find . -name '*.apk' | wc -l)" -eq 1
+
+      - name: Prepare video frame decoder for screen-recording verification
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -n 1
+
+      - name: Enable KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm
+
+      - name: Start app and record repeated canvas pans
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r emulator_apk/tenfold_v2.23.4.12.apk
+            ./android_canvas_flicker_probe canvas_emulator_evidence
+
+      - name: Show actual emulator report
+        if: always()
+        run: |
+          if test -f canvas_emulator_evidence/report.md; then
+            cat canvas_emulator_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No emulator report; inspect the failed Android job." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Store emulator screenshots, hierarchy, MP4 and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-canvas-v2.23.4.12-gesture-evidence
+          path: canvas_emulator_evidence/
+          if-no-files-found: warn
+          retention-days: 21

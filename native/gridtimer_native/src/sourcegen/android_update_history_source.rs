@@ -1,3 +1,4 @@
+// v2.23.4.12 - Stabilize Android canvas gestures and add emulator verification.
 // v2.23.4.10 - Balance header actions, rounded corners and content-sized badges.
 // v2.23.4.9 - Compact the Android timer header badge and single-row controls.
 // v2.23.4.8 - Record Android canvas overview, placement, and backup rules.
@@ -58,7 +59,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.10";
+pub const LATEST_VERSION: &str = "2.23.4.12";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -88,6 +89,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.12",
+        updatedAt = "2026-11-07 02:40",
+        summary = "修复知识画布拖动时工具栏闪烁和卡片跳动",
+        sections = listOf(
+            AndroidUpdateSection("画布交互", listOf(
+                "后台手势保存仍由 Rust 原生层执行，但不再让顶部操作按钮短暂灰化或变成旋转图标。",
+                "拖动卡片时不反复更新选中工具栏，避免画布尺寸跟着手势变化。"
+            )),
+            AndroidUpdateSection("画面连续性与测试", listOf(
+                "卡片用绝对坐标保持拖动预览，避免写入回执瞬间重复叠加位移。",
+                "补充手势保存、坐标回执和安卓模拟器实际拖动验证，不改 Windows、画布存储格式或同步。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.10",
         updatedAt = "2026-11-07 00:30",

@@ -1,3 +1,4 @@
+// v2.23.4.12 - Verify stable canvas gestures on actual Android simulator.
 // v2.23.4.10 - Refine compact home header spacing and actions.
 // v2.23.4.9 - Keep the Android home header on a single compact row.
 // v2.23.4.8 - Android canvas placement, overview, and backup safeguards.
@@ -176,8 +177,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22340
-        versionName '2.23.4.10'
+        versionCode 22342
+        versionName '2.23.4.12'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
