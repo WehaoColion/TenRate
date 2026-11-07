@@ -21,6 +21,8 @@ pub struct LegalCoverage {
     pub included: usize,
     pub unavailable: usize,
     pub excluded_deleted: usize,
+    #[serde(default)]
+    pub excluded_user: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -201,6 +203,10 @@ impl Collector {
             .entry(category.to_string())
             .or_default()
             .excluded_deleted += 1;
+    }
+
+    fn user_excluded(&mut self, category: &str) {
+        self.manifest.coverage.entry(category.to_string()).or_default().excluded_user += 1;
     }
 
     fn unavailable(&mut self, category: &str, path: &str, reason: &str) {
@@ -916,6 +922,73 @@ fn xml_attribute(header: &str, name: &str) -> Option<String> {
     Some(xml_unescape(&header[start..end]))
 }
 
+/// Android's per-workspace denylist is injected only into the transient scan input;
+/// it is not part of AppData persistence or account synchronization. Desktop
+/// callers do not provide this field, preserving their existing behavior.
+fn android_knowledge_denied(root: &Value) -> Result<HashSet<String>, String> {
+    let Some(raw) = root.get("__androidLegalKnowledgeExclusions") else {
+        return Ok(HashSet::new());
+    };
+    let version = raw.get("version").and_then(Value::as_u64);
+    let root_excluded = raw.get("rootExcluded").and_then(Value::as_bool);
+    let ids = raw.get("nodeIds").and_then(Value::as_array);
+    if version != Some(1) || root_excluded.is_none() || ids.is_none() {
+        return Err("知识排除规则无效，已停止准备扫描".into());
+    }
+    let ids = ids.expect("validated");
+    if ids.len() > 100_000 {
+        return Err("知识排除规则超过上限".into());
+    }
+    let mut denied = HashSet::new();
+    for value in ids {
+        let Some(id) = value.as_str() else {
+            return Err("知识排除规则包含无效编号".into());
+        };
+        if id.is_empty() || id.len() > 512 {
+            return Err("知识排除规则包含无效编号".into());
+        }
+        denied.insert(id.to_string());
+    }
+    let notes = array(root, "notes");
+    if root_excluded == Some(true) {
+        for note in notes {
+            if string(note, "kind") != "STICKY" {
+                denied.insert(string(note, "id").to_string());
+            }
+        }
+        for folder in array(root, "noteFolders") {
+            denied.insert(string(folder, "id").to_string());
+        }
+    } else {
+        // Knowledge hierarchy parentId is authoritative; the legacy folderId
+        // projection is also checked to prevent leaking older folder children.
+        for _ in 0..=notes.len() {
+            let mut changed = false;
+            for note in notes {
+                if string(note, "kind") == "STICKY" {
+                    continue;
+                }
+                let id = string(note, "id");
+                if id.is_empty() || denied.contains(id) {
+                    continue;
+                }
+                let parent = note.get("document")
+                    .and_then(|document| document.get("knowledge"))
+                    .and_then(|knowledge| knowledge.get("parentId"))
+                    .and_then(Value::as_str).unwrap_or("");
+                let legacy = string(note, "folderId");
+                if (!parent.is_empty() && denied.contains(parent))
+                    || (!legacy.is_empty() && denied.contains(legacy))
+                {
+                    changed |= denied.insert(id.to_string());
+                }
+            }
+            if !changed { break; }
+        }
+    }
+    Ok(denied)
+}
+
 /// Builds the exact preview and bounded request batches. No user text is shortened.
 /// `unlocked_notes_json` and `verified_attachments_json` are transient plaintext inputs.
 pub fn prepare_scan(
@@ -964,6 +1037,7 @@ pub fn prepare_scan(
             )
         })
         .collect();
+    let denied_knowledge = android_knowledge_denied(&root)?;
     let mut c = Collector::new(workspace_id, captured_at_epoch_millis, &root);
     let category_names: HashMap<String, String> = array(&root, "categories")
         .iter()
@@ -983,6 +1057,10 @@ pub fn prepare_scan(
     for (index, folder) in array(&root, "noteFolders").iter().enumerate() {
         c.candidate("笔记目录");
         let id = object_id(folder, index.to_string());
+        if denied_knowledge.contains(&id) {
+            c.user_excluded("笔记目录");
+            continue;
+        }
         if c.is_deleted(
             "noteFolder",
             &id,
@@ -1088,6 +1166,10 @@ pub fn prepare_scan(
     for (i, note) in array(&root, "notes").iter().enumerate() {
         c.candidate("笔记容器");
         let id = object_id(note, i.to_string());
+        if string(note, "kind") != "STICKY" && denied_knowledge.contains(&id) {
+            c.user_excluded("笔记容器");
+            continue;
+        }
         if millis(note, "deletedAtEpochMillis").is_some()
             || c.is_deleted(
                 "note",
@@ -2098,3 +2180,82 @@ mod tests {
 #[cfg(test)]
 #[path = "legal_scan_current_tests.rs"]
 mod current_content_tests;
+
+#[cfg(test)]
+mod android_knowledge_denylist_tests {
+    use super::*;
+
+    fn fixture() -> Value {
+        json!({
+            "notes": [
+                {"id":"folder-a","kind":"DOCUMENT","title":"Secret folder","content":"folder secret","document":{"knowledge":{"parentId":null}}},
+                {"id":"child","kind":"DOCUMENT","title":"Secret child","content":"private child","document":{"knowledge":{"parentId":"folder-a"}}},
+                {"id":"grandchild","kind":"DOCUMENT","title":"Private","content":"private nested","document":{"knowledge":{"parentId":"child"}}},
+                {"id":"unrelated","kind":"DOCUMENT","title":"Public","content":"public note"},
+                {"id":"sticky","kind":"STICKY","title":"Sticky","content":"sticky content"}
+            ],
+            "noteFolders": [{"id":"old-folder","name":"Legacy name"}],
+            "financeProfile": {"cashReserve":37}
+        })
+    }
+
+    fn scan(mut data: Value, excluded: Value) -> LegalScanPrepared {
+        data["__androidLegalKnowledgeExclusions"] = excluded;
+        prepare_scan(&data.to_string(), "workspace-test", 10, "[]", "[]").unwrap()
+    }
+
+    fn text(prepared: &LegalScanPrepared) -> String {
+        prepared.evidence.iter().map(|item| item.text.as_str()).collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn folder_denylist_excludes_descendants_but_not_other_modules() {
+        let result = scan(fixture(), json!({"version":1,"rootExcluded":false,"nodeIds":["folder-a"]}));
+        let raw = text(&result);
+        assert!(!raw.contains("folder secret"));
+        assert!(!raw.contains("private child"));
+        assert!(!raw.contains("private nested"));
+        assert!(raw.contains("public note"));
+        assert!(raw.contains("sticky content"));
+        assert!(raw.contains("37"));
+        assert_eq!(result.manifest.coverage["笔记容器"].excluded_user, 3);
+        assert!(result.manifest.omissions.iter().all(|item| !item.source_path.contains("child")));
+    }
+
+    #[test]
+    fn root_denylist_preserves_sticky_notes_and_finance() {
+        let result = scan(fixture(), json!({"version":1,"rootExcluded":true,"nodeIds":[]}));
+        let raw = text(&result);
+        assert!(!raw.contains("public note"));
+        assert!(!raw.contains("Legacy name"));
+        assert!(raw.contains("sticky content"));
+        assert!(raw.contains("37"));
+    }
+
+    #[test]
+    fn moving_a_child_out_of_an_excluded_folder_reincludes_it() {
+        let mut data = fixture();
+        let denied = json!({"version":1,"rootExcluded":false,"nodeIds":["folder-a"]});
+        assert!(!text(&scan(data.clone(), denied.clone())).contains("private child"));
+        data["notes"][1]["document"]["knowledge"]["parentId"] = Value::Null;
+        assert!(text(&scan(data, denied)).contains("private child"));
+    }
+
+    #[test]
+    fn corrupt_policy_fails_closed_and_no_policy_keeps_original_scope() {
+        let mut data = fixture();
+        assert!(text(&prepare_scan(&data.to_string(), "w", 1, "[]", "[]").unwrap())
+            .contains("private child"));
+        data["__androidLegalKnowledgeExclusions"] = json!({"nodeIds":["child"]});
+        assert!(prepare_scan(&data.to_string(), "w", 1, "[]", "[]").is_err());
+    }
+
+    #[test]
+    fn excluded_legacy_folder_omits_child_and_folder_name() {
+        let mut data = fixture();
+        data["notes"][1]["folderId"] = json!("old-folder");
+        let raw = text(&scan(data, json!({"version":1,"rootExcluded":false,"nodeIds":["old-folder"]})));
+        assert!(!raw.contains("Legacy name"));
+        assert!(!raw.contains("private child"));
+    }
+}
