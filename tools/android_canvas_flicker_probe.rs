@@ -184,6 +184,14 @@ fn create_card() -> Result<(), String> {
 fn record_gestures(root: &Path) -> Result<PathBuf, String> {
     // Resolve the canvas touch bounds before the recording starts so the
     // accessibility service does not steal any of the timed video frames.
+    let xml = hierarchy()?;
+    let surface = ui_nodes(&xml).into_iter().find(|node| {
+        node.description.contains("知识画布") && node.description.contains("张卡片")
+    }).ok_or("Canvas surface bounds unavailable for card drag")?;
+    let center_x = (surface.left + surface.right) / 2;
+    let center_y = (surface.top + surface.bottom) / 2;
+    let to_x = (center_x + 120).min(surface.right - 20);
+    let to_y = (center_y + 70).min(surface.bottom - 20);
     let remote = "/sdcard/canvas_pan_check.mp4";
     let _ = command(&["shell", "rm", "-f", remote]);
     let mut recorder = Command::new("adb")
@@ -197,14 +205,6 @@ fn record_gestures(root: &Path) -> Result<PathBuf, String> {
     }
     // A freshly created card is initially centered in the viewport. This tests
     // card dragging, not only an empty-canvas pan, on an actual Android input stack.
-    let xml = hierarchy()?;
-    let surface = ui_nodes(&xml).into_iter().find(|node| {
-        node.description.contains("知识画布") && node.description.contains("张卡片")
-    }).ok_or("Canvas surface bounds unavailable for card drag")?;
-    let center_x = (surface.left + surface.right) / 2;
-    let center_y = (surface.top + surface.bottom) / 2;
-    let to_x = (center_x + 120).min(surface.right - 20);
-    let to_y = (center_y + 70).min(surface.bottom - 20);
     command(&["shell", "input", "swipe", &center_x.to_string(), &center_y.to_string(),
         &to_x.to_string(), &to_y.to_string(), "600"])?;
     sleep(Duration::from_millis(400));
