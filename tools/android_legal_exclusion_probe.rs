@@ -119,7 +119,7 @@ fn open_knowledge_root(evidence: &Path) -> Result<(), String> {
             return Ok(());
         }
         save_evidence(evidence, &format!("navigation_{attempt}"));
-        let _ = tap_label(&["知识目录", "页面与文件夹", "知识库", "知识", "Knowledge", "Notes", "目录"])?;
+        let _ = tap_label(&["知识目录", "Directory", "Pages and folders", "页面与文件夹", "知识库", "知识", "Knowledge", "Notes", "目录"])?;
         sleep(Duration::from_millis(650));
     }
     Err("Could not open knowledge root from signed app; inspect navigation screenshots".into())
