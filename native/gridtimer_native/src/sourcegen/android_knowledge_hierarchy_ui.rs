@@ -1226,6 +1226,25 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
 // changes knowledge data, shared synchronization state, or other risk modules.
 private object KnowledgeLegalExclusionRevisions {
     val values = androidx.compose.runtime.mutableStateMapOf<String, Int>()
+    // One disk/Keystore read per workspace revision, not one per visible row.
+    private val cache = HashMap<String, Pair<Int, Result<org.json.JSONObject>>>()
+
+    @Synchronized
+    fun load(
+        context: android.content.Context,
+        workspaceKey: String,
+        revision: Int
+    ): Result<org.json.JSONObject> {
+        val previous = cache[workspaceKey]
+        if (previous != null && previous.first == revision) return previous.second
+        val current = runCatching {
+            org.json.JSONObject(
+                com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.snapshot(context, workspaceKey)
+            )
+        }
+        cache[workspaceKey] = revision to current
+        return current
+    }
 }
 
 @Composable
@@ -1239,9 +1258,7 @@ private fun KnowledgeLegalExclusionAction(
     val context = LocalContext.current.applicationContext
     val revision = KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0
     val loaded = remember(workspaceKey, revision) {
-        runCatching {
-            org.json.JSONObject(com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.snapshot(context, workspaceKey))
-        }
+        KnowledgeLegalExclusionRevisions.load(context, workspaceKey, revision)
     }
     val policy = loaded.getOrNull()
     val ids = remember(policy) {
