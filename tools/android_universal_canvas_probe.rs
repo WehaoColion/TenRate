@@ -161,6 +161,7 @@ fn main(){
         count("2 张卡片")?;take("06_generic_two_notes",&out);
         report.push_str("PASS: existing blank canvas remained generic; note creation and both page actions are present.\n\n");
         open_center_card()?;
+        take("07_generic_card_detail",&out);
         for name in ["自由连线","管理连线","放大卡片"] {
             if seek(&[name])?.is_none(){return Err(format!("Generic card lost editing action {name}"));}
         }
@@ -182,7 +183,7 @@ fn main(){
         if seek(&["普通"])?.is_none(){return Err("Generic edge management did not expose ordinary link".into());}
         take("09_generic_edge_panel",&out);
         close_overlay()?;
-        must_tap(&["返回"])?;
+        must_tap(&["返回","Back"])?;
         if seek(&["我的画布"])?.is_none(){return Err("Back did not return to canvas library".into());}
         must_tap(&["客户网络模板"])?;
         take("10_customer_template_create",&out);
