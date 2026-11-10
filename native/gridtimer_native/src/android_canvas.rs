@@ -554,7 +554,8 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             {
                 return Err("此页面已在画布中".into());
             }
-            let (x, y) = free_card_position(canvas, 256.0, 168.0)?;
+            let (width, height) = if client { (192.0, 132.0) } else { (256.0, 168.0) };
+            let (x, y) = free_card_position(canvas, width, height)?;
             canvas.nodes.push(Node {
                 id: identifier(),
                 kind: if page { "page" } else if client { "client" } else { "note" }.into(),
@@ -562,8 +563,8 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                 text: value,
                 x,
                 y,
-                width: 256.0,
-                height: 168.0,
+                width,
+                height,
                 color: "blue".into(),
             });
             if !parent.is_empty() {
