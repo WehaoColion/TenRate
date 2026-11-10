@@ -29,22 +29,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 170); do
-            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-customer-network-canvas-ux-20261111&per_page=50")"
-            match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
-            if test -n "$match"; then
-              read -r run_id status conclusion <<< "$match"
-              if test "$status" = completed; then
-                if test "$conclusion" != success; then
-                  echo "Matching signed APK build $run_id ended with $conclusion" >&2
-                  exit 1
+          # The prior commit produced a fully signed APK. When only this
+          # Rust emulator probe and its workflow differ, reuse those exact
+          # immutable bytes and avoid an unnecessary second Android build.
+          baseline=a0e1997104d0b8dcca03b0daa1365577951a966b
+          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$baseline...$GITHUB_SHA")"
+          if printf '%s' "$comparison" | jq -e '(.files | length) > 0 and (.files | all(.filename == "tools/android_customer_canvas_probe.rs" or .filename == ".github/workflows/android-customer-canvas-emulator.yml"))' > /dev/null; then
+            echo "Application sources unchanged since verified signed APK build 42876775286"
+            echo 42876775286 > signed_build_run_id.txt
+          else
+            for attempt in $(seq 1 170); do
+              response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-customer-network-canvas-ux-20261111&per_page=50")"
+              match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
+              if test -n "$match"; then
+                read -r run_id status conclusion <<< "$match"
+                if test "$status" = completed; then
+                  if test "$conclusion" != success; then
+                    echo "Matching signed APK build $run_id ended with $conclusion" >&2
+                    exit 1
+                  fi
+                  echo "$run_id" > signed_build_run_id.txt
+                  break
                 fi
-                echo "$run_id" > signed_build_run_id.txt
-                break
               fi
-            fi
-            sleep 30
-          done
+              sleep 30
+            done
+          fi
           test -s signed_build_run_id.txt
           gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
           cd signed_apk
