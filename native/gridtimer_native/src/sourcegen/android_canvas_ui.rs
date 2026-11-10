@@ -565,6 +565,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     var clientParentId by remember(workspace) { mutableStateOf<String?>(null) }
     var editTargetId by remember(workspace) { mutableStateOf<String?>(null) }
     var creatingPage by remember(workspace) { mutableStateOf(false) }
+    var nodeSearch by remember(workspace) { mutableStateOf("") }
     var pageCreationError by remember(workspace) { mutableStateOf("") }
     var dialogRequestPending by remember(workspace) { mutableStateOf(false) }
     val canvas = modelState.reply?.canvas
@@ -720,8 +721,10 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             } }
                         }
                         "nodes" -> {
-                            if (canvas?.nodes.isNullOrEmpty()) Text("还没有卡片", Modifier.padding(vertical = 20.dp))
-                            LazyColumn { items(canvas?.nodes.orEmpty(), key = { it.id }) { node ->
+                            OutlinedTextField(value = nodeSearch, onValueChange = { nodeSearch = it.take(100) }, singleLine = true, label = { Text("搜索客户、便签或页面") }, modifier = Modifier.fillMaxWidth())
+                            val matches = canvas?.nodes.orEmpty().filter { node -> nodeSearch.isBlank() || cardTitle(node).contains(nodeSearch, ignoreCase = true) || cardBody(node).contains(nodeSearch, ignoreCase = true) }
+                            if (matches.isEmpty()) Text(if (nodeSearch.isBlank()) "还没有卡片" else "没有找到匹配的卡片", Modifier.padding(vertical = 20.dp))
+                            LazyColumn { items(matches, key = { it.id }) { node ->
                                 TextButton(enabled = ready, modifier = Modifier.fillMaxWidth(), onClick = {
                                     selected = node.id; panel = ""
                                     model.submit(canvasRequest("view") { put("x",node.x + node.width/2); put("y",node.y + node.height/2); put("zoom",1f) })
