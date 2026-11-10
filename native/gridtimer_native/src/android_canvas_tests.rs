@@ -505,8 +505,8 @@ fn adding_referred_customer_is_atomic_and_rejects_ambiguous_parents() {
     let child = id(&b, 1).to_owned();
     let c = apply(&b, json!({"op":"addClient","name":"丙","details":""}));
     let other = id(&c, 2).to_owned();
-    assert!(command(c["token"].as_str().unwrap(), &json!({"op":"connect","from":other,"to":child}).to_string()).is_err());
-    assert!(command(c["token"].as_str().unwrap(), &json!({"op":"connect","from":child,"to":root}).to_string()).is_err());
+    assert!(command(c["token"].as_str().unwrap(), &json!({"op":"connect","from":other,"to":child,"relation":"referral"}).to_string()).is_err());
+    assert!(command(c["token"].as_str().unwrap(), &json!({"op":"connect","from":child,"to":root,"relation":"referral"}).to_string()).is_err());
     assert!(command(c["token"].as_str().unwrap(), &json!({"op":"addClient","name":"丁","details":"","parentId":"missing"}).to_string()).is_err());
     let reopened = fixture.open("customer-referral");
     assert_eq!(reopened["canvas"], c["canvas"]);
@@ -528,4 +528,103 @@ fn customer_tree_arrangement_respects_lineage_and_undo() {
     assert_eq!(nodes[2]["x"], 632.0);
     let undone = apply(&laid_out, json!({"op":"undo"}));
     assert_eq!(undone["canvas"], before);
+}
+
+
+#[test]
+fn templates_are_opt_in_and_old_stores_remain_blank() {
+    let mut fixture = Fixture::new();
+    let original = fixture.open("canvas-template");
+    assert_eq!(original["canvas"]["template"], "blank");
+    let original_id = original["canvas"]["id"].as_str().unwrap().to_owned();
+    let network = apply(&original, json!({"op":"new","title":"客户网络","template":"customer_network"}));
+    assert_eq!(network["canvas"]["template"], "customer_network");
+    assert_eq!(network["canvases"][0]["template"], "blank");
+    assert_eq!(network["canvases"][1]["template"], "customer_network");
+    let blank = apply(&network, json!({"op":"new","title":"项目计划"}));
+    assert_eq!(blank["canvas"]["template"], "blank");
+    assert_eq!(blank["canvas"]["nodes"], json!([]));
+    let reopened = fixture.open("canvas-template");
+    assert_eq!(reopened["canvas"], blank["canvas"]);
+    let old = apply(&reopened, json!({"op":"switch","id":original_id}));
+    assert_eq!(old["canvas"]["template"], "blank");
+    assert_eq!(old["canvas"]["id"], original_id);
+
+    let old_json = r#"{"id":"abc","title":"旧画布","centerX":0.0,"centerY":0.0,"zoom":1.0,"nodes":[],"edges":[]}"#;
+    let decoded: Canvas = serde_json::from_str(old_json).unwrap();
+    assert_eq!(decoded.template, "blank");
+    let invalid = command(old["token"].as_str().unwrap(),
+        &json!({"op":"new","title":"未知模板","template":"unsupported"}).to_string());
+    assert!(invalid.is_err());
+    assert_eq!(fixture.open("canvas-template")["canvas"], old["canvas"]);
+}
+
+#[test]
+fn unrestricted_visual_lines_are_independent_of_validated_referrals() {
+    let mut fixture = Fixture::new();
+    let opened = fixture.open("universal-links");
+    let a = apply(&opened, json!({"op":"addClient","name":"甲","details":""}));
+    let a = apply(&a, json!({"op":"addClient","name":"乙","details":""}));
+    let a = apply(&a, json!({"op":"addClient","name":"丙","details":""}));
+    let x = id(&a, 0).to_owned();
+    let y = id(&a, 1).to_owned();
+    let z = id(&a, 2).to_owned();
+    let a = apply(&a, json!({"op":"connect","from":x,"to":y,"relation":"referral"}));
+    let a = apply(&a, json!({"op":"connect","from":y,"to":x,"relation":"link"}));
+    let a = apply(&a, json!({"op":"connect","from":z,"to":y,"relation":"link"}));
+    assert_eq!(a["canvas"]["edges"].as_array().unwrap().len(), 3);
+    assert_eq!(a["canvas"]["edges"][1]["relation"], "link");
+    assert_eq!(a["canvas"]["edges"][2]["relation"], "link");
+    assert!(command(a["token"].as_str().unwrap(),
+        &json!({"op":"connect","from":z,"to":y,"relation":"referral"}).to_string()).is_err());
+    assert!(command(a["token"].as_str().unwrap(),
+        &json!({"op":"connect","from":y,"to":x,"relation":"referral"}).to_string()).is_err());
+    let arranged = apply(&a, json!({"op":"arrangeTree"}));
+    assert_eq!(arranged["canvas"]["nodes"][0]["x"], 0.0);
+    assert_eq!(arranged["canvas"]["nodes"][1]["x"], 316.0);
+    assert_eq!(arranged["canvas"]["nodes"][2]["x"], 0.0);
+    let undo = apply(&arranged, json!({"op":"undo"}));
+    assert_eq!(undo["canvas"], a["canvas"]);
+    let reopened = fixture.open("universal-links");
+    assert_eq!(reopened["canvas"], undo["canvas"]);
+}
+
+#[test]
+fn generic_note_and_page_cards_restore_resizing_and_connection_management() {
+    let mut fixture = Fixture::new();
+    let opened = fixture.open("generic-tools");
+    let a = apply(&opened, json!({"op":"addNote","text":"待处理\n记录"}));
+    let a = apply(&a, json!({"op":"addPage","pageId":"existing-page-id"}));
+    let a = apply(&a, json!({"op":"addNote","text":"另一条便签"}));
+    let first = id(&a, 0).to_owned();
+    let second = id(&a, 1).to_owned();
+    let third = id(&a, 2).to_owned();
+    let a = apply(&a, json!({"op":"connect","from":first,"to":second,"relation":"link"}));
+    let a = apply(&a, json!({"op":"connect","from":second,"to":third}));
+    let a = apply(&a, json!({"op":"resize","id":second,"width":384.0,"height":252.0}));
+    assert_eq!(a["canvas"]["nodes"][1]["width"], 384.0);
+    assert_eq!(a["canvas"]["edges"].as_array().unwrap().len(), 2);
+    let removed = apply(&a, json!({"op":"removeEdge","id":a["canvas"]["edges"][0]["id"]}));
+    assert_eq!(removed["canvas"]["edges"].as_array().unwrap().len(), 1);
+    let restored = apply(&removed, json!({"op":"undo"}));
+    assert_eq!(restored["canvas"]["edges"].as_array().unwrap().len(), 2);
+    assert_eq!(restored["canvas"]["nodes"][1]["width"], 384.0);
+}
+
+#[test]
+fn legacy_customer_connections_retain_referral_semantics() {
+    let original = r#"{"id":"legacy","title":"客户画布","centerX":0,"centerY":0,"zoom":1,
+        "nodes":[
+            {"id":"c1","kind":"client","pageId":"","text":"甲\n","x":0,"y":0,"width":192,"height":132,"color":"blue"},
+            {"id":"c2","kind":"client","pageId":"","text":"乙\n","x":316,"y":0,"width":192,"height":132,"color":"blue"}
+        ],
+        "edges":[{"id":"e1","from":"c1","to":"c2"}]}"#;
+    let mut canvas: Canvas = serde_json::from_str(original).unwrap();
+    canvas.validate().unwrap();
+    assert!(is_referral(&canvas.edges[0],
+        &canvas.nodes.iter().map(|n| n.id.as_str()).collect()));
+    edit(&mut canvas, &json!({"op":"connect","from":"c2","to":"c1","relation":"link"})).unwrap();
+    assert!(edit(&mut canvas,
+        &json!({"op":"connect","from":"c2","to":"c1","relation":"referral"})).is_err());
+    canvas.validate().unwrap();
 }
