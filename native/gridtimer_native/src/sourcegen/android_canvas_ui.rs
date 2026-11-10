@@ -988,7 +988,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     } else {
                         val title = node.text.substringBefore("\n").ifBlank { if (node.kind == "client") "未命名客户" else "空白便签" }
                         val body = node.text.substringAfter("\n", "").trim()
-                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,body,textColor)
+                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,if (node.kind == "client") "点击查看客户资料" else body,textColor)
                     }
                     native.save(); native.clipRect(nodeX+20,nodeY+12,nodeX+node.width-10,nodeY+node.height-10); native.translate(nodeX+24,nodeY+14)
                     textLayout.draw(native)
