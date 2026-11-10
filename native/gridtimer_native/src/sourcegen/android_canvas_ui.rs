@@ -720,9 +720,10 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         clientParentId = selectedNode.id; clientName = ""; clientDetails = ""; selected = null; dialog = "clientAdd"
                     }, enabled = ready, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("＋ 添加此客户推荐的人") }
                 }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (selectedNode.kind == "page") {
-                        OutlinedButton(onClick = { pages[selectedNode.pageId]?.let(onOpenPage); selected = null }, enabled = ready && pages[selectedNode.pageId] != null) { Text("打开页面") }
+                        OutlinedButton(onClick = { pages[selectedNode.pageId]?.let(onOpenPage); selected = null }, enabled = ready && pages[selectedNode.pageId] != null, modifier = Modifier.weight(1f)) { Text("打开页面") }
                     } else {
                         OutlinedButton(onClick = {
                             editTargetId = selectedNode.id
@@ -734,19 +735,26 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                                 dialog = "noteEdit"
                             }
                             selected = null
-                        }, enabled = ready) { Text(if (selectedNode.kind == "client") "编辑客户" else "编辑便签") }
+                        }, enabled = ready, modifier = Modifier.weight(1f)) { Text(if (selectedNode.kind == "client") "编辑客户" else "编辑便签") }
                     }
-                    OutlinedButton(onClick = { connectRelation = "link"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.size ?: 0) > 1) { Text("自由连线") }
-                    if (selectedNode.kind == "client") OutlinedButton(onClick = { connectRelation = "referral"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.count { it.kind == "client" } ?: 0) > 1) { Text("绑定推荐") }
-                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "edges"; selected = null }, enabled = ready) { Text("管理连线") }
+                    OutlinedButton(onClick = { connectRelation = "link"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.size ?: 0) > 1, modifier = Modifier.weight(1f)) { Text("自由连线") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedNode.kind == "client") OutlinedButton(onClick = { connectRelation = "referral"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.count { it.kind == "client" } ?: 0) > 1, modifier = Modifier.weight(1f)) { Text("绑定推荐") }
+                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "edges"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("管理连线") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = {
                         val isLarge = selectedNode.width >= 350f
                         val targetWidth = if (isLarge) { if (selectedNode.kind == "client") 192f else 256f } else 384f
                         val targetHeight = if (isLarge) { if (selectedNode.kind == "client") 132f else 168f } else 252f
                         if (model.submit(canvasRequest("resize") { put("id",selectedNode.id); put("width",targetWidth); put("height",targetHeight) })) selected = null
-                    }, enabled = ready) { Text(if (selectedNode.width >= 350f) "缩小卡片" else "放大卡片") }
-                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "colors"; selected = null }, enabled = ready) { Text("颜色") }
-                    OutlinedButton(onClick = { editTargetId = selectedNode.id; dialog = "deleteNode"; selected = null }, enabled = ready) { Text("移除卡片") }
+                    }, enabled = ready, modifier = Modifier.weight(1f)) { Text(if (selectedNode.width >= 350f) "缩小卡片" else "放大卡片") }
+                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "colors"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("颜色") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { editTargetId = selectedNode.id; dialog = "deleteNode"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("移除卡片") }
+                    }
                 }
                 Text("卡片位置、大小和连线可以自由编辑。移除卡片不会删除原知识页面。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
             }
@@ -806,8 +814,15 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             if (matches.isEmpty()) Text(if (nodeSearch.isBlank()) "还没有卡片" else "没有找到匹配的卡片", Modifier.padding(vertical = 20.dp))
                             LazyColumn { items(matches, key = { it.id }) { node ->
                                 TextButton(enabled = ready, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    selected = node.id; panel = ""
-                                    model.submit(canvasRequest("view") { put("x",node.x + node.width/2); put("y",node.y + node.height/2); put("zoom",1f) })
+                                    val from = connectFrom
+                                    if (from != null) {
+                                        if (from != node.id && model.submit(canvasRequest("connect") { put("from",from); put("to",node.id); put("relation",connectRelation) })) {
+                                            connectFrom = null; selected = null; panel = ""
+                                        }
+                                    } else {
+                                        selected = node.id; panel = ""
+                                        model.submit(canvasRequest("view") { put("x",node.x + node.width/2); put("y",node.y + node.height/2); put("zoom",1f) })
+                                    }
                                 }) { Text(cardTitle(node), Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             } }
                         }
