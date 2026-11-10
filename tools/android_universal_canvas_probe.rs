@@ -166,12 +166,14 @@ fn main(){
         }
         take("07_generic_card_tools",&out);
         report.push_str("PASS: ordinary note card exposes free linking, edge management and resize controls.\n\n");
+        must_tap(&["放大卡片"])?;
+        open_center_card()?;
+        if seek(&["缩小卡片"])?.is_none(){return Err("Canvas resize did not change card state".into());}
+        must_tap(&["缩小卡片"])?;
+        open_center_card()?;
         must_tap(&["自由连线"])?;
         must_tap(&["查找"])?;
         must_tap(&["IdeaB"])?;
-        close_overlay()?;
-        thread::sleep(Duration::from_millis(600));
-        open_center_card()?;
         count("1 条关系")?;
         take("08_generic_free_link",&out);
         report.push_str("PASS: two generic notes were linked through the real canvas UI.\n\n");
