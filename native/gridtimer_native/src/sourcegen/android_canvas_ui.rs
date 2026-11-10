@@ -827,7 +827,7 @@ private class CanvasTextCache {
         if(old != null && old.width == node.width && old.height == node.height && old.title == title && old.body == body && old.color == textColor) return old.layout
         return run {
             val drawPaint = TextPaint(paint).apply { color = textColor }
-            val content = (title.take(160) + if(body.isBlank()) "" else "\n\n" + body.take(300))
+            val content = (title.take(80) + if(body.isBlank()) "" else "\n\n" + body.take(140))
             StaticLayout.Builder.obtain(content,0,content.length,drawPaint,(node.width-28).toInt().coerceAtLeast(1))
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL).setIncludePad(false).setLineSpacing(2f,1f)
                 .setMaxLines(((node.height-30)/20).toInt().coerceAtLeast(1)).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
@@ -837,7 +837,7 @@ private class CanvasTextCache {
 }
 
 @Composable
-private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit) {
+private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit, onAddFirst: () -> Unit) {
     val modelState by model.state.collectAsState()
     val visualReady = !modelState.busy || modelState.quietGesture
     val density = LocalDensity.current.density
@@ -958,15 +958,19 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                 val nodeY = preview?.takeIf { it.id == node.id }?.y ?: node.y
                 if(nodeX + node.width >= left && nodeX <= right && nodeY + node.height >= top && nodeY <= bottom) {
                     paint.style=Paint.Style.FILL; paint.color=surface
-                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,12f,12f,paint)
+                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
                     paint.style=Paint.Style.STROKE; paint.strokeWidth=if(node.id==selected || node.id==connectFrom) 2.5f/viewport.zoom else 1f/viewport.zoom
                     paint.color=if(node.id==selected || node.id==connectFrom) primary else canvasTint(node.color).copy(alpha=0.45f).toArgb()
-                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,12f,12f,paint)
-                    paint.style=Paint.Style.FILL; paint.color=canvasTint(node.color).toArgb()
+                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
+                    paint.style=Paint.Style.FILL; paint.color=if (node.kind == "client") canvasTint("green").toArgb() else canvasTint(node.color).toArgb()
                     native.drawRoundRect(nodeX+12,nodeY+13,nodeX+16,nodeY+35,2f,2f,paint)
                     val textLayout = if(node.kind=="page") {
                         val label = textCache.label(pages[node.pageId]); textCache.layout(node,label.first,label.second,textColor)
-                    } else textCache.layout(node,node.text.ifBlank { "空白便签" },"",textColor)
+                    } else {
+                        val title = node.text.substringBefore("\n").ifBlank { if (node.kind == "client") "未命名客户" else "空白便签" }
+                        val body = node.text.substringAfter("\n", "").trim()
+                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,body,textColor)
+                    }
                     native.save(); native.clipRect(nodeX+20,nodeY+12,nodeX+node.width-10,nodeY+node.height-10); native.translate(nodeX+24,nodeY+14)
                     textLayout.draw(native)
                     native.restore()
@@ -974,8 +978,12 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             }
             native.restore()
         }
-        if(canvas.nodes.isEmpty()) Text("把想法放在一起", Modifier.align(Alignment.Center), color=MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.align(Alignment.BottomEnd).padding(8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp)), verticalAlignment=Alignment.CenterVertically) {
+        if(canvas.nodes.isEmpty()) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("把客户关系整理成网络", style = MaterialTheme.typography.titleMedium)
+            Text("创建客户后，点击卡片即可查看资料与推荐关系", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = onAddFirst, enabled = visualReady) { Text("＋ 添加第一个客户") }
+        }
+        Row(Modifier.align(Alignment.BottomEnd).padding(10.dp).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), RoundedCornerShape(18.dp)), verticalAlignment=Alignment.CenterVertically) {
             TextButton(enabled=visualReady, onClick={
                 val nodes=canvas.nodes
                 if(nodes.isNotEmpty() && size.width>0 && size.height>0) {
