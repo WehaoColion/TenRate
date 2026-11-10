@@ -681,11 +681,19 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             Surface(Modifier.fillMaxWidth().padding(18.dp).heightIn(max = 580.dp), shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(when(panel) { "boards" -> "全部画布（${boards.size}）"; "pages" -> "加入页面"; "nodes" -> "所有卡片"; "edges" -> "卡片连线"; "colors" -> "卡片颜色"; else -> "画布设置" }, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                        Text(when(panel) { "addActions" -> "添加到画布"; "boards" -> "全部画布（${boards.size}）"; "pages" -> "引用已有页面"; "nodes" -> "定位卡片"; "edges" -> "卡片连线"; "colors" -> "卡片颜色"; else -> "画布工具" }, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                         TextButton(onClick = { panel = "" }) { Text("关闭") }
                     }
                     if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     when (panel) {
+                        "addActions" -> {
+                            Text("选择一种卡片类型", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建客户", Modifier.fillMaxWidth()) }
+                            HorizontalDivider()
+                            TextButton(onClick = { panel = ""; editorTitle = ""; editorText = ""; dialog = "noteAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建便签", Modifier.fillMaxWidth()) }
+                            HorizontalDivider()
+                            TextButton(onClick = { panel = "pages" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 引用已有知识页面", Modifier.fillMaxWidth()) }
+                        }
                         "boards" -> {
                             Button(enabled = model.canCreateBoard, onClick = createCanvas, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建画布") }
                             if (boards.size >= 128) Text("已达 128 张画布上限", Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
@@ -712,7 +720,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                                 TextButton(enabled = ready, modifier = Modifier.fillMaxWidth(), onClick = {
                                     selected = node.id; panel = ""
                                     model.submit(canvasRequest("view") { put("x",node.x + node.width/2); put("y",node.y + node.height/2); put("zoom",1f) })
-                                }) { Text(if(node.kind == "page") canvasPageLabel(pages[node.pageId]).first else node.text.ifBlank { "空白便签" }, Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                                }) { Text(cardTitle(node), Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             } }
                         }
                         "edges" -> {
@@ -722,17 +730,22 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             LazyColumn { items(edges, key = { it.id }) { edge ->
                                 val other = nodeIndex[if(edge.from == selected) edge.to else edge.from]
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text((if(edge.from == selected) "→ " else "← ") + (if(other?.kind == "page") canvasPageLabel(pages[other.pageId]).first else other?.text.orEmpty()), Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text((if(edge.from == selected) "→ " else "← ") + (other?.let(cardTitle) ?: "未知卡片"), Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     TextButton(enabled = ready, onClick = { model.submit(canvasRequest("removeEdge") { put("id",edge.id) }) }) { Text("移除") }
                                 }
                             } }
                         }
                         "colors" -> listOf("blue" to "蓝色","green" to "绿色","amber" to "琥珀","pink" to "粉色","purple" to "紫色").forEach { (color,label) ->
-                            TextButton(enabled = ready && selectedNode != null, modifier = Modifier.fillMaxWidth(), onClick = { selectedNode?.let { model.submit(canvasRequest("color") { put("id",it.id); put("color",color) }) }; panel = "" }) { Text(label, color = canvasTint(color)) }
+                            TextButton(enabled = ready && editTargetId != null, modifier = Modifier.fillMaxWidth(), onClick = { editTargetId?.let { id -> model.submit(canvasRequest("color") { put("id",id); put("color",color) }) }; panel = "" }) { Text(label, color = canvasTint(color)) }
                         }
                         else -> {
-                            TextButton(enabled = ready, onClick = { editorText = canvas!!.title; dialog = "rename"; panel = "" }) { Text("重命名") }
-                            TextButton(enabled = ready && !canvas?.nodes.isNullOrEmpty(), onClick = { model.submit(canvasRequest("arrange")); panel = "" }) { Text("自动排列") }
+                            TextButton(enabled = ready && model.reply?.canUndo == true, onClick = { model.submit(canvasRequest("undo")); panel = "" }) { Text("撤销上一步") }
+                            TextButton(enabled = ready && model.reply?.canRedo == true, onClick = { model.submit(canvasRequest("redo")); panel = "" }) { Text("重做") }
+                            TextButton(enabled = ready && canvas?.nodes?.any { it.kind == "client" } == true, onClick = { model.submit(canvasRequest("arrangeTree")); panel = "" }) { Text("按推荐层级排列客户") }
+                            TextButton(enabled = ready && !canvas?.nodes.isNullOrEmpty(), onClick = { model.submit(canvasRequest("arrange")); panel = "" }) { Text("按网格排列所有卡片") }
+                            HorizontalDivider()
+                            TextButton(enabled = ready, onClick = { editorText = canvas!!.title; dialog = "rename"; panel = "" }) { Text("重命名画布") }
+                            TextButton(enabled = ready, onClick = { panel = "boards" }) { Text("管理全部画布") }
                             TextButton(enabled = ready, onClick = { dialog = "deleteCanvas"; panel = "" }) { Text("删除画布", color = MaterialTheme.colorScheme.error) }
                             Text("保存在当前账户的本机工作区", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -742,26 +755,55 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
         }
     }
     if (dialog.isNotBlank()) {
-        val textEdit = dialog in listOf("add","edit","new","rename")
-        val titleEdit = dialog in listOf("new","rename")
-        AlertDialog(onDismissRequest = { if (!model.busy) dialog = "" }, title = { Text(when(dialog) { "add" -> "新便签"; "edit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名"; "deleteNode" -> "删除卡片？"; else -> "删除画布？" }) },
+        val noteDialog = dialog == "noteAdd" || dialog == "noteEdit"
+        val clientDialog = dialog == "clientAdd" || dialog == "clientEdit"
+        val titleEdit = dialog == "new" || dialog == "rename"
+        val isEditing = dialog == "clientEdit" || dialog == "noteEdit"
+        AlertDialog(
+            onDismissRequest = { if (!model.busy) dialog = "" },
+            shape = RoundedCornerShape(24.dp),
+            title = { Text(when(dialog) { "clientAdd" -> "新建客户"; "clientEdit" -> "编辑客户"; "noteAdd" -> "新建便签"; "noteEdit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名画布"; "deleteNode" -> "移除这张卡片？"; else -> "删除整张画布？" }) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (textEdit) OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(if(titleEdit) 80 else 8000) }, label = { Text(if(titleEdit) "画布名称" else "内容") }, modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp), singleLine = titleEdit, minLines = if(titleEdit) 1 else 4)
-                    else Text(if(dialog == "deleteNode") "同时移除相连的线。可以撤销。" else "删除整张画布和其中的卡片，原知识页面会保留。")
-                    if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (clientDialog) {
+                        OutlinedTextField(value = clientName, onValueChange = { clientName = it.take(80) }, label = { Text("客户姓名") }, placeholder = { Text("例如：张先生") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        if (dialog == "clientAdd" && clientParentId != null) Text("会自动连接到所选推荐人", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        OutlinedTextField(value = clientDetails, onValueChange = { clientDetails = it.take(4000) }, label = { Text("客户资料与跟进记录") }, minLines = 3, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp))
+                    } else if (noteDialog) {
+                        OutlinedTextField(value = editorTitle, onValueChange = { editorTitle = it.take(80) }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(7800) }, label = { Text("内容") }, minLines = 3, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp))
+                    } else if (titleEdit) {
+                        OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(80) }, label = { Text("画布名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    } else Text(if(dialog == "deleteNode") "移除后相关连线也会消失，可以撤销。原知识页面不会删除。" else "删除此画布和卡片？其他画布及知识页面不受影响。")
+                    if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-            }, confirmButton = { TextButton(enabled = ready && (dialog != "new" || model.canCreateBoard) && (!titleEdit || editorText.isNotBlank()), onClick = {
-                val request = when(dialog) {
-                    "add" -> canvasRequest("addNote") { put("text",editorText) }
-                    "edit" -> canvasRequest("text") { put("id",selectedNode?.id.orEmpty()); put("text",editorText) }
-                    "new" -> canvasRequest("new") { put("title",editorText.trim()) }
-                    "rename" -> canvasRequest("rename") { put("title",editorText) }
-                    "deleteNode" -> canvasRequest("removeNode") { put("id",selectedNode?.id.orEmpty()) }
-                    else -> canvasRequest("deleteCanvas")
-                }
-                if(model.submit(request)) dialogRequestPending = true
-            }) { Text(if(dialog == "new") "创建" else if(textEdit) "保存" else "删除") } }, dismissButton = { TextButton(enabled = !model.busy, onClick = { dialog = "" }) { Text("取消") } })
+            },
+            confirmButton = {
+                val allowed = ready && (dialog != "new" || model.canCreateBoard) &&
+                    (!titleEdit || editorText.isNotBlank()) &&
+                    (!clientDialog || clientName.isNotBlank()) &&
+                    (!noteDialog || editorTitle.isNotBlank())
+                TextButton(enabled = allowed, onClick = {
+                    val request = when(dialog) {
+                        "clientAdd" -> canvasRequest("addClient") {
+                            put("name",clientName.trim()); put("details",clientDetails)
+                            clientParentId?.let { put("parentId",it) }
+                        }
+                        "clientEdit" -> canvasRequest("updateClient") {
+                            put("id",editTargetId.orEmpty()); put("name",clientName.trim()); put("details",clientDetails)
+                        }
+                        "noteAdd" -> canvasRequest("addNote") { put("text",editorTitle.trim()+"\n"+editorText) }
+                        "noteEdit" -> canvasRequest("text") { put("id",editTargetId.orEmpty()); put("text",editorTitle.trim()+"\n"+editorText) }
+                        "new" -> canvasRequest("new") { put("title",editorText.trim()) }
+                        "rename" -> canvasRequest("rename") { put("title",editorText.trim()) }
+                        "deleteNode" -> canvasRequest("removeNode") { put("id",editTargetId.orEmpty()) }
+                        else -> canvasRequest("deleteCanvas")
+                    }
+                    if (model.submit(request)) dialogRequestPending = true
+                }) { Text(if (clientDialog || noteDialog || titleEdit) { if (isEditing || dialog == "rename") "保存" else "创建" } else "删除") }
+            },
+            dismissButton = { TextButton(enabled = !model.busy, onClick = { dialog = "" }) { Text("取消") } }
+        )
     }
 }
 
