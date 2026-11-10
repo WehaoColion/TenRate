@@ -473,3 +473,59 @@ fn placement_respects_mixed_sizes_and_world_boundaries() {
     assert!(coordinate(edge.x) && coordinate(edge.y));
     assert!(coordinate(edge.x + edge.width) && coordinate(edge.y + edge.height));
 }
+
+#[test]
+fn customer_cards_keep_name_and_details_after_reopen_and_edit() {
+    let mut fixture = Fixture::new();
+    let opened = fixture.open("customer-card");
+    let created = apply(&opened, json!({"op":"addClient","name":"张先生","details":"待跟进：写作需求"}));
+    assert_eq!(created["canvas"]["nodes"][0]["kind"], "client");
+    assert_eq!(created["canvas"]["nodes"][0]["text"], "张先生\n待跟进：写作需求");
+    let first_id = id(&created, 0).to_owned();
+    let updated = apply(&created, json!({"op":"updateClient","id":first_id,"name":"张女士","details":"已有需求"}));
+    let reopened = fixture.open("customer-card");
+    assert_eq!(reopened["canvas"]["nodes"], updated["canvas"]["nodes"]);
+    assert_eq!(reopened["canvas"]["nodes"][0]["text"], "张女士\n已有需求");
+    let bad = command(updated["token"].as_str().unwrap(), &json!({"op":"updateClient","id":first_id,"name":"","details":"x"}).to_string());
+    assert!(bad.is_err());
+    assert_eq!(fixture.open("customer-card")["canvas"], updated["canvas"]);
+}
+
+#[test]
+fn adding_referred_customer_is_atomic_and_rejects_ambiguous_parents() {
+    let mut fixture = Fixture::new();
+    let opened = fixture.open("customer-referral");
+    let a = apply(&opened, json!({"op":"addClient","name":"甲","details":""}));
+    let root = id(&a, 0).to_owned();
+    let b = apply(&a, json!({"op":"addClient","name":"乙","details":"","parentId":root}));
+    assert_eq!(b["canvas"]["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(b["canvas"]["edges"].as_array().unwrap().len(), 1);
+    assert_eq!(b["canvas"]["edges"][0]["from"], root);
+    assert_eq!(b["canvas"]["edges"][0]["to"], id(&b, 1));
+    let child = id(&b, 1).to_owned();
+    let c = apply(&b, json!({"op":"addClient","name":"丙","details":""}));
+    let other = id(&c, 2).to_owned();
+    assert!(command(c["token"].as_str().unwrap(), &json!({"op":"connect","from":other,"to":child}).to_string()).is_err());
+    assert!(command(c["token"].as_str().unwrap(), &json!({"op":"connect","from":child,"to":root}).to_string()).is_err());
+    assert!(command(c["token"].as_str().unwrap(), &json!({"op":"addClient","name":"丁","details":"","parentId":"missing"}).to_string()).is_err());
+    let reopened = fixture.open("customer-referral");
+    assert_eq!(reopened["canvas"], c["canvas"]);
+}
+
+#[test]
+fn customer_tree_arrangement_respects_lineage_and_undo() {
+    let mut fixture = Fixture::new();
+    let opened = fixture.open("customer-layout");
+    let a = apply(&opened, json!({"op":"addClient","name":"一级","details":""}));
+    let root = id(&a, 0).to_owned();
+    let b = apply(&a, json!({"op":"addClient","name":"二级","details":"","parentId":root}));
+    let c = apply(&b, json!({"op":"addClient","name":"三级","details":"","parentId":id(&b, 1)}));
+    let before = c["canvas"].clone();
+    let laid_out = apply(&c, json!({"op":"arrangeTree"}));
+    let nodes = laid_out["canvas"]["nodes"].as_array().unwrap();
+    assert_eq!(nodes[0]["x"], 0.0);
+    assert_eq!(nodes[1]["x"], 316.0);
+    assert_eq!(nodes[2]["x"], 632.0);
+    let undone = apply(&laid_out, json!({"op":"undo"}));
+    assert_eq!(undone["canvas"], before);
+}
