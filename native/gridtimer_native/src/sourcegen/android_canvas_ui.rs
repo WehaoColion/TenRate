@@ -609,6 +609,58 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             dialogRequestPending = false
         }
     }
+    if (showLibrary) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text("返回") }
+                Text("我的画布", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Text("${boards.size} 张", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            }
+            Text("为想法建立联系", style = MaterialTheme.typography.titleMedium)
+            Text("自由创建画布，或从模板开始。模板不会限制卡片与连线。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(onClick = { createCanvas("blank") }, enabled = model.canCreateBoard, modifier = Modifier.weight(1f).height(124.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                        Text("＋", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("空白画布", style = MaterialTheme.typography.titleMedium)
+                        Text("便签 · 页面 · 自由连线", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Surface(onClick = { createCanvas("customer_network") }, enabled = model.canCreateBoard, modifier = Modifier.weight(1f).height(124.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                        Text("◎", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("客户网络模板", style = MaterialTheme.typography.titleMedium)
+                        Text("推荐关系 · 共享基础工具", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("全部画布", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                if (modelState.busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+            if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(boards, key = { it.id }) { board ->
+                    Surface(onClick = {
+                        if (board.id == canvas?.id) showLibrary = false
+                        else if (model.submit(canvasRequest("switch") { put("id",board.id) })) showLibrary = false
+                    }, enabled = ready, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("▤", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(board.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                                Text(if (board.template == "customer_network") "客户网络模板" else "通用画布", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    } else {
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = back, enabled = !showBusy) { Text("返回") }
@@ -625,7 +677,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(enabled = ready, onClick = { panel = "addActions" }, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("＋ 添加") }
             OutlinedButton(enabled = ready, onClick = { panel = "nodes" }, shape = RoundedCornerShape(14.dp)) { Text("查找") }
-            OutlinedButton(enabled = ready, onClick = { panel = "more" }, shape = RoundedCornerShape(14.dp)) { Text("布局") }
+            TextButton(enabled = ready && model.reply?.canUndo == true, onClick = { model.submit(canvasRequest("undo")) }, modifier = Modifier.width(42.dp).semantics { contentDescription = "撤销" }) { Text("↶", style = MaterialTheme.typography.titleMedium) }
+            TextButton(enabled = ready && model.reply?.canRedo == true, onClick = { model.submit(canvasRequest("redo")) }, modifier = Modifier.width(42.dp).semantics { contentDescription = "重做" }) { Text("↷", style = MaterialTheme.typography.titleMedium) }
         }
         if (model.error.isNotBlank()) Text(model.error, Modifier.padding(horizontal = 14.dp, vertical = 5.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         if (connectFrom != null) Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
@@ -647,8 +700,9 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             Text(if (model.busy) "正在载入画布" else "画布未能载入", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+    }
 
-    if (selectedNode != null) {
+    if (!showLibrary && selectedNode != null) {
         ModalBottomSheet(onDismissRequest = { selected = null }, dragHandle = { BottomSheetDefaults.DragHandle() }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(cardTitle(selectedNode), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -711,13 +765,19 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                     when (panel) {
                         "addActions" -> {
                             Text("选择一种卡片类型", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建客户", Modifier.fillMaxWidth()) }
-                            HorizontalDivider()
+                            if (canvas?.template == "customer_network") {
+                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建客户", Modifier.fillMaxWidth()) }
+                                HorizontalDivider()
+                            }
                             TextButton(onClick = { panel = ""; editorTitle = ""; editorText = ""; dialog = "noteAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建便签", Modifier.fillMaxWidth()) }
                             HorizontalDivider()
                             TextButton(onClick = { panel = ""; editorText = ""; pageCreationError = ""; dialog = "pageAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建知识页面", Modifier.fillMaxWidth()) }
                             HorizontalDivider()
                             TextButton(onClick = { panel = "pages" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 引用已有知识页面", Modifier.fillMaxWidth()) }
+                            if (canvas?.template != "customer_network") {
+                                HorizontalDivider()
+                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 更多卡片：客户", Modifier.fillMaxWidth()) }
+                            }
                         }
                         "boards" -> {
                             Button(enabled = model.canCreateBoard, onClick = { panel = ""; showLibrary = true }, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建画布") }
@@ -727,6 +787,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                                 TextButton(enabled = ready && !current, modifier = Modifier.fillMaxWidth(), onClick = { model.submit(canvasRequest("switch") { put("id",board.id) }) }) {
                                     Text(board.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     if (current) Text("当前", Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.primary)
+                                    else if (board.template == "customer_network") Text("模板", Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             } }
                         }
