@@ -1,3 +1,4 @@
+// v2.23.4.15 - Improve customer network canvas layout, cards and navigation.
 // v2.23.4.14 - Compact startup loading shell and verify Android emulator UX.
 // v2.23.4.13 - Persist Android knowledge exclusions for legal risk scans.
 // v2.23.4.12 - Verify stable canvas gestures on actual Android simulator.
@@ -179,8 +180,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22344
-        versionName '2.23.4.14'
+        versionCode 22345
+        versionName '2.23.4.15'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
