@@ -89,13 +89,15 @@ fn enter_name(name:&str)->Result<(),String>{
     let field=elements(&tree).into_iter().find(|n|n.class.ends_with("EditText")&&n.bounds[2]-n.bounds[0]>50).ok_or("Customer name input missing")?;
     tap(&field)?;
     run(&["shell","input","text",name])?;
-    run(&["shell","input","keyevent","4"])?;
+    // On English-language emulators Material3 translates confirm actions to Create.
+    // Do not send KEYCODE_BACK here: on some Android IME states it dismisses
+    // the entire AlertDialog instead of only hiding the soft keyboard.
     thread::sleep(Duration::from_millis(400));
     Ok(())
 }
 fn create_client(name:&str)->Result<(),String>{
     enter_name(name)?;
-    if !tap_text(&["创建"])?{return Err("Customer create button missing".into());}
+    if !tap_text(&["创建","Create"])?{return Err("Customer create button missing: inspect the post-input accessibility hierarchy".into());}
     thread::sleep(Duration::from_secs(1));
     Ok(())
 }
