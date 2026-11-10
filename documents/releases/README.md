@@ -1,3 +1,4 @@
+Android 2.23.4.14 启动加载过渡界面精简候选：[说明](android/release_notes_v2.23.4.14.md)。
 Android 2.23.4.10 计时首页顶部信息区视觉调整候选：[说明](android/release_notes_v2.23.4.10.md)。
 Android 2.23.4.9 计时首页顶部单行布局候选：[说明](android/release_notes_v2.23.4.9.md)。
 Android 2.23.4.8 知识画布卡片排布、总览与系统备份候选：[说明](android/release_notes_v2.23.4.8.md)。

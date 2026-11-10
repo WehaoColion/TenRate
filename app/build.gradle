@@ -1,3 +1,4 @@
+// v2.23.4.14 - Compact startup loading shell and verify Android emulator UX.
 // v2.23.4.13 - Persist Android knowledge exclusions for legal risk scans.
 // v2.23.4.12 - Verify stable canvas gestures on actual Android simulator.
 // v2.23.4.10 - Refine compact home header spacing and actions.
@@ -178,8 +179,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22343
-        versionName '2.23.4.13'
+        versionCode 22344
+        versionName '2.23.4.14'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

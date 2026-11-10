@@ -182,6 +182,12 @@ pub const RESOURCES: &[(&str, &str)] = &[
 // Additions for literal UI text seen in English-language Android simulator audits.
 // Preserve reviewed translations in the bundled catalog; only fill missing keys.
 const EN_UI_GAP_TRANSLATIONS: &[(&str, &str)] = &[
+    ("十倍率", "tenfold"),
+    ("工作台", "Workspace"),
+    ("计时", "Timer"),
+    ("知识", "Knowledge"),
+    ("正在恢复本机数据", "Restoring local data"),
+    ("数据准备完成后自动进入工作台", "The workspace will open when your data is ready"),
     ("常用位置", "Frequent destinations"),
     ("最近使用", "Recently used"),
     ("全部位置", "All destinations"),

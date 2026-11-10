@@ -1,3 +1,4 @@
+// v2.23.4.14 - Simplify the transient Android startup shell.
 // v2.23.4.13 - Keep Android legal AI knowledge exclusions encrypted and durable.
 // v2.23.4.12 - Stabilize Android canvas gestures and add emulator verification.
 // v2.23.4.10 - Balance header actions, rounded corners and content-sized badges.
@@ -60,7 +61,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.13";
+pub const LATEST_VERSION: &str = "2.23.4.14";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -90,6 +91,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.14",
+        updatedAt = "2026-11-10 18:25",
+        summary = "启动加载界面精简，恢复状态更清楚",
+        sections = listOf(
+            AndroidUpdateSection("启动界面", listOf(
+                "移除占满剩余高度的灰色加载卡片，改为紧凑的恢复状态区域，保留尽早显示工作台轮廓的启动方式。",
+                "临时导航不再伪装成可点击功能，第四个栏目名称统一为风控。"
+            )),
+            AndroidUpdateSection("兼容与保护", listOf(
+                "加载完成后自动显示真正的工作台，新增英文系统下的启动文案。",
+                "初始化前不启用计时与数据写入，不修改本地数据验证、恢复或同步机制。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.13",
         updatedAt = "2026-11-08 01:16",
