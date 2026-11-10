@@ -123,12 +123,13 @@ impl Canvas {
                 || !(120.0..=720.0).contains(&node.height)
                 || node.text.chars().count() > 8000
                 || !["blue", "green", "amber", "pink", "purple"].contains(&node.color.as_str())
-                || !["page", "note"].contains(&node.kind.as_str())
+                || !["page", "note", "client"].contains(&node.kind.as_str())
                 || (node.kind == "page"
                     && (!valid_id(&node.page_id)
                         || !pages.insert(node.page_id.as_str())
                         || !node.text.is_empty()))
-                || (node.kind == "note" && !node.page_id.is_empty())
+                || ((node.kind == "note" || node.kind == "client") && !node.page_id.is_empty())
+                || (node.kind == "client" && (node.text.lines().next().unwrap_or("").trim().is_empty() || node.text.lines().next().unwrap_or("").chars().count() > 80))
             {
                 return Err("卡片数据无效".into());
             }
@@ -523,11 +524,27 @@ fn free_card_position(canvas: &Canvas, width: f32, height: f32) -> Result<(f32, 
 fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
     match text(request, "op")? {
         "rename" => canvas.title = text(request, "title")?.trim().into(),
-        "addNote" | "addPage" => {
+        "addNote" | "addPage" | "addClient" => {
             if canvas.nodes.len() >= MAX_NODES {
                 return Err("当前画布已达到 1000 张卡片".into());
             }
             let page = text(request, "op")? == "addPage";
+            let client = text(request, "op")? == "addClient";
+            let parent = if client { request.get("parentId").and_then(Value::as_str).unwrap_or("") } else { "" };
+            if !parent.is_empty() {
+                if !canvas.nodes.iter().any(|n| n.id == parent && n.kind == "client") {
+                    return Err("请选择有效的推荐人".into());
+                }
+                if canvas.edges.len() >= MAX_EDGES { return Err("当前画布已达到 4000 条连线".into()); }
+            }
+            let value = if client {
+                let name = text(request, "name")?.trim();
+                let details = text(request, "details")?.trim();
+                if name.is_empty() || name.chars().count() > 80 || details.chars().count() > 4000 {
+                    return Err("客户姓名或备注不符合要求".into());
+                }
+                format!("{name}\n{details}")
+            } else if page { String::new() } else { text(request, "text")?.into() };
             let page_id = if page { text(request, "pageId")? } else { "" };
             if page
                 && canvas
@@ -540,21 +557,21 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             let (x, y) = free_card_position(canvas, 256.0, 168.0)?;
             canvas.nodes.push(Node {
                 id: identifier(),
-                kind: if page { "page" } else { "note" }.into(),
+                kind: if page { "page" } else if client { "client" } else { "note" }.into(),
                 page_id: page_id.into(),
-                text: if page {
-                    String::new()
-                } else {
-                    text(request, "text")?.into()
-                },
+                text: value,
                 x,
                 y,
                 width: 256.0,
                 height: 168.0,
                 color: "blue".into(),
             });
+            if !parent.is_empty() {
+                let to = canvas.nodes.last().expect("new client").id.clone();
+                canvas.edges.push(Edge { id: identifier(), from: parent.into(), to });
+            }
         }
-        "move" | "resize" | "text" | "color" => {
+        "move" | "resize" | "text" | "color" | "updateClient" => {
             let node = canvas
                 .nodes
                 .iter_mut()
@@ -570,6 +587,14 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                     node.height = number(request, "height")?;
                 }
                 "text" if node.kind == "note" => node.text = text(request, "text")?.into(),
+                "updateClient" if node.kind == "client" => {
+                    let name = text(request, "name")?.trim();
+                    let details = text(request, "details")?.trim();
+                    if name.is_empty() || name.chars().count() > 80 || details.chars().count() > 4000 {
+                        return Err("客户姓名或备注不符合要求".into());
+                    }
+                    node.text = format!("{name}\n{details}");
+                }
                 "color" => node.color = text(request, "color")?.into(),
                 _ => return Err("页面卡片正文不能在画布中修改".into()),
             }
@@ -588,6 +613,21 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             }
             if canvas.edges.iter().any(|e| e.from == from && e.to == to) {
                 return Err("这两张卡片已经连接".into());
+            }
+            let from_client = canvas.nodes.iter().any(|n| n.id == from && n.kind == "client");
+            let to_client = canvas.nodes.iter().any(|n| n.id == to && n.kind == "client");
+            if from_client && to_client {
+                if canvas.edges.iter().any(|e| e.to == to && canvas.nodes.iter().any(|n| n.id == e.from && n.kind == "client")) {
+                    return Err("客户已绑定其他推荐人，请先核对关系".into());
+                }
+                let mut cursor = from;
+                let mut checked = HashSet::new();
+                while checked.insert(cursor.to_owned()) {
+                    if cursor == to { return Err("推荐关系不能形成循环".into()); }
+                    if let Some(edge) = canvas.edges.iter().find(|e| e.to == cursor && canvas.nodes.iter().any(|n| n.id == e.from && n.kind == "client")) {
+                        cursor = &edge.from;
+                    } else { break; }
+                }
             }
             canvas.edges.push(Edge {
                 id: identifier(),
@@ -627,6 +667,38 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                     .ok_or("卡片不存在")?;
                 node.x = number(request, "x")?;
                 node.y = number(request, "y")?;
+            }
+        }
+        "arrangeTree" => {
+            let clients = canvas.nodes.iter().filter(|n| n.kind == "client").map(|n| n.id.clone()).collect::<HashSet<_>>();
+            let mut children: HashMap<String, Vec<String>> = HashMap::new();
+            let mut has_parent = HashSet::new();
+            for edge in canvas.edges.iter() {
+                if clients.contains(&edge.from) && clients.contains(&edge.to) {
+                    children.entry(edge.from.clone()).or_default().push(edge.to.clone());
+                    has_parent.insert(edge.to.clone());
+                }
+            }
+            let mut queue = VecDeque::new();
+            for node in canvas.nodes.iter().filter(|n| n.kind == "client" && !has_parent.contains(&n.id)) {
+                queue.push_back((node.id.clone(), 0usize));
+            }
+            let mut levels = HashMap::new();
+            let mut layer_counts: HashMap<usize, usize> = HashMap::new();
+            while let Some((id, depth)) = queue.pop_front() {
+                if levels.contains_key(&id) { continue; }
+                let row = layer_counts.entry(depth).or_default();
+                levels.insert(id.clone(), (depth, *row));
+                *row += 1;
+                if let Some(next) = children.get(&id) {
+                    for child in next { queue.push_back((child.clone(), depth + 1)); }
+                }
+            }
+            for node in canvas.nodes.iter_mut().filter(|n| n.kind == "client") {
+                if let Some((depth, row)) = levels.get(&node.id) {
+                    node.x = (*depth as f32 * 316.0).min(250_000.0);
+                    node.y = (*row as f32 * 210.0).min(250_000.0);
+                }
             }
         }
         "arrange" => {
