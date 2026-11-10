@@ -331,9 +331,9 @@ private object DeviceCanvasBackend : CanvasBackend {
 }
 
 @Serializable internal data class CanvasNode(val id: String, val kind: String, val pageId: String, val text: String, val x: Float, val y: Float, val width: Float, val height: Float, val color: String)
-@Serializable internal data class CanvasEdge(val id: String, val from: String, val to: String)
-@Serializable internal data class CanvasBoard(val id: String, val title: String, val centerX: Float, val centerY: Float, val zoom: Float, val nodes: List<CanvasNode>, val edges: List<CanvasEdge>)
-@Serializable internal data class CanvasSummary(val id: String, val title: String)
+@Serializable internal data class CanvasEdge(val id: String, val from: String, val to: String, val relation: String? = null)
+@Serializable internal data class CanvasBoard(val id: String, val title: String, val centerX: Float, val centerY: Float, val zoom: Float, val nodes: List<CanvasNode>, val edges: List<CanvasEdge>, val template: String = "blank")
+@Serializable internal data class CanvasSummary(val id: String, val title: String, val template: String = "blank")
 @Serializable internal data class CanvasViewReply(val id: String, val centerX: Float, val centerY: Float, val zoom: Float)
 @Serializable internal data class CanvasReply(val ok: Boolean, val token: String = "", val revision: Long = 0, val canvas: CanvasBoard? = null, val canvases: List<CanvasSummary> = emptyList(), val canUndo: Boolean = false, val canRedo: Boolean = false, val warning: String = "", val error: String = "", val viewport: CanvasViewReply? = null, val baseRevision: Long? = null)
 internal data class CanvasWorkerState(val reply: CanvasReply? = null, val busy: Boolean = true, val error: String = "", val serial: Int = 0, val lastSucceeded: Boolean = false, val quietGesture: Boolean = false)
@@ -542,6 +542,11 @@ internal class CanvasEdgeRenderer(nodes: List<CanvasNode>, edges: List<CanvasEdg
     }
 }
 
+private fun canvasIsReferral(edge: CanvasEdge, nodes: List<CanvasNode>): Boolean =
+    edge.relation == "referral" || (edge.relation == null &&
+        nodes.any { it.id == edge.from && it.kind == "client" } &&
+        nodes.any { it.id == edge.to && it.kind == "client" })
+
 private fun canvasTint(name: String): Color = when (name) {
     "green" -> Color(0xFF2D806B); "amber" -> Color(0xFFA06A24); "pink" -> Color(0xFFAF5279); "purple" -> Color(0xFF7C61A8); else -> Color(0xFF457DA3)
 }
@@ -556,6 +561,9 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     DisposableEffect(model) { onDispose { model.close() } }
     var selected by remember(workspace) { mutableStateOf<String?>(null) }
     var connectFrom by remember(workspace) { mutableStateOf<String?>(null) }
+    var connectRelation by remember(workspace) { mutableStateOf("link") }
+    var showLibrary by remember(workspace) { mutableStateOf(true) }
+    var pendingTemplate by remember(workspace) { mutableStateOf("blank") }
     var panel by remember(workspace) { mutableStateOf("") }
     var dialog by remember(workspace) { mutableStateOf("") }
     var editorText by remember(workspace) { mutableStateOf("") }
@@ -582,13 +590,16 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     val showBusy = modelState.busy && !modelState.quietGesture
     val ready = !showBusy && canvas != null
     val boards = modelState.reply?.canvases.orEmpty()
-    val createCanvas = {
+    val createCanvas: (String) -> Unit = { template ->
         val titles = boards.map { it.title }.toSet()
-        var number = boards.size + 1
-        while ("画布 $number" in titles) number++
-        editorText = "画布 $number"; panel = ""; dialog = "new"
+        val prefix = if (template == "customer_network") "客户网络" else "画布"
+        var title = prefix
+        var number = 2
+        while (title in titles) { title = "$prefix $number"; number++ }
+        pendingTemplate = template
+        editorText = title; panel = ""; dialog = "new"
     }
-    val back = { if (!showBusy) { if (connectFrom != null) connectFrom = null else onBack() } }
+    val back = { if (!showBusy) { if (connectFrom != null) connectFrom = null else if (!showLibrary) { showLibrary = true; selected = null; panel = "" } else onBack() } }
     BackHandler { back() }
     LaunchedEffect(canvas?.id) { selected = null; connectFrom = null; panel = ""; dialog = "" }
     LaunchedEffect(model.serial) {
@@ -619,7 +630,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
         if (model.error.isNotBlank()) Text(model.error, Modifier.padding(horizontal = 14.dp, vertical = 5.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         if (connectFrom != null) Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
             Row(Modifier.padding(start = 12.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("选择下级客户以建立推荐关系", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                Text(if (connectRelation == "referral") "请选择被推荐的客户" else "请选择另一张卡片以建立普通连线", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { connectFrom = null }) { Text("取消") }
             }
         }
@@ -628,10 +639,10 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 onSelect = { selected = it }, onConnect = { target ->
                     val from = connectFrom
                     if (from != null && from != target) {
-                        if (model.submit(canvasRequest("connect") { put("from",from); put("to",target) })) connectFrom = null
+                        if (model.submit(canvasRequest("connect") { put("from",from); put("to",target); put("relation",connectRelation) })) connectFrom = null
                     }
                 },
-                onAddFirst = { clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" })
+                onAddFirst = { if (canvas.template == "customer_network") { clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" } else { editorTitle = ""; editorText = ""; dialog = "noteAdd" } })
         } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(if (model.busy) "正在载入画布" else "画布未能载入", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -642,8 +653,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(cardTitle(selectedNode), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val kindLabel = when (selectedNode.kind) { "client" -> "客户"; "page" -> "知识页面"; else -> "便签" }
-                val children = canvas?.let { board -> board.edges.count { edge -> edge.from == selectedNode.id && board.nodes.any { node -> node.id == edge.to && node.kind == "client" } } } ?: 0
-                val parent = canvas?.let { board -> board.edges.firstOrNull { edge -> edge.to == selectedNode.id && board.nodes.any { node -> node.id == edge.from && node.kind == "client" } } }
+                val children = canvas?.let { board -> board.edges.count { edge -> edge.from == selectedNode.id && canvasIsReferral(edge, board.nodes) } } ?: 0
+                val parent = canvas?.let { board -> board.edges.firstOrNull { edge -> edge.to == selectedNode.id && canvasIsReferral(edge, board.nodes) } }
                 val parentNode = canvas?.nodes?.firstOrNull { it.id == parent?.from }
                 Text(if (selectedNode.kind == "client") "客户 · 直接推荐 ${children} 人" else kindLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 if (parentNode != null) Text("推荐人：${cardTitle(parentNode)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
@@ -669,13 +680,21 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                                 dialog = "noteEdit"
                             }
                             selected = null
-                        }, enabled = ready) { Text("编辑资料") }
+                        }, enabled = ready) { Text(if (selectedNode.kind == "client") "编辑客户" else "编辑便签") }
                     }
-                    if (selectedNode.kind == "client") OutlinedButton(onClick = { connectFrom = selectedNode.id; selected = null }, enabled = ready) { Text("连接下级") }
+                    OutlinedButton(onClick = { connectRelation = "link"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.size ?: 0) > 1) { Text("自由连线") }
+                    if (selectedNode.kind == "client") OutlinedButton(onClick = { connectRelation = "referral"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.count { it.kind == "client" } ?: 0) > 1) { Text("绑定推荐") }
+                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "edges"; selected = null }, enabled = ready) { Text("管理连线") }
+                    OutlinedButton(onClick = {
+                        val isLarge = selectedNode.width >= 350f
+                        val targetWidth = if (isLarge) { if (selectedNode.kind == "client") 192f else 256f } else 384f
+                        val targetHeight = if (isLarge) { if (selectedNode.kind == "client") 132f else 168f } else 252f
+                        if (model.submit(canvasRequest("resize") { put("id",selectedNode.id); put("width",targetWidth); put("height",targetHeight) })) selected = null
+                    }, enabled = ready) { Text(if (selectedNode.width >= 350f) "缩小卡片" else "放大卡片") }
                     OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "colors"; selected = null }, enabled = ready) { Text("颜色") }
                     OutlinedButton(onClick = { editTargetId = selectedNode.id; dialog = "deleteNode"; selected = null }, enabled = ready) { Text("移除卡片") }
                 }
-                Text("仅移除卡片不会删除原知识页面。客户关系数据保存在当前画布。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                Text("卡片位置、大小和连线可以自由编辑。移除卡片不会删除原知识页面。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -701,7 +720,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             TextButton(onClick = { panel = "pages" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 引用已有知识页面", Modifier.fillMaxWidth()) }
                         }
                         "boards" -> {
-                            Button(enabled = model.canCreateBoard, onClick = createCanvas, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建画布") }
+                            Button(enabled = model.canCreateBoard, onClick = { panel = ""; showLibrary = true }, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建画布") }
                             if (boards.size >= 128) Text("已达 128 张画布上限", Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
                             LazyColumn(modifier = Modifier.weight(1f, fill = false)) { items(boards, key = { it.id }) { board ->
                                 val current = board.id == canvas?.id
@@ -732,13 +751,13 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             } }
                         }
                         "edges" -> {
-                            val edges = canvas?.edges.orEmpty().filter { it.from == selected || it.to == selected }
+                            val edges = canvas?.edges.orEmpty().filter { it.from == editTargetId || it.to == editTargetId }
                             val nodeIndex = remember(canvas?.nodes) { canvas?.nodes?.associateBy { it.id }.orEmpty() }
                             if (edges.isEmpty()) Text("这张卡片还没有连线", Modifier.padding(vertical = 20.dp))
                             LazyColumn { items(edges, key = { it.id }) { edge ->
-                                val other = nodeIndex[if(edge.from == selected) edge.to else edge.from]
+                                val other = nodeIndex[if(edge.from == editTargetId) edge.to else edge.from]
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text((if(edge.from == selected) "→ " else "← ") + (other?.let(cardTitle) ?: "未知卡片"), Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text((if(edge.from == editTargetId) "→ " else "← ") + (other?.let(cardTitle) ?: "未知卡片") + (if (canvasIsReferral(edge, canvas?.nodes.orEmpty())) " · 推荐" else " · 普通"), Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     TextButton(enabled = ready, onClick = { model.submit(canvasRequest("removeEdge") { put("id",edge.id) }) }) { Text("移除") }
                                 }
                             } }
@@ -812,12 +831,12 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         }
                         "noteAdd" -> canvasRequest("addNote") { put("text",editorTitle.trim()+"\n"+editorText) }
                         "noteEdit" -> canvasRequest("text") { put("id",editTargetId.orEmpty()); put("text",editorTitle.trim()+"\n"+editorText) }
-                        "new" -> canvasRequest("new") { put("title",editorText.trim()) }
+                        "new" -> canvasRequest("new") { put("title",editorText.trim()); put("template",pendingTemplate) }
                         "rename" -> canvasRequest("rename") { put("title",editorText.trim()) }
                         "deleteNode" -> canvasRequest("removeNode") { put("id",editTargetId.orEmpty()) }
                         else -> canvasRequest("deleteCanvas")
                     }
-                    if (model.submit(request)) dialogRequestPending = true
+                    if (model.submit(request)) { dialogRequestPending = true; if (dialog == "new") showLibrary = false }
                     }
                 }) { Text(if (clientDialog || noteDialog || titleEdit) { if (isEditing || dialog == "rename") "保存" else "创建" } else "删除") }
             },
@@ -998,9 +1017,9 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             native.restore()
         }
         if(canvas.nodes.isEmpty()) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("把客户关系整理成网络", style = MaterialTheme.typography.titleMedium)
-            Text("创建客户后，点击卡片即可查看资料与推荐关系", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FilledTonalButton(onClick = onAddFirst, enabled = visualReady) { Text("＋ 添加第一个客户") }
+            Text(if (canvas.template == "customer_network") "整理客户和推荐关系" else "从一个想法开始", style = MaterialTheme.typography.titleMedium)
+            Text(if (canvas.template == "customer_network") "客户、便签和知识页面都可以自由连接" else "添加便签或页面，自由组织卡片与连线", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = onAddFirst, enabled = visualReady) { Text(if (canvas.template == "customer_network") "＋ 添加第一个客户" else "＋ 添加第一张便签") }
         }
         Row(Modifier.align(Alignment.BottomEnd).padding(10.dp).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), RoundedCornerShape(18.dp)), verticalAlignment=Alignment.CenterVertically) {
             TextButton(enabled=visualReady, onClick={
