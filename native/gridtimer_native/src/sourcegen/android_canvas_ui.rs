@@ -252,7 +252,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     let replacements = [
         ("    var knowledgeDialogVisible by remember { mutableStateOf(false) }", "    var knowledgeDialogVisible by remember { mutableStateOf(false) }\n    val canvasWorkspaceKey = LocalNoteMediaWorkspaceKey.current\n    var canvasVisible by rememberSaveable(canvasWorkspaceKey) { mutableStateOf(false) }"),
         ("    LaunchedEffect(selectedNoteId != null) {\n        onEditingStateChange(selectedNoteId != null)\n    }", "    LaunchedEffect(selectedNoteId != null, canvasVisible) {\n        onEditingStateChange(selectedNoteId != null || canvasVisible)\n    }"),
-        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            })\n        } else AnimatedContent"),
+        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            }, onCreatePage = { title, onCreated ->\n                val newPageId = java.util.UUID.randomUUID().toString()\n                viewModel.knowledgeContainerAction(\"create_page\", newPageId, \"\", title, canvasWorkspaceKey) { ok, _ ->\n                    if (viewModel.currentWorkspaceKey() == canvasWorkspaceKey) onCreated(if (ok) newPageId else null)\n                }\n            })\n        } else AnimatedContent"),
         ("                    onSelectFolder = viewModel::selectNoteFolder,", "                    onOpenCanvas = { canvasVisible = true },\n                    onSelectFolder = viewModel::selectNoteFolder,"),
         ("    onAskKnowledge: () -> Unit,\n    onSelectFolder:", "    onAskKnowledge: () -> Unit,\n    onOpenCanvas: () -> Unit,\n    onSelectFolder:"),
         ("        if (!trashMode) {\n            item {\n                KnowledgeAskEntryCard(", "        if (!trashMode) {\n            item {\n                androidx.compose.material3.OutlinedButton(onClick = onOpenCanvas, modifier = Modifier.fillMaxWidth()) {\n                    Text(\"画布\", style = MaterialTheme.typography.titleMedium)\n                    Spacer(Modifier.weight(1f))\n                    Text(\"卡片与连线\")\n                }\n            }\n            item {\n                KnowledgeAskEntryCard("),
@@ -548,7 +548,7 @@ private fun canvasTint(name: String): Color = when (name) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit) {
+internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit, onCreatePage: (String, (String?) -> Unit) -> Unit) {
     val context = LocalContext.current
     val workspace = LocalNoteMediaWorkspaceKey.current
     val model = remember(workspace) { KnowledgeCanvasModel(context.filesDir.absolutePath, workspace) }
@@ -564,6 +564,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     var clientDetails by remember(workspace) { mutableStateOf("") }
     var clientParentId by remember(workspace) { mutableStateOf<String?>(null) }
     var editTargetId by remember(workspace) { mutableStateOf<String?>(null) }
+    var creatingPage by remember(workspace) { mutableStateOf(false) }
+    var pageCreationError by remember(workspace) { mutableStateOf("") }
     var dialogRequestPending by remember(workspace) { mutableStateOf(false) }
     val canvas = modelState.reply?.canvas
     val pages = remember(appData.notes) { appData.notes.filter { it.kind == NoteEntryKind.DOCUMENT && !it.isDeleted() }.associateBy { it.id } }
@@ -693,6 +695,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             HorizontalDivider()
                             TextButton(onClick = { panel = ""; editorTitle = ""; editorText = ""; dialog = "noteAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建便签", Modifier.fillMaxWidth()) }
                             HorizontalDivider()
+                            TextButton(onClick = { panel = ""; editorText = ""; pageCreationError = ""; dialog = "pageAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建知识页面", Modifier.fillMaxWidth()) }
+                            HorizontalDivider()
                             TextButton(onClick = { panel = "pages" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 引用已有知识页面", Modifier.fillMaxWidth()) }
                         }
                         "boards" -> {
@@ -758,12 +762,12 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     if (dialog.isNotBlank()) {
         val noteDialog = dialog == "noteAdd" || dialog == "noteEdit"
         val clientDialog = dialog == "clientAdd" || dialog == "clientEdit"
-        val titleEdit = dialog == "new" || dialog == "rename"
+        val titleEdit = dialog == "new" || dialog == "rename" || dialog == "pageAdd"
         val isEditing = dialog == "clientEdit" || dialog == "noteEdit"
         AlertDialog(
             onDismissRequest = { if (!model.busy) dialog = "" },
             shape = RoundedCornerShape(24.dp),
-            title = { Text(when(dialog) { "clientAdd" -> "新建客户"; "clientEdit" -> "编辑客户"; "noteAdd" -> "新建便签"; "noteEdit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名画布"; "deleteNode" -> "移除这张卡片？"; else -> "删除整张画布？" }) },
+            title = { Text(when(dialog) { "clientAdd" -> "新建客户"; "clientEdit" -> "编辑客户"; "noteAdd" -> "新建便签"; "noteEdit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名画布"; "pageAdd" -> "新建知识页面"; "deleteNode" -> "移除这张卡片？"; else -> "删除整张画布？" }) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (clientDialog) {
@@ -774,17 +778,27 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         OutlinedTextField(value = editorTitle, onValueChange = { editorTitle = it.take(80) }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(7800) }, label = { Text("内容") }, minLines = 3, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp))
                     } else if (titleEdit) {
-                        OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(80) }, label = { Text("画布名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(80) }, label = { Text(if (dialog == "pageAdd") "页面标题" else "画布名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     } else Text(if(dialog == "deleteNode") "移除后相关连线也会消失，可以撤销。原知识页面不会删除。" else "删除此画布和卡片？其他画布及知识页面不受影响。")
                     if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    if (pageCreationError.isNotBlank() && dialog == "pageAdd") Text(pageCreationError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
-                val allowed = ready && (dialog != "new" || model.canCreateBoard) &&
+                val allowed = ready && !creatingPage && (dialog != "new" || model.canCreateBoard) &&
                     (!titleEdit || editorText.isNotBlank()) &&
                     (!clientDialog || clientName.isNotBlank()) &&
                     (!noteDialog || editorTitle.isNotBlank())
                 TextButton(enabled = allowed, onClick = {
+                    if (dialog == "pageAdd") {
+                        creatingPage = true; pageCreationError = ""
+                        onCreatePage(editorText.trim()) { createdId ->
+                            creatingPage = false
+                            if (createdId == null) pageCreationError = "页面创建失败，请重新尝试"
+                            else if (model.submit(canvasRequest("addPage") { put("pageId", createdId) })) dialogRequestPending = true
+                            else pageCreationError = "页面已创建，请在引用已有页面中加入"
+                        }
+                    } else {
                     val request = when(dialog) {
                         "clientAdd" -> canvasRequest("addClient") {
                             put("name",clientName.trim()); put("details",clientDetails)
@@ -801,9 +815,10 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         else -> canvasRequest("deleteCanvas")
                     }
                     if (model.submit(request)) dialogRequestPending = true
+                    }
                 }) { Text(if (clientDialog || noteDialog || titleEdit) { if (isEditing || dialog == "rename") "保存" else "创建" } else "删除") }
             },
-            dismissButton = { TextButton(enabled = !model.busy, onClick = { dialog = "" }) { Text("取消") } }
+            dismissButton = { TextButton(enabled = !model.busy && !creatingPage, onClick = { dialog = "" }) { Text("取消") } }
         )
     }
 }
