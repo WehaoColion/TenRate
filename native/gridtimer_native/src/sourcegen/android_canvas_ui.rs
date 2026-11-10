@@ -546,6 +546,7 @@ private fun canvasTint(name: String): Color = when (name) {
     "green" -> Color(0xFF2D806B); "amber" -> Color(0xFFA06A24); "pink" -> Color(0xFFAF5279); "purple" -> Color(0xFF7C61A8); else -> Color(0xFF457DA3)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit) {
     val context = LocalContext.current
@@ -638,8 +639,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(cardTitle(selectedNode), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val kindLabel = when (selectedNode.kind) { "client" -> "客户"; "page" -> "知识页面"; else -> "便签" }
-                val children = canvas?.edges?.count { it.from == selectedNode.id && canvas.nodes.any { n -> n.id == it.to && n.kind == "client" } } ?: 0
-                val parent = canvas?.edges?.firstOrNull { it.to == selectedNode.id && canvas.nodes.any { n -> n.id == it.from && n.kind == "client" } }
+                val children = canvas?.let { board -> board.edges.count { edge -> edge.from == selectedNode.id && board.nodes.any { node -> node.id == edge.to && node.kind == "client" } } } ?: 0
+                val parent = canvas?.let { board -> board.edges.firstOrNull { edge -> edge.to == selectedNode.id && board.nodes.any { node -> node.id == edge.from && node.kind == "client" } } }
                 val parentNode = canvas?.nodes?.firstOrNull { it.id == parent?.from }
                 Text(if (selectedNode.kind == "client") "客户 · 直接推荐 ${children} 人" else kindLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 if (parentNode != null) Text("推荐人：${cardTitle(parentNode)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
