@@ -189,9 +189,20 @@ class KnowledgeCanvasTest {
     @Test fun zoomLimitsCannotProduceInvalidCoordinates() {
         val size=IntSize(600,800); val view=CanvasViewport(0f,0f,1f)
         assertEquals(2.5f,view.transformed(Offset.Zero,Offset.Zero,100f,size,2f).zoom,0f)
-        assertEquals(0.35f,view.transformed(Offset.Zero,Offset.Zero,0.01f,size,2f).zoom,0f)
+        assertEquals(0.01f,view.transformed(Offset.Zero,Offset.Zero,0.001f,size,2f).zoom,0f)
         assertEquals(view,view.transformed(Offset.Zero,Offset.Zero,Float.NaN,size,2f))
         assertEquals(view,view.transformed(Offset.Zero,Offset(Float.NaN,0f),1f,size,2f))
+    }
+    @Test fun overviewZoomGridStaysBoundedAndSmallMarkersRemainSelectable() {
+        val step = canvasGridStep(0.01f, 3f)
+        assertTrue(step * 0.01f * 3f >= 20f)
+        assertTrue(step * 0.01f * 3f < 40f)
+        assertEquals(32f, canvasGridStep(1f,3f), 0f)
+        val nodes = listOf(node("a",0f,0f),node("b",4000f,0f))
+        val center = Offset(128f,84f)
+        assertEquals("a",canvasHitAtZoom(nodes,center + Offset(650f,0f),0.01f)?.id)
+        assertNull(canvasHitAtZoom(nodes,center + Offset(2500f,2500f),0.01f))
+        assertNull(canvasHitAtZoom(nodes,center + Offset(650f,0f),1f))
     }
     @Test fun selectionChoosesTheTopCardAndRejectsEmptySpace() {
         val nodes=listOf(node("back"),node("front",20f,20f))
@@ -346,7 +357,7 @@ internal fun mergeCanvasReply(previous: CanvasReply?, next: CanvasReply): Canvas
     val view = next.viewport ?: return null
     val board = previous?.canvas ?: return null
     if (view.id != board.id || next.baseRevision != previous.revision) return null
-    if (!view.centerX.isFinite() || !view.centerY.isFinite() || abs(view.centerX) > 250000f || abs(view.centerY) > 250000f || !view.zoom.isFinite() || view.zoom !in 0.35f..2.5f) return null
+    if (!view.centerX.isFinite() || !view.centerY.isFinite() || abs(view.centerX) > 250000f || abs(view.centerY) > 250000f || !view.zoom.isFinite() || view.zoom !in 0.01f..2.5f) return null
     return next.copy(canvas = board.copy(centerX = view.centerX, centerY = view.centerY, zoom = view.zoom), viewport = null, baseRevision = null)
 }
 
@@ -434,7 +445,7 @@ internal data class CanvasViewport(val x: Float, val y: Float, val zoom: Float) 
     fun transformed(centroid: Offset, pan: Offset, factor: Float, size: IntSize, density: Float): CanvasViewport {
         if (!factor.isFinite() || factor <= 0 || !pan.x.isFinite() || !pan.y.isFinite()) return this
         val anchor = world(centroid, size, density)
-        val nextZoom = (zoom * factor).coerceIn(0.35f, 2.5f)
+        val nextZoom = (zoom * factor).coerceIn(0.01f, 2.5f)
         val next = anchor - (centroid + pan - Offset(size.width / 2f, size.height / 2f)) / (nextZoom * density)
         return CanvasViewport(next.x.coerceIn(-250000f, 250000f), next.y.coerceIn(-250000f, 250000f), nextZoom)
     }
@@ -443,12 +454,31 @@ internal data class CanvasViewport(val x: Float, val y: Float, val zoom: Float) 
 internal fun canvasHit(nodes: List<CanvasNode>, point: Offset): CanvasNode? = nodes.asReversed().firstOrNull {
     point.x >= it.x && point.x <= it.x + it.width && point.y >= it.y && point.y <= it.y + it.height
 }
+// Keep the dot grid below a few thousand operations even at a one-percent world view.
+internal fun canvasGridStep(zoom: Float, density: Float): Float {
+    if (!zoom.isFinite() || zoom <= 0f || !density.isFinite() || density <= 0f) return 64f
+    var step = if (zoom < 0.6f) 64f else 32f
+    while (step * zoom * density < 20f) step *= 2f
+    return step
+}
+
+internal fun canvasHitAtZoom(nodes: List<CanvasNode>, point: Offset, zoom: Float): CanvasNode? {
+    canvasHit(nodes, point)?.let { return it }
+    if (zoom >= 0.1f || !zoom.isFinite() || zoom <= 0f) return null
+    val maxDistanceSquared = (12f / zoom).let { it * it }
+    return nodes.asReversed().asSequence().map { node ->
+        val deltaX = node.x + node.width / 2f - point.x
+        val deltaY = node.y + node.height / 2f - point.y
+        node to (deltaX * deltaX + deltaY * deltaY)
+    }.filter { it.second <= maxDistanceSquared }.minByOrNull { it.second }?.first
+}
+
 internal fun canvasVisible(node: CanvasNode, viewport: CanvasViewport, size: IntSize, density: Float): Boolean {
     val halfWidth = size.width / (2f * viewport.zoom * density)
     val halfHeight = size.height / (2f * viewport.zoom * density)
     return node.x + node.width >= viewport.x - halfWidth && node.x <= viewport.x + halfWidth && node.y + node.height >= viewport.y - halfHeight && node.y <= viewport.y + halfHeight
 }
-// View-only overview: never persist a zoom smaller than the legacy 0.35 limit.
+// The overview can fit graphs even wider than the editable one-percent view.
 internal data class CanvasOverviewTransform(val originX: Float, val originY: Float, val scale: Float) {
     fun screenAt(world: Offset): Offset = Offset(originX + world.x * scale, originY + world.y * scale)
     fun worldAt(screen: Offset): Offset = Offset((screen.x - originX) / scale, (screen.y - originY) / scale)
@@ -961,6 +991,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
     val zoomPercent = remember(canvas.id) { derivedStateOf { (viewport.zoom * 100).roundToInt() } }
     var dragPreview by remember(canvas.id) { mutableStateOf<CanvasDragPreview?>(null) }
     var overview by remember(canvas.id) { mutableStateOf(false) }
+    var zoomPicker by remember(canvas.id) { mutableStateOf(false) }
+    var pickerZoom by remember(canvas.id) { mutableFloatStateOf(canvas.zoom) }
     var committedViewport by remember(canvas.id) { mutableStateOf(CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)) }
     val currentCanvas by rememberUpdatedState(canvas)
     val currentConnect by rememberUpdatedState(connectFrom)
@@ -1001,7 +1033,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     val first = awaitFirstDown(requireUnconsumed = false)
                     if (model.busy) { do { val event = awaitPointerEvent() } while(event.changes.any { it.pressed }); return@awaitEachGesture }
                     val start = first.position
-                    val hit = canvasHit(currentCanvas.nodes,viewport.world(start,size,density))
+                    val hit = canvasHitAtZoom(currentCanvas.nodes,viewport.world(start,size,density),viewport.zoom)
                     val startView = viewport
                     var moving = false
                     var transformed = false
@@ -1044,7 +1076,16 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                             })
                             if (!accepted) dragPreview = null
                         }
-                    } else if(hit != null && currentConnect != null) currentOnConnect(hit.id) else currentSelect(hit?.id)
+                    } else if(hit != null && currentConnect != null) currentOnConnect(hit.id) else {
+                        // A dot in the bird's-eye view is an entry point to the full card.
+                        if (hit != null && viewport.zoom < 0.1f) {
+                            val focused = CanvasViewport(hit.x + hit.width / 2f, hit.y + hit.height / 2f, 1f)
+                            if (model.submit(canvasRequest("gesture") {
+                                put("viewX", focused.x); put("viewY", focused.y); put("zoom", focused.zoom)
+                            })) viewport = focused
+                        }
+                        currentSelect(hit?.id)
+                    }
                 }
             }) {
             val native = drawContext.canvas.nativeCanvas
@@ -1057,10 +1098,10 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             native.translate(this.size.width/2-viewport.x*scale,this.size.height/2-viewport.y*scale)
             native.scale(scale,scale)
             paint.color = lineColor; paint.style = Paint.Style.FILL
-            val step = if(viewport.zoom < 0.6f) 64f else 32f
+            val step = canvasGridStep(viewport.zoom, density)
             var gx = floor(left/step)*step
             while(gx <= right) { var gy=floor(top/step)*step; while(gy<=bottom) { native.drawCircle(gx,gy,0.8f/viewport.zoom,paint); gy+=step }; gx+=step }
-            paint.color = lineColor; paint.strokeWidth = 2f / viewport.zoom
+            paint.color = lineColor; paint.strokeWidth = (if (viewport.zoom < 0.1f) 0.65f else 2f) / viewport.zoom
             // Include half the stroke outside the viewport when culling edge geometry.
             val strokeMargin = 1f / viewport.zoom
             val preview = dragPreview
@@ -1072,6 +1113,20 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                 val nodeX = preview?.takeIf { it.id == node.id }?.x ?: node.x
                 val nodeY = preview?.takeIf { it.id == node.id }?.y ?: node.y
                 if(nodeX + node.width >= left && nodeX <= right && nodeY + node.height >= top && nodeY <= bottom) {
+                    if (viewport.zoom < 0.1f) {
+                        val cx = nodeX + node.width / 2f
+                        val cy = nodeY + node.height / 2f
+                        val radius = max(min(node.width, node.height) / 2f, 2.7f / viewport.zoom)
+                        paint.style=Paint.Style.FILL
+                        paint.color=canvasTint(node.color).toArgb()
+                        native.drawCircle(cx, cy, radius, paint)
+                        if (node.id == selected || node.id == connectFrom) {
+                            paint.style=Paint.Style.STROKE
+                            paint.strokeWidth=1.3f / viewport.zoom
+                            paint.color=primary
+                            native.drawCircle(cx, cy, radius + 2f / viewport.zoom, paint)
+                        }
+                    } else {
                     paint.style=Paint.Style.FILL; paint.color=surface
                     native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
                     paint.style=Paint.Style.STROKE; paint.strokeWidth=if(node.id==selected || node.id==connectFrom) 2.5f/viewport.zoom else 1f/viewport.zoom
@@ -1080,15 +1135,16 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     paint.style=Paint.Style.FILL; paint.color=if (node.kind == "client") canvasTint("green").toArgb() else canvasTint(node.color).toArgb()
                     native.drawRoundRect(nodeX+12,nodeY+13,nodeX+16,nodeY+35,2f,2f,paint)
                     val textLayout = if(node.kind=="page") {
-                        val label = textCache.label(pages[node.pageId]); textCache.layout(node,label.first,label.second,textColor)
+                        val label = textCache.label(pages[node.pageId]); textCache.layout(node,label.first,if (viewport.zoom < 0.35f) "" else label.second,textColor)
                     } else {
                         val title = node.text.substringBefore("\n").ifBlank { if (node.kind == "client") "未命名客户" else "空白便签" }
                         val body = node.text.substringAfter("\n", "").trim()
-                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,if (node.kind == "client") "点击查看客户资料" else body,textColor)
+                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,if (viewport.zoom < 0.35f) "" else if (node.kind == "client") "点击查看客户资料" else body,textColor)
                     }
                     native.save(); native.clipRect(nodeX+20,nodeY+12,nodeX+node.width-10,nodeY+node.height-10); native.translate(nodeX+24,nodeY+14)
                     textLayout.draw(native)
                     native.restore()
+                    }
                 }
             }
             native.restore()
@@ -1104,12 +1160,44 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                 if(nodes.isNotEmpty() && size.width>0 && size.height>0) {
                     val left=nodes.minOf { it.x }; val right=nodes.maxOf { it.x+it.width }; val top=nodes.minOf { it.y }; val bottom=nodes.maxOf { it.y+it.height }
                     val fitZoom=min(size.width/density/(right-left+64),size.height/density/(bottom-top+64))
-                    if (fitZoom < 0.35f) overview = true
-                    else model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",fitZoom.coerceAtMost(2.5f)) })
+                    if (fitZoom < 0.01f) overview = true
+                    else model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",fitZoom.coerceIn(0.01f,2.5f)) })
                 } else model.submit(canvasRequest("view") { put("x",0f); put("y",0f); put("zoom",1f) })
             }) { Text("适应") }
             TextButton(enabled=visualReady && canvas.nodes.isNotEmpty(), onClick={ overview = true }) { Text("总览") }
-            TextButton(enabled=visualReady, onClick={ model.submit(canvasRequest("view") { put("x",viewport.x); put("y",viewport.y); put("zoom",1f) }) }) { CanvasZoomLabel(zoomPercent) }
+            TextButton(enabled=visualReady, onClick={ pickerZoom = viewport.zoom; zoomPicker = true }) { CanvasZoomLabel(zoomPercent) }
+        }
+    }
+
+    if (zoomPicker) {
+        Dialog(onDismissRequest = { zoomPicker = false }) {
+            Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("缩放比例", style = MaterialTheme.typography.titleLarge)
+                    Text("${(pickerZoom * 100).roundToInt()}%", style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                    Slider(value = pickerZoom, onValueChange = {
+                        pickerZoom = ((it * 100).roundToInt().coerceIn(1, 250)) / 100f
+                    }, valueRange = 0.01f..2.5f)
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        listOf(1,10,35,100,250).forEach { preset ->
+                            TextButton(onClick = { pickerZoom = preset / 100f }) { Text("${preset}%") }
+                        }
+                    }
+                    Text("1% 查看全局，放大后编辑卡片。点击缩小节点可自动定位。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { zoomPicker = false }) { Text("取消") }
+                        Button(enabled = visualReady, onClick = {
+                            if (model.submit(canvasRequest("view") {
+                                put("x", viewport.x); put("y", viewport.y); put("zoom", pickerZoom)
+                            })) zoomPicker = false
+                        }) { Text("应用") }
+                    }
+                }
+            }
         }
     }
 
