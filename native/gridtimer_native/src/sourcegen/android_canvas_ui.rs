@@ -506,51 +506,73 @@ internal fun canvasPageLabel(note: NoteEntry?): Pair<String, String> = when {
 
 // A committed graph owns one bounded buffer. Pan/zoom only select cached lines;
 // a drag recomputes incident edges in scratch space without changing the cache.
+// Referral trees use short orthogonal connectors. Unrelated freehand links
+// retain the original straight-line endpoints and arrow direction.
 internal class CanvasEdgeRenderer(nodes: List<CanvasNode>, edges: List<CanvasEdge>) {
-    private class Endpoints(val from: CanvasNode, val to: CanvasNode)
+    private class Endpoints(val from: CanvasNode, val to: CanvasNode, val referral: Boolean)
     private val links: List<Endpoints>
     private val lines: FloatArray
     private val bounds: FloatArray
-    private val scratchLines = FloatArray(12)
+    private val scratchLines = FloatArray(20)
     private val scratchBounds = FloatArray(4)
     val visibleLines: FloatArray
     init {
         val index = nodes.associateBy { it.id }
         links = edges.mapNotNull { edge ->
             val from = index[edge.from]; val to = index[edge.to]
-            if (from == null || to == null) null else Endpoints(from, to)
+            if (from == null || to == null) null
+            else Endpoints(from, to, edge.relation == "referral" ||
+                (edge.relation == null && from.kind == "client" && to.kind == "client"))
         }
-        lines = FloatArray(links.size * 12)
+        lines = FloatArray(links.size * 20)
         bounds = FloatArray(links.size * 4)
         visibleLines = FloatArray(lines.size)
-        links.forEachIndexed { i, edge -> geometry(edge, null, Offset.Zero, lines, i * 12, bounds, i * 4) }
+        links.forEachIndexed { i, edge -> geometry(edge, null, Offset.Zero, lines, i * 20, bounds, i * 4) }
     }
     private fun geometry(edge: Endpoints, dragged: String?, delta: Offset, out: FloatArray, offset: Int, box: FloatArray, boxOffset: Int) {
         val from = edge.from; val to = edge.to
-        val ax = from.x + from.width / 2 + if (from.id == dragged) delta.x else 0f
-        val ay = from.y + from.height / 2 + if (from.id == dragged) delta.y else 0f
-        val bx = to.x + to.width / 2 + if (to.id == dragged) delta.x else 0f
-        val by = to.y + to.height / 2 + if (to.id == dragged) delta.y else 0f
+        val fx = from.x + if (from.id == dragged) delta.x else 0f
+        val fy = from.y + if (from.id == dragged) delta.y else 0f
+        val tx = to.x + if (to.id == dragged) delta.x else 0f
+        val ty = to.y + if (to.id == dragged) delta.y else 0f
+        val ax = fx + from.width / 2f; val ay = fy + from.height / 2f
+        val bx = tx + to.width / 2f; val by = ty + to.height / 2f
         val dx = bx - ax; val dy = by - ay; val length = sqrt(dx * dx + dy * dy)
         if (length <= 0.01f) {
             box[boxOffset] = Float.POSITIVE_INFINITY; box[boxOffset + 1] = Float.POSITIVE_INFINITY
             box[boxOffset + 2] = Float.NEGATIVE_INFINITY; box[boxOffset + 3] = Float.NEGATIVE_INFINITY
             return
         }
-        val start = min(if (abs(dx) > 0.001f) from.width / 2 / abs(dx) else Float.MAX_VALUE, if (abs(dy) > 0.001f) from.height / 2 / abs(dy) else Float.MAX_VALUE)
-        val end = min(if (abs(dx) > 0.001f) to.width / 2 / abs(dx) else Float.MAX_VALUE, if (abs(dy) > 0.001f) to.height / 2 / abs(dy) else Float.MAX_VALUE)
-        val ex = bx - dx * end; val ey = by - dy * end
-        val ux = dx / length; val uy = dy / length
-        out[offset] = ax + dx * start; out[offset + 1] = ay + dy * start
-        out[offset + 2] = ex; out[offset + 3] = ey
-        out[offset + 4] = ex; out[offset + 5] = ey
-        out[offset + 6] = ex - ux * 10 - uy * 5; out[offset + 7] = ey - uy * 10 + ux * 5
-        out[offset + 8] = ex; out[offset + 9] = ey
-        out[offset + 10] = ex - ux * 10 + uy * 5; out[offset + 11] = ey - uy * 10 - ux * 5
+        fun line(n: Int, x1: Float, y1: Float, x2: Float, y2: Float) {
+            val k = offset + 4 * n
+            out[k] = x1; out[k + 1] = y1; out[k + 2] = x2; out[k + 3] = y2
+        }
+        if (edge.referral && ty >= fy + from.height + 20f) {
+            val midY = fy + from.height + (ty - fy - from.height) / 2f
+            val startY = fy + from.height
+            line(0, ax, startY, ax, midY)
+            line(1, ax, midY, bx, midY)
+            line(2, bx, midY, bx, ty)
+            line(3, bx, ty, bx - 5f, ty - 10f)
+            line(4, bx, ty, bx + 5f, ty - 10f)
+        } else {
+            val start = min(if (abs(dx) > 0.001f) from.width / 2f / abs(dx) else Float.MAX_VALUE,
+                if (abs(dy) > 0.001f) from.height / 2f / abs(dy) else Float.MAX_VALUE)
+            val end = min(if (abs(dx) > 0.001f) to.width / 2f / abs(dx) else Float.MAX_VALUE,
+                if (abs(dy) > 0.001f) to.height / 2f / abs(dy) else Float.MAX_VALUE)
+            val sx = ax + dx * start; val sy = ay + dy * start
+            val ex = bx - dx * end; val ey = by - dy * end
+            val ux = dx / length; val uy = dy / length
+            line(0, sx, sy, ex, ey)
+            line(1, ex, ey, ex, ey)
+            line(2, ex, ey, ex, ey)
+            line(3, ex, ey, ex - ux * 10f - uy * 5f, ey - uy * 10f + ux * 5f)
+            line(4, ex, ey, ex - ux * 10f + uy * 5f, ey - uy * 10f - ux * 5f)
+        }
         var left = Float.POSITIVE_INFINITY; var top = Float.POSITIVE_INFINITY
         var right = Float.NEGATIVE_INFINITY; var bottom = Float.NEGATIVE_INFINITY
         var i = offset
-        while (i < offset + 12) {
+        while (i < offset + 20) {
             left = min(left, out[i]); right = max(right, out[i])
             top = min(top, out[i + 1]); bottom = max(bottom, out[i + 1]); i += 2
         }
@@ -560,13 +582,13 @@ internal class CanvasEdgeRenderer(nodes: List<CanvasNode>, edges: List<CanvasEdg
     fun updateVisible(left: Float, top: Float, right: Float, bottom: Float, dragged: String?, delta: Offset): Int {
         var used = 0
         links.forEachIndexed { i, edge ->
-            var source = lines; var offset = i * 12; var box = bounds; var boxOffset = i * 4
+            var source = lines; var offset = i * 20; var box = bounds; var boxOffset = i * 4
             if (dragged != null && (edge.from.id == dragged || edge.to.id == dragged)) {
                 geometry(edge, dragged, delta, scratchLines, 0, scratchBounds, 0)
                 source = scratchLines; offset = 0; box = scratchBounds; boxOffset = 0
             }
             if (box[boxOffset] <= right && box[boxOffset + 2] >= left && box[boxOffset + 1] <= bottom && box[boxOffset + 3] >= top) {
-                source.copyInto(visibleLines, used, offset, offset + 12); used += 12
+                source.copyInto(visibleLines, used, offset, offset + 20); used += 20
             }
         }
         return used
