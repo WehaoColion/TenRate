@@ -1079,12 +1079,13 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     } else if(hit != null && currentConnect != null) currentOnConnect(hit.id) else {
                         // A dot in the bird's-eye view is an entry point to the full card.
                         if (hit != null && viewport.zoom < 0.1f) {
+                            // First tap focuses a tiny marker without opening a sheet during
+                            // the pending viewport write. A second tap opens its details.
                             val focused = CanvasViewport(hit.x + hit.width / 2f, hit.y + hit.height / 2f, 1f)
                             if (model.submit(canvasRequest("gesture") {
                                 put("viewX", focused.x); put("viewY", focused.y); put("zoom", focused.zoom)
                             })) viewport = focused
-                        }
-                        currentSelect(hit?.id)
+                        } else currentSelect(hit?.id)
                     }
                 }
             }) {
