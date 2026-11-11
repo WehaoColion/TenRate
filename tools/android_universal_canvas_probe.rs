@@ -159,6 +159,20 @@ fn main(){
         must_tap(&["＋ 新建便签"])?;
         create_card("IdeaB")?;
         count("2 张卡片")?;take("06_generic_two_notes",&out);
+        must_tap(&["100%"])?;
+        if seek(&["缩放比例"])?.is_none(){return Err("Zoom picker did not open".into());}
+        must_tap(&["1%"])?;
+        must_tap(&["应用"])?;
+        count("1%")?;
+        take("06a_generic_one_percent",&out);
+        // The first generic note is centered by the Rust layout engine.
+        // A tap on its tiny bird's-eye marker must zoom back to 100%.
+        open_center_card()?;
+        if seek(&["编辑便签"])?.is_none(){return Err("One-percent marker did not open card details".into());}
+        close_overlay()?;
+        count("100%")?;
+        take("06b_generic_marker_focus",&out);
+        report.push_str("PASS: 1% zoom picker, visible low-zoom markers and tap-to-focus restored 100%.\\n\\n");
         report.push_str("PASS: existing blank canvas remained generic; note creation and both page actions are present.\n\n");
         open_center_card()?;
         take("07_generic_card_detail",&out);
