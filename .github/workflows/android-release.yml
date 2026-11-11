@@ -196,6 +196,8 @@ jobs:
       actions: read
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1'
       - uses: actions/download-artifact@v4
         with:
           name: tenrate-signed-apk
@@ -244,8 +246,6 @@ jobs:
           gh('release', 'edit', tag, '--prerelease')
           print(f'Published {apk.name} SHA256 {digest}')
           PY
-      - uses: actions/checkout@v4
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1'
       - name: Publish immutable commit-scoped candidate with Rust
         if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1'
         shell: bash
