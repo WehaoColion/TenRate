@@ -42,6 +42,11 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
     }
     replace_once(
         &mut source,
+        "@OptIn(ExperimentalLayoutApi::class)\n@Composable\ninternal fun NoteEditorContent(",
+        "@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)\n@Composable\ninternal fun NoteEditorContent(",
+    )?;
+    replace_once(
+        &mut source,
         "    var editorViewportHeightPx by remember(note.id, workspaceKey) { mutableStateOf(0) }",
         DRAG_STATE,
     )?;
