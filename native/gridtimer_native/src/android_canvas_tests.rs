@@ -541,9 +541,10 @@ fn customer_tree_arrangement_respects_lineage_and_undo() {
     let before = c["canvas"].clone();
     let laid_out = apply(&c, json!({"op":"arrangeTree"}));
     let nodes = laid_out["canvas"]["nodes"].as_array().unwrap();
-    assert_eq!(nodes[0]["x"], 0.0);
-    assert_eq!(nodes[1]["x"], 316.0);
-    assert_eq!(nodes[2]["x"], 632.0);
+    assert_eq!(nodes[0]["x"], nodes[1]["x"]);
+    assert_eq!(nodes[1]["x"], nodes[2]["x"]);
+    assert!(nodes[0]["y"].as_f64().unwrap() < nodes[1]["y"].as_f64().unwrap());
+    assert!(nodes[1]["y"].as_f64().unwrap() < nodes[2]["y"].as_f64().unwrap());
     let undone = apply(&laid_out, json!({"op":"undo"}));
     assert_eq!(undone["canvas"], before);
 }
@@ -598,9 +599,11 @@ fn unrestricted_visual_lines_are_independent_of_validated_referrals() {
     assert!(command(a["token"].as_str().unwrap(),
         &json!({"op":"connect","from":y,"to":x,"relation":"referral"}).to_string()).is_err());
     let arranged = apply(&a, json!({"op":"arrangeTree"}));
-    assert_eq!(arranged["canvas"]["nodes"][0]["x"], 0.0);
-    assert_eq!(arranged["canvas"]["nodes"][1]["x"], 316.0);
-    assert_eq!(arranged["canvas"]["nodes"][2]["x"], 0.0);
+    assert_eq!(arranged["canvas"]["nodes"][0]["x"], arranged["canvas"]["nodes"][1]["x"]);
+    assert!(arranged["canvas"]["nodes"][1]["y"].as_f64().unwrap() >
+        arranged["canvas"]["nodes"][0]["y"].as_f64().unwrap());
+    assert!(arranged["canvas"]["nodes"][2]["y"].as_f64().unwrap() >
+        arranged["canvas"]["nodes"][1]["y"].as_f64().unwrap());
     let undo = apply(&arranged, json!({"op":"undo"}));
     assert_eq!(undo["canvas"], a["canvas"]);
     let reopened = fixture.open("universal-links");
@@ -645,4 +648,49 @@ fn legacy_customer_connections_retain_referral_semantics() {
     assert!(edit(&mut canvas,
         &json!({"op":"connect","from":"c2","to":"c1","relation":"referral"})).is_err());
     canvas.validate().unwrap();
+}
+
+#[test]
+fn referral_forest_centers_parents_groups_networks_and_separates_singletons() {
+    let mut fixture = Fixture::new();
+    let mut state = fixture.open("compact-referral-forest");
+    state = apply(&state, json!({"op":"addClient","name":"上级甲","details":""}));
+    let root = id(&state, 0).to_owned();
+    state = apply(&state, json!({"op":"addClient","name":"下级甲","details":"","parentId":root}));
+    let first_child = id(&state, 1).to_owned();
+    state = apply(&state, json!({"op":"addClient","name":"下级乙","details":"","parentId":root}));
+    state = apply(&state, json!({"op":"addClient","name":"第三级","details":"","parentId":first_child}));
+    state = apply(&state, json!({"op":"addClient","name":"上级乙","details":""}));
+    let other_root = id(&state, 4).to_owned();
+    state = apply(&state, json!({"op":"addClient","name":"下级丙","details":"","parentId":other_root}));
+    state = apply(&state, json!({"op":"addClient","name":"无关系","details":""}));
+    state = apply(&state, json!({"op":"addNote","text":"普通便签不参与客户布局"}));
+    let old = state["canvas"].clone();
+    let moved = apply(&state, json!({"op":"arrangeTree"}));
+    let nodes = moved["canvas"]["nodes"].as_array().unwrap();
+    let n = |i: usize, key: &str| nodes[i][key].as_f64().unwrap();
+    assert_eq!(n(1,"y"), n(2,"y"), "direct referrals share a depth");
+    assert!(n(1,"x") < n(2,"x"), "siblings retain a predictable order");
+    assert!(n(0,"x") + n(0,"width") / 2.0 >
+        n(1,"x") + n(1,"width") / 2.0);
+    assert!(n(0,"x") + n(0,"width") / 2.0 <
+        n(2,"x") + n(2,"width") / 2.0);
+    assert!(n(3,"y") > n(1,"y"), "grandchildren are below their parent");
+    assert_eq!(n(4,"y"), n(0,"y"), "independent trees share the first row");
+    assert!(n(4,"x") > n(2,"x"), "independent trees do not interleave");
+    assert!(n(6,"y") > n(3,"y"), "singletons are separate from connected networks");
+    assert_eq!(nodes[7], old["nodes"][7], "ordinary note coordinates are preserved");
+    for (i, node) in nodes[..7].iter().enumerate() {
+        for (j, other) in nodes[..i].iter().enumerate() {
+            let overlap = n(i,"x") < n(j,"x") + n(j,"width") &&
+                n(i,"x") + n(i,"width") > n(j,"x") &&
+                n(i,"y") < n(j,"y") + n(j,"height") &&
+                n(i,"y") + n(i,"height") > n(j,"y");
+            assert!(!overlap, "clients {i} and {j} overlap: {node:?} {other:?}");
+        }
+    }
+    let again = apply(&moved, json!({"op":"arrangeTree"}));
+    assert_eq!(again["canvas"], moved["canvas"], "repeat arrangement must be stable");
+    let undone = apply(&again, json!({"op":"undo"}));
+    assert_eq!(undone["canvas"], old, "the single explicit action can be undone");
 }
