@@ -87,9 +87,6 @@ fn seek(labels:&[&str])->Result<Option<Node>,String> {
 fn tap_label(labels:&[&str])->Result<bool,String>{
     if let Some(n)=seek(labels)?{tap(&n)?;Ok(true)}else{Ok(false)}
 }
-fn must_tap(labels:&[&str])->Result<(),String>{
-    if tap_label(labels)?{Ok(())}else{Err(format!("Cannot find touch target {labels:?}"))}
-}
 fn clear_overlay()->Result<(),String>{
     for _ in 0..5{
         let ui=tree()?;
