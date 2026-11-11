@@ -174,7 +174,7 @@ fn main(){
         }
         take("06b_generic_marker_focus",&out);
         open_center_card()?;
-        if seek(&["编辑便签"])?.is_none() {
+        if seek(&["编辑便签","Edit note"])?.is_none() {
             take("06c_marker_details_failure",&out);
             return Err("Focused marker did not open note details".into());
         }
