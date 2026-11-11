@@ -122,7 +122,7 @@ impl Canvas {
             || !coordinate(self.center_x)
             || !coordinate(self.center_y)
             || !self.zoom.is_finite()
-            || !(0.35..=2.5).contains(&self.zoom)
+            || !(0.01..=2.5).contains(&self.zoom)
             || self.nodes.len() > MAX_NODES
             || self.edges.len() > MAX_EDGES
         {
