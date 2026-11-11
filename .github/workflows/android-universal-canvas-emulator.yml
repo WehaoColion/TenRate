@@ -2,7 +2,7 @@ name: Universal canvas Android emulator acceptance
 
 on:
   push:
-    branches: [feat/android-universal-canvas-entry-20261111]
+    branches: [feat/android-universal-canvas-entry-20261111, feat/android-canvas-zoom-1percent-20261111]
   workflow_dispatch:
 
 permissions:
@@ -14,6 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  watch:
+    name: Check signed build and emulator every 10 minutes until success
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    steps:
+      - name: Poll and exit automatically after success or failure
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 19); do
+            release="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=$GITHUB_REF_NAME&per_page=100" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha) | (.status + ":" + (.conclusion // ""))] | first // "missing"')"
+            emulator="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" | jq -r '[.jobs[] | select(.name == "API 35 ordinary canvas and customer template end-to-end") | (.status + ":" + (.conclusion // ""))] | first // "missing"')"
+            echo "Check $attempt: signed APK=$release, booted emulator=$emulator"
+            if [[ "$release" == completed:success && "$emulator" == completed:success ]]; then
+              echo "Both checks passed. Monitoring job terminates automatically." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            for status in "$release" "$emulator"; do
+              if [[ "$status" == completed:* && "$status" != completed:success ]]; then
+                echo "A required check failed: $status" >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
+            done
+            sleep 600
+          done
+          echo "Timed out without confirmed success" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
   emulator:
     name: API 35 ordinary canvas and customer template end-to-end
     runs-on: ubuntu-22.04
@@ -30,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 170); do
-            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-universal-canvas-entry-20261111&per_page=50")"
+            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=${GITHUB_REF_NAME}&per_page=50")"
             match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
             if test -n "$match"; then
               read -r run_id status conclusion <<< "$match"
@@ -48,8 +77,8 @@ jobs:
           test -s signed_build_run_id.txt
           gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
           cd signed_apk
-          test -f tenfold_v2.23.4.16.apk
-          tr -d '\r' < tenfold_v2.23.4.16.apk.sha256 | sha256sum -c -
+          test -f tenfold_v2.23.4.17.apk
+          tr -d '\r' < tenfold_v2.23.4.17.apk.sha256 | sha256sum -c -
       - name: Enable KVM
         shell: bash
         run: |
@@ -69,7 +98,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r signed_apk/tenfold_v2.23.4.16.apk
+            adb install -r signed_apk/tenfold_v2.23.4.17.apk
             ./android_universal_canvas_probe universal_canvas_evidence
       - name: Publish checked report
         if: always()
@@ -83,7 +112,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: universal-canvas-v2.23.4.16-evidence
+          name: universal-canvas-v2.23.4.17-evidence
           path: |
             universal_canvas_evidence/
             signed_build_run_id.txt
