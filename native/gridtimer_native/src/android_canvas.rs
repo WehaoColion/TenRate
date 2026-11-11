@@ -9,6 +9,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[path = "android_referral_layout.rs"]
+mod referral_layout;
+
 // Inactive boards and unchanged graph data are shared between transactions and
 // undo entries. Panning a large board does not clone all its cards or strings.
 #[derive(Clone, Debug)]
@@ -729,38 +732,7 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                 node.y = number(request, "y")?;
             }
         }
-        "arrangeTree" => {
-            let clients = canvas.nodes.iter().filter(|n| n.kind == "client").map(|n| n.id.as_str()).collect::<HashSet<_>>();
-            let mut children: HashMap<String, Vec<String>> = HashMap::new();
-            let mut has_parent = HashSet::new();
-            for edge in canvas.edges.iter() {
-                if is_referral(edge, &clients) {
-                    children.entry(edge.from.clone()).or_default().push(edge.to.clone());
-                    has_parent.insert(edge.to.clone());
-                }
-            }
-            let mut queue = VecDeque::new();
-            for node in canvas.nodes.iter().filter(|n| n.kind == "client" && !has_parent.contains(&n.id)) {
-                queue.push_back((node.id.clone(), 0usize));
-            }
-            let mut levels = HashMap::new();
-            let mut layer_counts: HashMap<usize, usize> = HashMap::new();
-            while let Some((id, depth)) = queue.pop_front() {
-                if levels.contains_key(&id) { continue; }
-                let row = layer_counts.entry(depth).or_default();
-                levels.insert(id.clone(), (depth, *row));
-                *row += 1;
-                if let Some(next) = children.get(&id) {
-                    for child in next { queue.push_back((child.clone(), depth + 1)); }
-                }
-            }
-            for node in canvas.nodes.iter_mut().filter(|n| n.kind == "client") {
-                if let Some((depth, row)) = levels.get(&node.id) {
-                    node.x = (*depth as f32 * 316.0).min(250_000.0);
-                    node.y = (*row as f32 * 210.0).min(250_000.0);
-                }
-            }
-        }
+        "arrangeTree" => referral_layout::arrange(canvas)?,
         "arrange" => {
             let columns = (canvas.nodes.len() as f32).sqrt().ceil().max(1.0) as usize;
             let width = canvas.nodes.iter().map(|n| n.width).fold(256.0, f32::max) + 36.0;
