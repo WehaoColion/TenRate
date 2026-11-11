@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+# API35 unattended feature-tour evidence. All PNGs come from adb screencap.
+import csv
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import time
+import unicodedata
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+PACKAGE = "com.ofairyo.gridtimer"
+ACTIVITY = "com.ofairyo.gridtimer/.MainActivity"
+ROOT = Path("feature_tour_evidence")
+IMAGES = ROOT / "截图"
+HIERARCHY = ROOT / "界面结构"
+MODULES = ["计时", "便签", "知识", "风控"]
+RISKY = ("删除", "清空", "注销", "退出登录", "重置", "永久", "付款", "支付", "充值", "结算",
+         "发送", "上传", "同步", "共享", "分享", "发布", "恢复出厂", "清除数据", "移除账号",
+         "移除所有", "解绑", "导出", "确认删除", "覆盖原文", "向", "购买",
+         "Reset", "Remove", "Delete", "Clear data", "Sign out", "Send", "Sync", "Upload", "Purchase")
+BORING = ("电池", "状态栏", "通知", "系统导航", "Accessibility", "Search by voice", "Pixel Launcher")
+rows = []
+errors = []
+num = 0
+seen = set()
+module_counts = {}
+MAX_PER_MODULE = 95
+MAX_TOTAL = 360
+MAX_DEPTH = 3
+DUMP = "/sdcard/feature_tour.xml"
+
+def adb(*args, timeout=22, binary=False):
+    p = subprocess.run(["adb", *map(str,args)], stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, timeout=timeout)
+    if p.returncode != 0:
+        raise RuntimeError("adb " + " ".join(map(str,args)) + ": " + p.stderr.decode("utf-8","replace")[:180])
+    return p.stdout if binary else p.stdout.decode("utf-8","replace")
+
+def safe_adb(*args, **kw):
+    try: return adb(*args, **kw)
+    except Exception as ex:
+        errors.append(str(ex))
+        return b"" if kw.get("binary") else ""
+
+def get_xml():
+    for attempt in range(3):
+        try:
+            adb("shell", "uiautomator", "dump", DUMP, timeout=24)
+            raw = adb("exec-out", "cat", DUMP, timeout=15)
+            if "<hierarchy" in raw: return raw
+        except Exception as ex:
+            errors.append(str(ex))
+        time.sleep(0.35)
+    return ""
+
+def nodes(xml):
+    if not xml: return []
+    try:
+        root=ET.fromstring(xml)
+        output=[]
+        for e in root.iter("node"):
+            a=e.attrib
+            bs=re.findall(r"\d+", a.get("bounds",""))
+            if len(bs)!=4: continue
+            x1,y1,x2,y2=map(int,bs)
+            text=a.get("text","").strip()
+            desc=a.get("content-desc","").strip()
+            label=text or desc
+            if not label or x2<=x1 or y2<=y1: continue
+            output.append(dict(text=text,desc=desc,label=label,x=(x1+x2)//2,y=(y1+y2)//2,
+                               bounds=(x1,y1,x2,y2),click=a.get("clickable","false")=="true",
+                               scroll=a.get("scrollable","false")=="true",class_=a.get("class","")))
+        return output
+    except Exception as ex:
+        errors.append("UI XML parse: " + str(ex))
+        return []
+
+def visible(xml):
+    values=[]
+    for n in nodes(xml):
+        v=n["label"].replace("\n"," ").strip()
+        if v and len(v)<150 and v not in values:
+            values.append(v)
+    return values
+
+def identity(xml):
+    labels=visible(xml)
+    return hashlib.sha256("\u241e".join(labels[:110]).encode("utf-8")).hexdigest()[:18]
+
+def clean(s):
+    s=re.sub(r"[^\w\u4e00-\u9fff（）()、，.％%+-]+","_",str(s).strip())
+    return s[:41].strip("_") or "无标题"
+
+def image_bytes():
+    try:
+        data=adb("exec-out","screencap","-p",timeout=20,binary=True)
+        if data.startswith(b"\x89PNG"): return data
+    except Exception as ex:
+        errors.append(str(ex))
+    return b""
+
+def capture(module, action, xml=None, detail="", force=False):
+    global num
+    if num>=MAX_TOTAL: return False
+    if not force and module_counts.get(module,0)>=MAX_PER_MODULE: return False
+    xml=xml if xml is not None else get_xml()
+    if not xml: return False
+    key=(module,identity(xml))
+    if not force and key in seen: return False
+    data=image_bytes()
+    if not data: return False
+    num+=1
+    module_counts[module]=module_counts.get(module,0)+1
+    seen.add(key)
+    dirname=IMAGES / clean(module)
+    dirname.mkdir(parents=True,exist_ok=True)
+    stem=f"{num:04d}_{clean(module)}_{clean(action)}"
+    (dirname/(stem+".png")).write_bytes(data)
+    xdir=HIERARCHY/clean(module)
+    xdir.mkdir(parents=True,exist_ok=True)
+    (xdir/(stem+".xml")).write_text(xml,encoding="utf-8")
+    labels=visible(xml)
+    rows.append([num,module,action,str(Path("截图")/clean(module)/(stem+".png")),
+                 detail or "Android 35 实际界面截图", "；".join(labels[:12])[:360]])
+    print("CAPTURE",num,module,action,flush=True)
+    return True
+
+def tap_node(n):
+    safe_adb("shell","input","tap",n["x"],n["y"],timeout=15)
+    time.sleep(0.45)
+
+def tap_text(labels, exact=True):
+    xml=get_xml()
+    candidates=nodes(xml)
+    for target in labels:
+        for n in candidates:
+            label=n["text"] or n["desc"]
+            if ((label==target) if exact else (target in label)) and len(label)<=180:
+                tap_node(n)
+                return True
+    return False
+
+def click(labels):
+    return tap_text(labels,True) or tap_text(labels,False)
+
+def back():
+    safe_adb("shell","input","keyevent","4")
+    time.sleep(0.45)
+
+def app_alive():
+    return bool(safe_adb("shell","pidof",PACKAGE).strip())
+
+def foreground_ok():
+    raw=safe_adb("shell","dumpsys","window","windows",timeout=15)
+    if "mCurrentFocus=null" in raw: return True
+    match=re.search(r"mCurrentFocus=.*?(com\.[\w.]+|com\.ofairyo\.gridtimer)",raw)
+    return match is None or PACKAGE in match.group(0) or "com.google.android.inputmethod" in match.group(0)
+
+def open_app():
+    safe_adb("shell","am","start","-W","-n",ACTIVITY,timeout=40)
+    time.sleep(2.2)
+    for _ in range(4):
+        x=get_xml()
+        if any(p in x for p in ("Allow tenfold", "Allow notifications", "发送通知")):
+            if not click(["Allow","允许","允许通知"]): break
+        elif any(p in x for p in ("Pixel Launcher isn't responding","Pixel Launcher isn")):
+            if not click(["Close app","关闭应用"]): break
+        else: break
+
+def at_module(module):
+    if not app_alive(): open_app()
+    for attempt in range(4):
+        if click([module, module+"模块", "进入"+module]): return get_xml()
+        if attempt==1:
+            back()
+        if attempt==2:
+            safe_adb("shell","am","start","-n",ACTIVITY)
+        time.sleep(0.3)
+    return get_xml()
+
+def scroll_screen(direction="down"):
+    # Pixel 6 emulator uses approx. 1080x2400 coordinates; read real size.
+    wh=safe_adb("shell","wm","size")
+    m=re.search(r"(\d+)x(\d+)",wh)
+    w,h=map(int,m.groups()) if m else (1080,2400)
+    x=w//2
+    start=int(h*(0.79 if direction=="down" else 0.35))
+    end=int(h*(0.32 if direction=="down" else 0.79))
+    safe_adb("shell","input","swipe",x,start,x,end,370,timeout=20)
+    time.sleep(0.4)
+
+def eligible(n):
+    s=n["label"].strip()
+    if len(s)>80 or len(s)<1: return False
+    if any(w in s for w in RISKY+BORING): return False
+    if s.startswith("http") or "@" in s: return False
+    if n["y"]<50 or n["y"]>2500: return False
+    if not n["click"] and not n["class_"].endswith(("Button","ImageButton")):
+        # Compose commonly places its clickable semantics on the label's parent.
+        if n["class_"] not in ("android.widget.TextView","android.view.View"): return False
+    if s in ("确定","返回","取消","关闭","Done","OK","Cancel","Close"): return False
+    return True
+
+def action_candidates(xml, module):
+    ns=nodes(xml)
+    result=[]; keys=set()
+    for n in ns:
+        if not eligible(n): continue
+        label=n["label"]
+        if module in MODULES and label==module: continue
+        key=label[:48]
+        if key in keys: continue
+        keys.add(key);result.append(n)
+    # Favor controls above content and menu actions, do not depend on XML order alone.
+    def score(n):
+        s=n["label"]
+        hints=("新建","添加","更多","设置","查看","搜索","编辑","分类","任务","历史","筛选","排序",
+               "日账","周账","月账","时间","统计","画布","目录","页面","文件夹","风险","预算","回收站",
+               "模板","属性","开始","计时","账单","提醒","目标","标签","通知","帮助","选择")
+        return (0 if any(h in s for h in hints) else 1, n["y"])
+    result.sort(key=score)
+    return result[:18]
+
+def explore(module, depth, trace, budget=0):
+    if depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE:
+        return
+    screen=get_xml()
+    if not screen: return
+    start_identity=identity(screen)
+    sig=(module,start_identity,depth)
+    if sig in visited: return
+    visited.add(sig)
+    candidates=action_candidates(screen,module)
+    if depth<2:
+        scroll_screen("down")
+        scrolled=get_xml()
+        capture(module, "下滑查看"+(trace[-1] if trace else "列表"), scrolled, "滚动后的实际界面")
+        if identity(scrolled)!=start_identity:
+            # Avoid recursively operating on a scrolled list; return to top.
+            scroll_screen("up")
+            screen=get_xml()
+    for n in candidates:
+        if num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE: break
+        if not foreground_ok():
+            back()
+            break
+        if not get_xml(): break
+        current_nodes=nodes(get_xml())
+        # Skip controls that disappeared after an earlier action
+        found=next((x for x in current_nodes if x["label"]==n["label"] and
+                    abs(x["y"]-n["y"])<170),None)
+        if not found: continue
+        prior=identity(get_xml())
+        tap_node(found)
+        after=get_xml()
+        if not after: back();continue
+        changed=identity(after)!=prior
+        if changed:
+            label=n["label"].replace("\n"," ")[:32]
+            capture(module,"→".join(trace[-2:]+[label]),after,
+                    "实际点击："+n["label"][:100])
+            if depth<MAX_DEPTH and (module,identity(after),depth+1) not in visited:
+                explore(module,depth+1,trace+[label])
+        # Return to parent: single back normally exits sheets/pages.
+        back()
+        returned=get_xml()
+        if identity(returned)!=prior:
+            # Dismiss one extra layer, then try restoring the module if navigated away.
+            back()
+            returned=get_xml()
+        if identity(returned)!=prior:
+            after_nav=at_module(module)
+            if identity(after_nav)!=start_identity:
+                errors.append("返回路径已变化："+module+" / "+n["label"][:40])
+                break
+
+def seed_editor(module):
+    # Only insert disposable, local demo data; never invoke AI, sync or payment.
+    if module=="便签":
+        words=["＋ 新建便签","新建便签","新增便签","新建","＋ 添加","添加便签"]
+    elif module=="知识":
+        words=["＋ 新建知识页面","新建页面","创建页面","新建","＋ 添加"]
+    elif module=="计时":
+        words=["＋ 新增任务","新建任务","添加任务","新建计时","＋ 添加"]
+    else:
+        words=["记支出","记收入"]
+    if click(words):
+        capture(module,"创建或录入入口",get_xml(), "演示入口及空白表单")
+        if module in ("便签","知识","计时"):
+            xml=get_xml()
+            edits=[n for n in nodes(xml) if n["class_"].endswith("EditText")]
+            if edits:
+                tap_node(edits[0])
+                safe_adb("shell","input","text","GalleryDemo")
+                capture(module,"输入演示内容",get_xml(),"仅使用虚构演示内容 GalleryDemo")
+                # Only save explicit local creation, never send external data.
+                if click(["创建","保存","完成","确定","Create","Save"]):
+                    capture(module,"本地创建完成",get_xml(),"本地演示数据")
+        back()
+
+def main():
+    global visited
+    visited=set()
+    IMAGES.mkdir(parents=True,exist_ok=True)
+    HIERARCHY.mkdir(parents=True,exist_ok=True)
+    safe_adb("wait-for-device",timeout=90)
+    pkg=safe_adb("shell","dumpsys","package",PACKAGE,timeout=25)
+    version=re.search(r"versionName=([^\s]+)",pkg)
+    ver=version.group(1) if version else "未知"
+    (ROOT/"验证元数据.json").write_text(json.dumps({
+        "应用包名":PACKAGE,"安装版本":ver,"模拟器":"Android API35 / Pixel 6",
+        "来源提交":"896c9610b6d010dfe53d7990c607f0e3a5ab3fd9",
+        "方法":"Android 真正启动；adb screencap + uiautomator XML 自动抓取，未手工制造界面"
+    },ensure_ascii=False,indent=2),encoding="utf-8")
+    if ver!="2.13.5.1":
+        errors.append("严重：安装版本不符合预期: "+ver)
+    open_app()
+    capture("工作台","初次启动与首页",get_xml(),force=True)
+    for module in MODULES:
+        try:
+            xml=at_module(module)
+            capture(module,"模块首页",xml,force=True)
+            seed_editor(module)
+            xml=at_module(module)
+            capture(module,"返回模块首页",xml)
+            explore(module,0,[module])
+        except Exception as ex:
+            errors.append("模块 "+module+" 异常："+str(ex))
+            try: open_app()
+            except Exception: pass
+    # Canvas is a distinct cross-module route and is also exercised by existing Rust UI probe.
+    try:
+        at_module("知识")
+        if click(["画布","我的画布","知识画布","卡片与连线"]):
+            capture("画布","入口与画布列表",get_xml(),force=True)
+            if click(["知识画布","新建画布","打开画布"]):
+                capture("画布","画布打开",get_xml(),force=True)
+                explore("画布",0,["画布"])
+    except Exception as ex:
+        errors.append("画布探索异常："+str(ex))
+    # Final restart demonstrates app still starts after navigation.
+    try:
+        safe_adb("shell","am","force-stop",PACKAGE)
+        open_app()
+        capture("工作台","强制停止后重新打开",get_xml(),force=True)
+    except Exception as ex:
+        errors.append("重启异常："+str(ex))
+    (ROOT/"操作说明与截图索引.csv").write_text("",encoding="utf-8-sig")
+    with (ROOT/"操作说明与截图索引.csv").open("w",newline="",encoding="utf-8-sig") as f:
+        writer=csv.writer(f)
+        writer.writerow(["序号","功能模块","操作说明","截图相对路径","验证说明","屏幕可见文字摘录"])
+        writer.writerows(rows)
+    (ROOT/"未覆盖与异常记录.txt").write_text("\n".join(errors) or "无自动化执行错误",encoding="utf-8")
+    README=("十倍 Android 2.13.5.1 模拟器交互截图\n"
+            "===================================\n"
+            f"实际截图：{num} 张；安装版本：{ver}；Android API 35。\n"
+            "截图按执行顺序编号；“操作说明与截图索引.csv”有点击动作及可见文本；每张 PNG 对应同名 UI XML。\n"
+            "采集方式：在 GitHub Actions Pixel 6 模拟器上真实启动签名 APK，自动点击无外部副作用的入口，滚动与截图。\n"
+            "注意：自动探索不等于全部功能通过测试。未登录账户、真实同步、真实 AI 调用、付款、删除和外部分享等未执行。\n"
+            "遇到导航失败将留在“未覆盖与异常记录.txt”；真实覆盖量以索引和图片数量为准。\n"
+            "虚构本地演示数据：GalleryDemo。截图为应用实际运行画面。\n"
+            "APK 来源提交：896c9610b6d010dfe53d7990c607f0e3a5ab3fd9\n"
+            "源码分支：feat/android-referral-forest-layout-v2.13.5.1\n"
+            + "\n各模块张数：\n" + "\n".join(f"{m}：{c}" for m,c in module_counts.items()) + "\n")
+    (ROOT/"请先阅读.txt").write_text(README,encoding="utf-8")
+    print(README)
+    if num<12:
+        raise RuntimeError(f"有效截图仅 {num} 张，不足以证明自动化正常；请查阅日志和错误记录")
+if __name__=="__main__":
+    main()
