@@ -222,7 +222,8 @@ fn run(out:&Path)->Result<String,String>{
     let handles=grips()?;
     tap(handles.first().ok_or("No drag handle after reorder")?)?;
     let menu=tree()?;
-    if !menu.contains("复制块") || !menu.contains("删除块"){
+    if !(menu.contains("复制块") || menu.contains("Copy block")) ||
+        !(menu.contains("删除块") || menu.contains("Delete block")){
         return Err("Tapping the grip no longer opens block actions".into());
     }
     evidence(out,"05_tap_menu");
