@@ -81,6 +81,11 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
     )?;
     replace_once(
         &mut canvas,
+        "    val imageAttachment = remember(note.attachments, block.attachmentId) {",
+        "    val currentDragStart by rememberUpdatedState(onDragStart)\n    val currentDragBy by rememberUpdatedState(onDragBy)\n    val currentDragEnd by rememberUpdatedState(onDragEnd)\n    val currentDragCancel by rememberUpdatedState(onDragCancel)\n    val imageAttachment = remember(note.attachments, block.attachmentId) {",
+    )?;
+    replace_once(
+        &mut canvas,
         "                    .combinedClickable(onClick = onFocused, onLongClick = onOpenActions),",
         DRAG_HANDLE,
     )?;
@@ -232,12 +237,12 @@ const DRAG_LIST_END: &str = r####"                onPreviewAttachment = { block.
 const DRAG_HANDLE: &str = r####"                    .clickable(onClick = onOpenActions)
                     .pointerInput(block.id) {
                         detectDragGestures(
-                            onDragStart = { position -> onDragStart(position.y) },
-                            onDragCancel = onDragCancel,
-                            onDragEnd = onDragEnd,
+                            onDragStart = { position -> currentDragStart(position.y) },
+                            onDragCancel = { currentDragCancel() },
+                            onDragEnd = { currentDragEnd() },
                             onDrag = { change, amount ->
                                 change.consume()
-                                onDragBy(amount.y)
+                                currentDragBy(amount.y)
                             }
                         )
                     }
@@ -262,7 +267,7 @@ mod tests {
         assert!(result.contains("materializedTextBlocks()"));
         assert!(result.contains("recordChange(currentDraftState().copy(blocks = next))"));
         assert!(result.contains("onDragCancel = { finishBlockDrag(block.id, false) }"));
-        assert!(result.contains("onDragBy(amount.y)"));
+        assert!(result.contains("currentDragBy(amount.y)"));
         assert!(result.contains("editorListState.scrollBy(scroll)"));
         assert_eq!(render("some/other/File.kt", &initial).unwrap(), initial);
         assert!(render(SCREEN, &result).is_err());
