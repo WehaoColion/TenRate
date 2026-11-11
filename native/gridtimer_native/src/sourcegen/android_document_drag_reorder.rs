@@ -24,7 +24,6 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
         "androidx.compose.foundation.gestures.scrollBy",
         "androidx.compose.ui.hapticfeedback.HapticFeedbackType",
         "androidx.compose.ui.input.pointer.pointerInput",
-        "androidx.compose.ui.input.pointer.consume",
         "androidx.compose.ui.draw.zIndex",
         "androidx.compose.ui.graphics.graphicsLayer",
         "androidx.compose.ui.platform.LocalDensity",
