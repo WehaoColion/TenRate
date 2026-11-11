@@ -1,3 +1,4 @@
+//! v2.23.4.18.1 - Keep LazyColumn key topology fixed during grip drag; commit only on drop.
 //! Android document block grip drag reordering.
 //! All UI mutations are emitted by this Rust module; no checked-in Kotlin output is edited.
 //! Preview order is ephemeral. Commit one undoable document mutation on pointer release.
@@ -196,10 +197,12 @@ const DRAG_STATE: &str = r####"    var editorViewportHeightPx by remember(note.i
         }
     }
 
-    val displayedBlocks = dragPreviewIds?.let { order ->
-        val indexed = blocks.associateBy(NoteBlock::id)
-        order.mapNotNull(indexed::get).takeIf { it.size == blocks.size }
-    } ?: blocks
+    // Keep LazyColumn's item topology fixed while the grip owns a pointer.
+    // Reordering the LazyColumn in the middle of a swipe can remeasure or
+    // cancel its pointer input, committing a partial move instead of the
+    // intended destination. Preview only the destination marker and dragged
+    // surface offset; do the real reorder once when the finger is released.
+    val displayedBlocks = blocks
     val otherBlockIds = if (draggedBlockId != null)
         blocks.map(NoteBlock::id).filterNot { it == draggedBlockId } else emptyList()
     val dropBeforeId = if (draggedBlockId != null)
