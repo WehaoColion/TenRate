@@ -131,6 +131,24 @@ fn add_page(root:&Path)->Result<(),String>{
     evidence(root,"page_creation_missing");
     Err("Neither the blank-page template nor new-page button was visible".into())
 }
+fn open_persisted_page(root:&Path)->Result<(),String>{
+    // The document list is below multiple full-height knowledge dashboard cards.
+    // UIAutomator lists only composed LazyColumn items. After a fresh launch,
+    // the page row exists in storage but is outside the current viewport.
+    for attempt in 0..9 {
+        if let Some(node)=seek(&[TITLE])?{
+            tap(&node)?;
+            sleep(Duration::from_millis(850));
+            if tree()?.contains(GRIP) {
+                return Ok(());
+            }
+        }
+        evidence(root,&format!("reopen_scroll_{attempt}"));
+        command(&["shell","input","swipe","540","1860","540","670","580"])?;
+        sleep(Duration::from_millis(900));
+    }
+    Err("Saved page was not accessible after scrolling the full knowledge list".into())
+}
 fn edit_fields()->Result<Vec<Node>,String>{
     let ui=tree()?;
     let mut fields:Vec<Node>=nodes(&ui).into_iter()
@@ -232,7 +250,7 @@ fn run(out:&Path)->Result<String,String>{
     command(&["shell","am","start","-W","-n",ACTIVITY])?;
     sleep(Duration::from_secs(6));
     knowledge(out)?;
-    must_tap(&[TITLE])?;
+    open_persisted_page(out)?;
     sleep(Duration::from_secs(2));
     evidence(out,"06_reopened");
     let reopened=order()?.ok_or("Text blocks unavailable after restart")?;
