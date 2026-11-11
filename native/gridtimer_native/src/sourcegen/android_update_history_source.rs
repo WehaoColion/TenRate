@@ -1,3 +1,4 @@
+// v2.23.4.18 - Drag-to-reorder mobile document blocks with single save.
 // v2.23.4.17 - Add bird-eye one-percent universal canvas zoom.
 // v2.23.4.16 - Restore all-purpose canvas and optional client-network template.
 // v2.23.4.15 - Record customer-network canvas interaction improvements.
@@ -64,7 +65,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.17";
+pub const LATEST_VERSION: &str = "2.23.4.18";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -94,6 +95,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.18",
+        updatedAt = "",
+        summary = "知识文档支持拖动左侧手柄直接调整块顺序",
+        sections = listOf(
+            AndroidUpdateSection("拖动排序", listOf(
+                "从左侧六点手柄直接拖动整块内容，附近块平滑让位，边缘自动滚动并显示放置指示线。",
+                "点击手柄仍可打开复制、删除及上移下移菜单，保留无障碍替代操作。"
+            )),
+            AndroidUpdateSection("编辑安全", listOf(
+                "拖动时收起软键盘，临时顺序只用于显示；松手提交一次可撤销变更，取消拖动不写入。",
+                "块 ID、图片和文本内容保持不变，兼容当前编辑草稿及原有存储格式。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.17",
         updatedAt = "",
