@@ -1,3 +1,4 @@
+// v2.23.4.17 - Zoom the universal canvas down to one percent.
 // v2.23.4.16 - Restore universal canvas controls with optional client templates.
 // v2.23.4.15 - Improve customer network canvas layout, cards and navigation.
 // v2.23.4.14 - Compact startup loading shell and verify Android emulator UX.
@@ -181,8 +182,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22346
-        versionName '2.23.4.16'
+        versionCode 22347
+        versionName '2.23.4.17'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

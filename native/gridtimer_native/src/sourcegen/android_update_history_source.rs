@@ -1,3 +1,4 @@
+// v2.23.4.17 - Add bird-eye one-percent universal canvas zoom.
 // v2.23.4.16 - Restore all-purpose canvas and optional client-network template.
 // v2.23.4.15 - Record customer-network canvas interaction improvements.
 // v2.23.4.14 - Simplify the transient Android startup shell.
@@ -63,7 +64,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.16";
+pub const LATEST_VERSION: &str = "2.23.4.17";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -93,6 +94,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.17",
+        updatedAt = "",
+        summary = "知识画布支持最低 1% 缩放和低倍率概览",
+        sections = listOf(
+            AndroidUpdateSection("缩放与导航", listOf(
+                "画布缩放范围由 35%～250% 扩展到 1%～250%，点击右下角倍率可按百分比选择或拖动滑块。",
+                "极低倍率下的卡片采用小色点呈现，点击节点自动定位到正常阅读倍率，适应功能优先在主画布完成。"
+            )),
+            AndroidUpdateSection("流畅与兼容", listOf(
+                "网格点间距随缩放动态变化，低倍率减少文字布局绘制，避免大画布缩小时无谓渲染。",
+                "缩放与视口数据仍由 Rust 校验并持久保存，保留通用画布、客户网络及旧卡片功能。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.16",
         updatedAt = "",
