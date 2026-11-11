@@ -44,6 +44,24 @@ fn view_transactions_share_card_text_and_inactive_boards() {
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn one_percent_view_persists_without_allowing_out_of_range_zoom() {
+    let mut fixture = Fixture::new();
+    let current = fixture.open("zoom-one-percent");
+    let saved = apply(&current, json!({"op":"view","x":4200,"y":-3200,"zoom":0.01}));
+    assert_eq!(saved["canvas"]["zoom"], json!(0.01_f32));
+    let reopened = fixture.open("zoom-one-percent");
+    assert_eq!(reopened["canvas"]["zoom"], saved["canvas"]["zoom"]);
+    assert_eq!(reopened["canvas"]["centerX"], 4200.0);
+    let path = scoped_path(&fixture.root, "zoom-one-percent").unwrap();
+    let bytes = fs::read(&path).unwrap();
+    for zoom in [0.0, 0.0099, 2.51] {
+        assert!(command(saved["token"].as_str().unwrap(),
+            &json!({"op":"view","x":0,"y":0,"zoom":zoom}).to_string()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn compact_view_replies_keep_graph_and_history_and_persist_before_success() {
     let mut f = Fixture::new();
     let opened: Value = serde_json::from_str(&open_json(&f.root, "compact").unwrap()).unwrap();
