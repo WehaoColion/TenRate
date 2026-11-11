@@ -1,3 +1,4 @@
+// v2.23.4.18 - Drag and reorder knowledge document blocks using the grip.
 // v2.23.4.17 - Zoom the universal canvas down to one percent.
 // v2.23.4.16 - Restore universal canvas controls with optional client templates.
 // v2.23.4.15 - Improve customer network canvas layout, cards and navigation.
@@ -182,8 +183,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22347
-        versionName '2.23.4.17'
+        versionCode 22348
+        versionName '2.23.4.18'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
