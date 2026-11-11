@@ -149,7 +149,9 @@ fn main(){
         create_client("ClientB")?;
         count("2 张卡片")?;count("1 条关系")?;screenshot(&out,"06_referral_saved");
         report.push_str("PASS: adding a referred customer creates exactly two cards and one directed relationship.\n\n");
-        if !tap_text(&["布局"])?{return Err("Canvas layout menu missing".into());}
+        // The layout actions live in the top-right overflow menu, not in
+        // a standalone "布局" toolbar button.
+        if !tap_text(&["⋯ 更多", "更多"])?{return Err("Canvas more menu missing".into());}
         if !tap_text(&["按推荐层级排列客户"])?{return Err("Tree arrangement action missing".into());}
         thread::sleep(Duration::from_millis(900));screenshot(&out,"07_tree_layout");
         report.push_str("PASS: tree layout command completed on the emulator.\n\n");
