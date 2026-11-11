@@ -70,6 +70,18 @@ pub struct Edge {
     pub id: String,
     pub from: String,
     pub to: String,
+    // Old edges do not contain a relation. Historically, client-to-client
+    // edges were referrals; every new freehand link explicitly uses "link".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<String>,
+}
+
+fn is_referral(edge: &Edge, client_ids: &HashSet<&str>) -> bool {
+    match edge.relation.as_deref() {
+        Some("referral") => true,
+        None => client_ids.contains(edge.from.as_str()) && client_ids.contains(edge.to.as_str()),
+        _ => false,
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -77,6 +89,8 @@ pub struct Edge {
 pub struct Canvas {
     pub id: String,
     pub title: String,
+    #[serde(default = "default_canvas_template")]
+    pub template: String,
     pub center_x: f32,
     pub center_y: f32,
     pub zoom: f32,
@@ -84,11 +98,14 @@ pub struct Canvas {
     pub edges: Shared<Vec<Edge>>,
 }
 
+fn default_canvas_template() -> String { "blank".into() }
+
 impl Canvas {
     fn new(title: &str) -> Self {
         Self {
             id: identifier(),
             title: title.into(),
+            template: default_canvas_template(),
             center_x: 0.0,
             center_y: 0.0,
             zoom: 1.0,
@@ -101,6 +118,7 @@ impl Canvas {
         if !valid_id(&self.id)
             || self.title.trim().is_empty()
             || self.title.chars().count() > 80
+            || !["blank", "customer_network"].contains(&self.template.as_str())
             || !coordinate(self.center_x)
             || !coordinate(self.center_y)
             || !self.zoom.is_finite()
@@ -134,17 +152,37 @@ impl Canvas {
                 return Err("卡片数据无效".into());
             }
         }
+        let client_ids: HashSet<&str> = self.nodes.iter()
+            .filter(|n| n.kind == "client").map(|n| n.id.as_str()).collect();
         let mut edge_ids = HashSet::new();
         let mut pairs = HashSet::new();
+        let mut parents: HashMap<&str, &str> = HashMap::new();
         for edge in self.edges.iter() {
+            let referral = is_referral(edge, &client_ids);
             if !valid_id(&edge.id)
-                || !edge_ids.insert(&edge.id)
+                || !edge_ids.insert(edge.id.as_str())
                 || edge.from == edge.to
                 || !ids.contains(edge.from.as_str())
                 || !ids.contains(edge.to.as_str())
-                || !pairs.insert((&edge.from, &edge.to))
+                || !matches!(edge.relation.as_deref(), None | Some("link") | Some("referral"))
+                || !pairs.insert((edge.from.as_str(), edge.to.as_str(), referral))
+                || (referral && (!client_ids.contains(edge.from.as_str())
+                    || !client_ids.contains(edge.to.as_str())
+                    || parents.insert(edge.to.as_str(), edge.from.as_str()).is_some()))
             {
                 return Err("连线数据无效".into());
+            }
+        }
+        // A referral is a directed forest; ordinary visual links do not
+        // participate in its parent uniqueness or cycle constraints.
+        for id in parents.keys() {
+            let mut visited = HashSet::new();
+            let mut cursor = *id;
+            while let Some(parent) = parents.get(cursor) {
+                if !visited.insert(cursor) {
+                    return Err("推荐关系不能形成循环".into());
+                }
+                cursor = parent;
             }
         }
         Ok(())
@@ -328,7 +366,7 @@ fn persist(path: &Path, store: &Store, expected: Option<[u8; 32]>) -> Result<[u8
 fn response(token: &str, session: &Session) -> Value {
     json!({"ok":true,"token":token,"revision":session.store.revision,
         "canvas":session.store.canvases[session.store.active_index()],
-        "canvases":session.store.canvases.iter().map(|c| json!({"id":c.id,"title":c.title})).collect::<Vec<_>>(),
+        "canvases":session.store.canvases.iter().map(|c| json!({"id":c.id,"title":c.title,"template":c.template})).collect::<Vec<_>>(),
         "canUndo":!session.undo.is_empty(),"canRedo":!session.redo.is_empty(),"warning":session.warning})
 }
 
@@ -336,6 +374,7 @@ fn response(token: &str, session: &Session) -> Value {
 struct CanvasSummary<'a> {
     id: &'a str,
     title: &'a str,
+    template: &'a str,
 }
 
 #[derive(Serialize)]
@@ -391,6 +430,7 @@ fn response_json(
             .map(|c| CanvasSummary {
                 id: &c.id,
                 title: &c.title,
+                template: &c.template,
             })
             .collect(),
         can_undo: !session.undo.is_empty(),
@@ -569,7 +609,7 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             });
             if !parent.is_empty() {
                 let to = canvas.nodes.last().expect("new client").id.clone();
-                canvas.edges.push(Edge { id: identifier(), from: parent.into(), to });
+                canvas.edges.push(Edge { id: identifier(), from: parent.into(), to, relation: Some("referral".into()) });
             }
         }
         "move" | "resize" | "text" | "color" | "updateClient" => {
@@ -606,34 +646,53 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             }
             let from = text(request, "from")?;
             let to = text(request, "to")?;
+            let relation = request.get("relation").and_then(Value::as_str).unwrap_or("link");
+            if !["link", "referral"].contains(&relation) {
+                return Err("无效的连线类型".into());
+            }
             if from == to
                 || !canvas.nodes.iter().any(|n| n.id == from)
                 || !canvas.nodes.iter().any(|n| n.id == to)
             {
                 return Err("请选择两张不同的卡片".into());
             }
-            if canvas.edges.iter().any(|e| e.from == from && e.to == to) {
-                return Err("这两张卡片已经连接".into());
-            }
-            let from_client = canvas.nodes.iter().any(|n| n.id == from && n.kind == "client");
-            let to_client = canvas.nodes.iter().any(|n| n.id == to && n.kind == "client");
-            if from_client && to_client {
-                if canvas.edges.iter().any(|e| e.to == to && canvas.nodes.iter().any(|n| n.id == e.from && n.kind == "client")) {
+            let client_ids: HashSet<&str> = canvas.nodes.iter()
+                .filter(|n| n.kind == "client").map(|n| n.id.as_str()).collect();
+            if relation == "referral" {
+                if !client_ids.contains(from) || !client_ids.contains(to) {
+                    return Err("推荐关系只能连接两名客户".into());
+                }
+                if canvas.edges.iter().any(|e|
+                    is_referral(e, &client_ids) && e.to == to
+                ) {
                     return Err("客户已绑定其他推荐人，请先核对关系".into());
                 }
                 let mut cursor = from;
-                let mut checked = HashSet::new();
-                while checked.insert(cursor.to_owned()) {
-                    if cursor == to { return Err("推荐关系不能形成循环".into()); }
-                    if let Some(edge) = canvas.edges.iter().find(|e| e.to == cursor && canvas.nodes.iter().any(|n| n.id == e.from && n.kind == "client")) {
+                let mut visited = HashSet::new();
+                while visited.insert(cursor.to_owned()) {
+                    if cursor == to {
+                        return Err("推荐关系不能形成循环".into());
+                    }
+                    if let Some(edge) = canvas.edges.iter().find(|e|
+                        is_referral(e, &client_ids) && e.to == cursor
+                    ) {
                         cursor = &edge.from;
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
+            }
+            if canvas.edges.iter().any(|e|
+                e.from == from && e.to == to
+                && is_referral(e, &client_ids) == (relation == "referral")
+            ) {
+                return Err("这两张卡片已经存在同类型连线".into());
             }
             canvas.edges.push(Edge {
                 id: identifier(),
                 from: from.into(),
                 to: to.into(),
+                relation: Some(relation.into()),
             });
         }
         "removeNode" => {
@@ -671,11 +730,11 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             }
         }
         "arrangeTree" => {
-            let clients = canvas.nodes.iter().filter(|n| n.kind == "client").map(|n| n.id.clone()).collect::<HashSet<_>>();
+            let clients = canvas.nodes.iter().filter(|n| n.kind == "client").map(|n| n.id.as_str()).collect::<HashSet<_>>();
             let mut children: HashMap<String, Vec<String>> = HashMap::new();
             let mut has_parent = HashSet::new();
             for edge in canvas.edges.iter() {
-                if clients.contains(&edge.from) && clients.contains(&edge.to) {
+                if is_referral(edge, &clients) {
                     children.entry(edge.from.clone()).or_default().push(edge.to.clone());
                     has_parent.insert(edge.to.clone());
                 }
@@ -778,7 +837,12 @@ fn command_with<R>(
             if next.canvases.len() >= 128 {
                 return Err("画布数量已达 128 个".into());
             }
-            let canvas = Canvas::new(text(&request, "title")?.trim());
+            let mut canvas = Canvas::new(text(&request, "title")?.trim());
+            canvas.template = request.get("template")
+                .and_then(Value::as_str).unwrap_or("blank").into();
+            if !["blank", "customer_network"].contains(&canvas.template.as_str()) {
+                return Err("未知画布模板".into());
+            }
             next.active_canvas_id = canvas.id.clone();
             next.canvases.push(canvas.into());
         }
