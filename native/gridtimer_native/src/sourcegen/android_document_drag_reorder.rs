@@ -72,8 +72,8 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
     let mut canvas = source[start..end].to_owned();
     replace_once(
         &mut canvas,
-        "    onOpenActions: () -> Unit,\n    onTextChanged: (TextFieldValue) -> Unit,",
-        "    onOpenActions: () -> Unit,\n    onDragStart: (Float) -> Unit,\n    onDragBy: (Float) -> Unit,\n    onDragEnd: () -> Unit,\n    onDragCancel: () -> Unit,\n    dragging: Boolean,\n    dragOffsetY: Float,\n    onTextChanged: (TextFieldValue) -> Unit,",
+        "    onOpenActions: () -> Unit,\n    onInsertAfter: () -> Unit,\n    onTextChanged: (TextFieldValue) -> Unit,",
+        "    onOpenActions: () -> Unit,\n    onInsertAfter: () -> Unit,\n    onDragStart: (Float) -> Unit,\n    onDragBy: (Float) -> Unit,\n    onDragEnd: () -> Unit,\n    onDragCancel: () -> Unit,\n    dragging: Boolean,\n    dragOffsetY: Float,\n    onTextChanged: (TextFieldValue) -> Unit,",
     )?;
     replace_once(
         &mut canvas,
@@ -250,8 +250,10 @@ mod tests {
     fn fixture() -> String {
         let base = super::super::kotlin_sources::SOURCES.iter()
             .find(|item| item.path == SCREEN).expect("document template").contents;
-        super::super::android_document_caret::render(SCREEN, base)
-            .expect("document focus state injection")
+        let with_caret = super::super::android_document_caret::render(SCREEN, base)
+            .expect("document focus state injection");
+        super::super::android_document_image_insertion::render(SCREEN, &with_caret)
+            .expect("image insertion signatures are applied before drag")
     }
     #[test]
     fn drag_mutation_only_targets_document_editor() {
