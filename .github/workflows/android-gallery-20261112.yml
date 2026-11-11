@@ -1,0 +1,110 @@
+name: Android 全功能交互截图（API 35）
+
+on:
+  push:
+    branches: [qa/android-full-gallery-20261112]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  full-gallery:
+    name: Android 2.13.5.1 各模块截图采集与压缩
+    runs-on: ubuntu-22.04
+    timeout-minutes: 160
+    steps:
+      - name: Checkout exact 2.13.5.1-based QA branch
+        uses: actions/checkout@v4
+      - name: Download already-built signed APK from original source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref_run="43092000607"
+          required_sha="896c9610b6d010dfe53d7990c607f0e3a5ab3fd9"
+          actual_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ref_run" --jq .head_sha)"
+          test "$actual_sha" = "$required_sha"
+          state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ref_run/jobs?per_page=100" --jq '[.jobs[] | select(.name=="release") | .conclusion] | first')"
+          test "$state" = "success"
+          mkdir -p signed_apk
+          gh run download "$ref_run" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
+          cd signed_apk
+          test -s tenfold_v2.13.5.1.apk
+          tr -d '\r' < tenfold_v2.13.5.1.apk.sha256 | sha256sum -c -
+      - name: Enable KVM hardware acceleration
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Compile existing canvas acceptance probe
+        shell: bash
+        run: rustc --edition=2021 -D warnings -O tools/android_customer_canvas_probe.rs -o android_customer_canvas_probe
+      - name: Boot Android Pixel 6 emulator and tour real screens
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set +e
+            adb install -r signed_apk/tenfold_v2.13.5.1.apk
+            code=$?
+            if [ "$code" -ne 0 ]; then
+              echo "APK installation failed: $code" > gallery_status.txt
+              exit "$code"
+            fi
+            python3 tools/android_feature_tour.py > gallery_tour_log.txt 2>&1
+            tour_code=$?
+            adb shell pm clear com.ofairyo.gridtimer
+            ./android_customer_canvas_probe customer_canvas_evidence > canvas_probe_log.txt 2>&1
+            canvas_code=$?
+            echo "Tour exit: $tour_code; customer canvas probe exit: $canvas_code" | tee gallery_status.txt
+            if [ "$tour_code" -ne 0 ] && [ "$canvas_code" -ne 0 ]; then exit 1; fi
+      - name: Package Chinese-labeled screenshots and evaluation index
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile, shutil
+          evidence=Path("feature_tour_evidence")
+          evidence.mkdir(exist_ok=True)
+          for filename in ("gallery_tour_log.txt","canvas_probe_log.txt","gallery_status.txt"):
+              file=Path(filename)
+              if file.exists(): shutil.copy2(file,evidence/filename)
+          existing=Path("customer_canvas_evidence")
+          if existing.exists():
+              target=evidence/"专项验收_客户关系画布"
+              if target.exists(): shutil.rmtree(target)
+              shutil.copytree(existing,target)
+          output=Path("十倍_2.13.5.1_API35_全功能演示_截图及说明.zip")
+          with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=6,allowZip64=True) as z:
+              for file in sorted(evidence.rglob("*")):
+                  if file.is_file(): z.write(file,file.relative_to(evidence.parent))
+          png_count=len(list(evidence.rglob("*.png")))
+          Path("截图统计.txt").write_text(f"实际采集PNG数量：{png_count}\n压缩包：{output.name}\n",encoding="utf-8")
+          print(f"Total real screenshots: {png_count}. Archive bytes: {output.stat().st_size}")
+          PY
+          cat 截图统计.txt >> "$GITHUB_STEP_SUMMARY"
+          if test -f feature_tour_evidence/请先阅读.txt; then
+            cat feature_tour_evidence/请先阅读.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload self-contained ZIP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenrate-2.13.5.1-full-feature-screenshot-zip
+          path: |
+            十倍_2.13.5.1_API35_全功能演示_截图及说明.zip
+            截图统计.txt
+          retention-days: 30
+          if-no-files-found: warn
