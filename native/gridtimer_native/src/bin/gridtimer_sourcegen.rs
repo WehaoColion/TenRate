@@ -43,6 +43,8 @@ mod android_blank_document_lifecycle;
 mod android_document_block_alignment;
 #[path = "../sourcegen/android_document_caret.rs"]
 mod android_document_caret;
+#[path = "../sourcegen/android_document_drag_reorder.rs"]
+mod android_document_drag_reorder;
 #[path = "../sourcegen/android_document_image_insertion.rs"]
 mod android_document_image_insertion;
 #[path = "../sourcegen/android_document_collection_work.rs"]
@@ -881,6 +883,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
     let contents = android_finance_navigation::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_image_insertion::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_document_drag_reorder::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = contents
         .replace("十倍率", "tenfold")
