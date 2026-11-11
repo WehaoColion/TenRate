@@ -1,3 +1,4 @@
+// v2.23.4.18 Android - Direct drag reorder in knowledge document editor.
 // v2.23.4.17 Android - One-percent universal canvas zoom.
 // v2.23.4.16 Android - Universal canvas and optional template identity.
 // v2.23.4.15 Android - Align customer network canvas candidate identity.
@@ -134,8 +135,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.11";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.4.17";
-pub const ANDROID_VERSION_CODE: i32 = 22347;
+pub const ANDROID_APP_VERSION: &str = "2.23.4.18";
+pub const ANDROID_VERSION_CODE: i32 = 22348;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
