@@ -21,6 +21,8 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
     let mut source = input.to_owned();
     for import in [
         "androidx.compose.foundation.gestures.detectDragGestures",
+        "androidx.compose.foundation.gestures.detectTapGestures",
+        "androidx.compose.ui.semantics.onClick",
         "androidx.compose.foundation.gestures.scrollBy",
         "androidx.compose.ui.hapticfeedback.HapticFeedbackType",
         "androidx.compose.ui.input.pointer.pointerInput",
@@ -82,7 +84,7 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
     replace_once(
         &mut canvas,
         "    val imageAttachment = remember(note.attachments, block.attachmentId) {",
-        "    val currentDragStart by rememberUpdatedState(onDragStart)\n    val currentDragBy by rememberUpdatedState(onDragBy)\n    val currentDragEnd by rememberUpdatedState(onDragEnd)\n    val currentDragCancel by rememberUpdatedState(onDragCancel)\n    val imageAttachment = remember(note.attachments, block.attachmentId) {",
+        "    val currentOpenActions by rememberUpdatedState(onOpenActions)\n    val currentDragStart by rememberUpdatedState(onDragStart)\n    val currentDragBy by rememberUpdatedState(onDragBy)\n    val currentDragEnd by rememberUpdatedState(onDragEnd)\n    val currentDragCancel by rememberUpdatedState(onDragCancel)\n    val imageAttachment = remember(note.attachments, block.attachmentId) {",
     )?;
     replace_once(
         &mut canvas,
@@ -234,7 +236,12 @@ const DRAG_LIST_END: &str = r####"                onPreviewAttachment = { block.
             }
         }"####;
 
-const DRAG_HANDLE: &str = r####"                    .clickable(onClick = onOpenActions)
+const DRAG_HANDLE: &str = r####"                    .pointerInput(block.id) {
+                        // A tap and a drag compete for the same grip. Keep both
+                        // recognizers at the grip rather than nesting a clickable
+                        // parent around a drag detector that may consume DOWN.
+                        detectTapGestures(onTap = { currentOpenActions() })
+                    }
                     .pointerInput(block.id) {
                         detectDragGestures(
                             onDragStart = { position -> currentDragStart(position.y) },
@@ -246,7 +253,13 @@ const DRAG_HANDLE: &str = r####"                    .clickable(onClick = onOpenA
                             }
                         )
                     }
-                    .semantics { contentDescription = "拖动调整块顺序，点击打开操作菜单" },"####;
+                    .semantics {
+                        contentDescription = "拖动调整块顺序，点击打开操作菜单"
+                        onClick(label = "打开块操作菜单") {
+                            currentOpenActions()
+                            true
+                        }
+                    },"####;
 
 #[cfg(test)]
 mod tests {
