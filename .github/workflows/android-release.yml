@@ -201,6 +201,7 @@ jobs:
           name: tenrate-signed-apk
           path: package
       - name: Verify checksum and push immutable GitHub Release assets
+        if: github.ref != 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -243,6 +244,16 @@ jobs:
           gh('release', 'edit', tag, '--prerelease')
           print(f'Published {apk.name} SHA256 {digest}')
           PY
+      - uses: actions/checkout@v4
+        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1'
+      - name: Publish immutable commit-scoped candidate with Rust
+        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
+          ./android_candidate_publish
 
   canvas-emulator:
     name: Canvas gesture emulator API 35
