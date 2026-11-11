@@ -129,7 +129,14 @@ fn main(){
         navigate_to_canvas(&out)?;screenshot(&out,"02_canvas_open");
         report.push_str("PASS: signed Android app started and the canvas navigation opened.\n\n");
         if !tap_text(&["＋ 添加第一个客户","＋ 添加"])?{return Err("Customer add entrance missing".into());}
-        if seek(&["＋ 新建客户"])?.is_some(){if !tap_text(&["＋ 新建客户"])?{return Err("New customer choice missing".into());}}
+        // The customer template labels this option "新建客户"; a generic
+        // canvas deliberately keeps the same customer functionality under
+        // "更多卡片：客户". Both paths must be accepted by this UI probe.
+        if !elements(&xml()?).iter().any(|n| n.class.ends_with("EditText")) {
+            if !tap_text(&["＋ 新建客户", "＋ 更多卡片：客户"])? {
+                return Err("Customer card choice missing from add menu".into());
+            }
+        }
         screenshot(&out,"03_customer_form");
         create_client("ClientA")?;
         count("1 张卡片")?;screenshot(&out,"04_customer_saved");
