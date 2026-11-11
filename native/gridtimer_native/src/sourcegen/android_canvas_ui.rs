@@ -252,7 +252,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     let replacements = [
         ("    var knowledgeDialogVisible by remember { mutableStateOf(false) }", "    var knowledgeDialogVisible by remember { mutableStateOf(false) }\n    val canvasWorkspaceKey = LocalNoteMediaWorkspaceKey.current\n    var canvasVisible by rememberSaveable(canvasWorkspaceKey) { mutableStateOf(false) }"),
         ("    LaunchedEffect(selectedNoteId != null) {\n        onEditingStateChange(selectedNoteId != null)\n    }", "    LaunchedEffect(selectedNoteId != null, canvasVisible) {\n        onEditingStateChange(selectedNoteId != null || canvasVisible)\n    }"),
-        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            })\n        } else AnimatedContent"),
+        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            }, onCreatePage = { title, onCreated ->\n                val newPageId = java.util.UUID.randomUUID().toString()\n                viewModel.knowledgeContainerAction(\"create_page\", newPageId, \"\", title, canvasWorkspaceKey) { ok, _ ->\n                    if (viewModel.currentWorkspaceKey() == canvasWorkspaceKey) onCreated(if (ok) newPageId else null)\n                }\n            })\n        } else AnimatedContent"),
         ("                    onSelectFolder = viewModel::selectNoteFolder,", "                    onOpenCanvas = { canvasVisible = true },\n                    onSelectFolder = viewModel::selectNoteFolder,"),
         ("    onAskKnowledge: () -> Unit,\n    onSelectFolder:", "    onAskKnowledge: () -> Unit,\n    onOpenCanvas: () -> Unit,\n    onSelectFolder:"),
         ("        if (!trashMode) {\n            item {\n                KnowledgeAskEntryCard(", "        if (!trashMode) {\n            item {\n                androidx.compose.material3.OutlinedButton(onClick = onOpenCanvas, modifier = Modifier.fillMaxWidth()) {\n                    Text(\"画布\", style = MaterialTheme.typography.titleMedium)\n                    Spacer(Modifier.weight(1f))\n                    Text(\"卡片与连线\")\n                }\n            }\n            item {\n                KnowledgeAskEntryCard("),
@@ -279,6 +279,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -331,9 +332,9 @@ private object DeviceCanvasBackend : CanvasBackend {
 }
 
 @Serializable internal data class CanvasNode(val id: String, val kind: String, val pageId: String, val text: String, val x: Float, val y: Float, val width: Float, val height: Float, val color: String)
-@Serializable internal data class CanvasEdge(val id: String, val from: String, val to: String)
-@Serializable internal data class CanvasBoard(val id: String, val title: String, val centerX: Float, val centerY: Float, val zoom: Float, val nodes: List<CanvasNode>, val edges: List<CanvasEdge>)
-@Serializable internal data class CanvasSummary(val id: String, val title: String)
+@Serializable internal data class CanvasEdge(val id: String, val from: String, val to: String, val relation: String? = null)
+@Serializable internal data class CanvasBoard(val id: String, val title: String, val centerX: Float, val centerY: Float, val zoom: Float, val nodes: List<CanvasNode>, val edges: List<CanvasEdge>, val template: String = "blank")
+@Serializable internal data class CanvasSummary(val id: String, val title: String, val template: String = "blank")
 @Serializable internal data class CanvasViewReply(val id: String, val centerX: Float, val centerY: Float, val zoom: Float)
 @Serializable internal data class CanvasReply(val ok: Boolean, val token: String = "", val revision: Long = 0, val canvas: CanvasBoard? = null, val canvases: List<CanvasSummary> = emptyList(), val canUndo: Boolean = false, val canRedo: Boolean = false, val warning: String = "", val error: String = "", val viewport: CanvasViewReply? = null, val baseRevision: Long? = null)
 internal data class CanvasWorkerState(val reply: CanvasReply? = null, val busy: Boolean = true, val error: String = "", val serial: Int = 0, val lastSucceeded: Boolean = false, val quietGesture: Boolean = false)
@@ -542,12 +543,18 @@ internal class CanvasEdgeRenderer(nodes: List<CanvasNode>, edges: List<CanvasEdg
     }
 }
 
+private fun canvasIsReferral(edge: CanvasEdge, nodes: List<CanvasNode>): Boolean =
+    edge.relation == "referral" || (edge.relation == null &&
+        nodes.any { it.id == edge.from && it.kind == "client" } &&
+        nodes.any { it.id == edge.to && it.kind == "client" })
+
 private fun canvasTint(name: String): Color = when (name) {
     "green" -> Color(0xFF2D806B); "amber" -> Color(0xFFA06A24); "pink" -> Color(0xFFAF5279); "purple" -> Color(0xFF7C61A8); else -> Color(0xFF457DA3)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit) {
+internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit, onCreatePage: (String, (String?) -> Unit) -> Unit) {
     val context = LocalContext.current
     val workspace = LocalNoteMediaWorkspaceKey.current
     val model = remember(workspace) { KnowledgeCanvasModel(context.filesDir.absolutePath, workspace) }
@@ -555,90 +562,204 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     DisposableEffect(model) { onDispose { model.close() } }
     var selected by remember(workspace) { mutableStateOf<String?>(null) }
     var connectFrom by remember(workspace) { mutableStateOf<String?>(null) }
+    var connectRelation by remember(workspace) { mutableStateOf("link") }
+    var showLibrary by remember(workspace) { mutableStateOf(true) }
+    var pendingTemplate by remember(workspace) { mutableStateOf("blank") }
     var panel by remember(workspace) { mutableStateOf("") }
     var dialog by remember(workspace) { mutableStateOf("") }
     var editorText by remember(workspace) { mutableStateOf("") }
+    var editorTitle by remember(workspace) { mutableStateOf("") }
+    var clientName by remember(workspace) { mutableStateOf("") }
+    var clientDetails by remember(workspace) { mutableStateOf("") }
+    var clientParentId by remember(workspace) { mutableStateOf<String?>(null) }
+    var editTargetId by remember(workspace) { mutableStateOf<String?>(null) }
+    var creatingPage by remember(workspace) { mutableStateOf(false) }
+    var nodeSearch by remember(workspace) { mutableStateOf("") }
+    var pageCreationError by remember(workspace) { mutableStateOf("") }
     var dialogRequestPending by remember(workspace) { mutableStateOf(false) }
     val canvas = modelState.reply?.canvas
     val pages = remember(appData.notes) { appData.notes.filter { it.kind == NoteEntryKind.DOCUMENT && !it.isDeleted() }.associateBy { it.id } }
     val selectedNode = canvas?.nodes?.find { it.id == selected }
+    val cardTitle: (CanvasNode) -> String = { node ->
+        if (node.kind == "page") canvasPageLabel(pages[node.pageId]).first
+        else node.text.substringBefore("\n").ifBlank { if (node.kind == "client") "未命名客户" else "空白便签" }
+    }
+    val cardBody: (CanvasNode) -> String = { node ->
+        if (node.kind == "page") canvasPageLabel(pages[node.pageId]).second
+        else node.text.substringAfter("\n", "").trim()
+    }
     val showBusy = modelState.busy && !modelState.quietGesture
     val ready = !showBusy && canvas != null
     val boards = modelState.reply?.canvases.orEmpty()
-    val createCanvas = {
+    val createCanvas: (String) -> Unit = { template ->
         val titles = boards.map { it.title }.toSet()
-        var number = boards.size + 1
-        while ("画布 $number" in titles) number++
-        editorText = "画布 $number"; panel = ""; dialog = "new"
+        val prefix = if (template == "customer_network") "客户网络" else "画布"
+        var title = prefix
+        var number = 2
+        while (title in titles) { title = "$prefix $number"; number++ }
+        pendingTemplate = template
+        editorText = title; panel = ""; dialog = "new"
     }
-    val back = { if (!showBusy) { if (connectFrom != null) connectFrom = null else onBack() } }
+    val back = { if (!showBusy) { if (connectFrom != null) connectFrom = null else if (!showLibrary) { showLibrary = true; selected = null; panel = "" } else onBack() } }
     BackHandler { back() }
-    LaunchedEffect(canvas?.id) { selected = null; connectFrom = null; panel = "" }
+    LaunchedEffect(canvas?.id) { selected = null; connectFrom = null; panel = ""; dialog = "" }
     LaunchedEffect(model.serial) {
         if (canvas?.nodes?.any { it.id == selected } != true) selected = null
         if (dialogRequestPending) {
-            if (model.lastSucceeded) { if(dialog == "add") selected = canvas?.nodes?.lastOrNull()?.id; dialog = "" }
+            if (model.lastSucceeded) { dialog = "" }
             dialogRequestPending = false
         }
     }
+    if (showLibrary) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text("返回") }
+                Text("我的画布", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Text("${boards.size} 张", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            }
+            Text("为想法建立联系", style = MaterialTheme.typography.titleMedium)
+            Text("自由创建画布，或从模板开始。模板不会限制卡片与连线。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(onClick = { createCanvas("blank") }, enabled = model.canCreateBoard, modifier = Modifier.weight(1f).height(124.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                        Text("＋", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("空白画布", style = MaterialTheme.typography.titleMedium)
+                        Text("便签 · 页面 · 自由连线", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Surface(onClick = { createCanvas("customer_network") }, enabled = model.canCreateBoard, modifier = Modifier.weight(1f).height(124.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                        Text("◎", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("客户网络模板", style = MaterialTheme.typography.titleMedium)
+                        Text("推荐关系 · 共享基础工具", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("全部画布", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                if (modelState.busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+            if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(boards, key = { it.id }) { board ->
+                    Surface(onClick = {
+                        if (board.id == canvas?.id) showLibrary = false
+                        else if (model.submit(canvasRequest("switch") { put("id",board.id) })) showLibrary = false
+                    }, enabled = ready, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("▤", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(board.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                                Text(if (board.template == "customer_network") "客户网络模板" else "通用画布", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    } else {
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = back, enabled = !showBusy) { Text("返回") }
-            TextButton(onClick = { panel = "boards" }, enabled = ready, modifier = Modifier.weight(1f)) {
-                Text(canvas?.title ?: "画布", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                Text(" ▾")
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                TextButton(onClick = { panel = "boards" }, enabled = ready, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                    Text(canvas?.title ?: "画布", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                    Text(" ⌄", style = MaterialTheme.typography.bodySmall)
+                }
+                Text("${canvas?.nodes?.size ?: 0} 张卡片 · ${canvas?.edges?.size ?: 0} 条关系", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (showBusy) CircularProgressIndicator(Modifier.padding(12.dp).size(18.dp), strokeWidth = 2.dp)
-            else TextButton(onClick = { panel = "more" }, enabled = ready) { Text("更多") }
+            else TextButton(onClick = { panel = "more" }, enabled = ready) { Text("⋯ 更多") }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(enabled = ready, onClick = { panel = "boards" }, modifier = Modifier.weight(1f)) { Text("全部画布（${boards.size}）") }
-            Button(enabled = model.canCreateBoard, onClick = createCanvas, modifier = Modifier.weight(1f)) { Text("＋ 新建画布") }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(enabled = ready, onClick = { panel = "addActions" }, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("＋ 添加") }
+            OutlinedButton(enabled = ready, onClick = { panel = "nodes" }, shape = RoundedCornerShape(14.dp)) { Text("查找") }
+            TextButton(enabled = ready && model.reply?.canUndo == true, onClick = { model.submit(canvasRequest("undo")) }, modifier = Modifier.width(42.dp).semantics { contentDescription = "撤销" }) { Text("↶", style = MaterialTheme.typography.titleMedium) }
+            TextButton(enabled = ready && model.reply?.canRedo == true, onClick = { model.submit(canvasRequest("redo")) }, modifier = Modifier.width(42.dp).semantics { contentDescription = "重做" }) { Text("↷", style = MaterialTheme.typography.titleMedium) }
         }
-        if (boards.size >= 128) Text("已达 128 张画布上限", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(enabled = ready, onClick = { editorText = ""; dialog = "add" }) { Text("＋ 便签") }
-            OutlinedButton(enabled = ready, onClick = { panel = "pages" }) { Text("＋ 页面") }
-            TextButton(enabled = ready && model.reply?.canUndo == true, onClick = { model.submit(canvasRequest("undo")) }) { Text("撤销") }
-            TextButton(enabled = ready && model.reply?.canRedo == true, onClick = { model.submit(canvasRequest("redo")) }) { Text("重做") }
-            TextButton(enabled = ready, onClick = { panel = "nodes" }) { Text("卡片 ${canvas?.nodes?.size ?: 0}") }
-        }
-        if (model.error.isNotBlank()) Text(model.error, Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-        if (connectFrom != null) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("点另一张卡片完成连接", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { connectFrom = null }) { Text("取消") }
+        if (model.error.isNotBlank()) Text(model.error, Modifier.padding(horizontal = 14.dp, vertical = 5.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        if (connectFrom != null) Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
+            Row(Modifier.padding(start = 12.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (connectRelation == "referral") "请选择被推荐的客户" else "请选择另一张卡片以建立普通连线", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { connectFrom = null }) { Text("取消") }
+            }
         }
         if (canvas != null) {
             CanvasSurface(canvas, pages, model, selected, connectFrom, Modifier.weight(1f).fillMaxWidth(),
                 onSelect = { selected = it }, onConnect = { target ->
                     val from = connectFrom
                     if (from != null && from != target) {
-                        if (model.submit(canvasRequest("connect") { put("from",from); put("to",target) })) connectFrom = null
+                        if (model.submit(canvasRequest("connect") { put("from",from); put("to",target); put("relation",connectRelation) })) connectFrom = null
                     }
-                })
+                },
+                onAddFirst = { if (canvas.template == "customer_network") { clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" } else { editorTitle = ""; editorText = ""; dialog = "noteAdd" } })
         } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(if (model.busy) "正在载入画布" else "画布未能载入", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (selectedNode != null) {
-            Surface(tonalElevation = 3.dp) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    val label = if (selectedNode.kind == "page") canvasPageLabel(pages[selectedNode.pageId]).first else selectedNode.text.ifBlank { "空白便签" }
-                    Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        if (selectedNode.kind == "page") TextButton(enabled = ready && pages[selectedNode.pageId] != null, onClick = { pages[selectedNode.pageId]?.let(onOpenPage) }) { Text("打开页面") }
-                        else TextButton(enabled = ready, onClick = { editorText = selectedNode.text; dialog = "edit" }) { Text("编辑") }
-                        TextButton(enabled = ready && canvas!!.nodes.size > 1, onClick = { connectFrom = selectedNode.id }) { Text("连接") }
-                        TextButton(enabled = ready, onClick = { panel = "edges" }) { Text("连线") }
-                        TextButton(enabled = ready, onClick = { panel = "colors" }) { Text("颜色") }
-                        TextButton(enabled = ready, onClick = {
-                            val large = selectedNode.width < 350f
-                            model.submit(canvasRequest("resize") { put("id",selectedNode.id); put("width",if(large) 384f else 256f); put("height",if(large) 252f else 168f) })
-                        }) { Text(if (selectedNode.width < 350f) "放大卡片" else "缩小卡片") }
-                        TextButton(enabled = ready, onClick = { dialog = "deleteNode" }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+    }
+    }
+
+    if (!showLibrary && selectedNode != null) {
+        ModalBottomSheet(onDismissRequest = { selected = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), dragHandle = { BottomSheetDefaults.DragHandle() }) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(cardTitle(selectedNode), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val kindLabel = when (selectedNode.kind) { "client" -> "客户"; "page" -> "知识页面"; else -> "便签" }
+                val children = canvas?.let { board -> board.edges.count { edge -> edge.from == selectedNode.id && canvasIsReferral(edge, board.nodes) } } ?: 0
+                val parent = canvas?.let { board -> board.edges.firstOrNull { edge -> edge.to == selectedNode.id && canvasIsReferral(edge, board.nodes) } }
+                val parentNode = canvas?.nodes?.firstOrNull { it.id == parent?.from }
+                Text(if (selectedNode.kind == "client") "客户 · 直接推荐 ${children} 人" else kindLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                if (parentNode != null) Text("推荐人：${cardTitle(parentNode)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                val body = cardBody(selectedNode)
+                if (body.isNotBlank()) Text(body, style = MaterialTheme.typography.bodyMedium, maxLines = 8, overflow = TextOverflow.Ellipsis)
+                else Text(if (selectedNode.kind == "client") "尚未填写客户备注" else "尚无其他内容", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (selectedNode.kind == "client") {
+                    Button(onClick = {
+                        clientParentId = selectedNode.id; clientName = ""; clientDetails = ""; selected = null; dialog = "clientAdd"
+                    }, enabled = ready, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("＋ 添加此客户推荐的人") }
+                }
+                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedNode.kind == "page") {
+                        OutlinedButton(onClick = { pages[selectedNode.pageId]?.let(onOpenPage); selected = null }, enabled = ready && pages[selectedNode.pageId] != null, modifier = Modifier.weight(1f)) { Text("打开页面") }
+                    } else {
+                        OutlinedButton(onClick = {
+                            editTargetId = selectedNode.id
+                            if (selectedNode.kind == "client") {
+                                clientName = cardTitle(selectedNode); clientDetails = cardBody(selectedNode); dialog = "clientEdit"
+                            } else {
+                                editorTitle = cardTitle(selectedNode).take(80)
+                                editorText = selectedNode.text.removePrefix(editorTitle).trimStart('\n')
+                                dialog = "noteEdit"
+                            }
+                            selected = null
+                        }, enabled = ready, modifier = Modifier.weight(1f)) { Text(if (selectedNode.kind == "client") "编辑客户" else "编辑便签") }
+                    }
+                    OutlinedButton(onClick = { connectRelation = "link"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.size ?: 0) > 1, modifier = Modifier.weight(1f)) { Text("自由连线") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedNode.kind == "client") OutlinedButton(onClick = { connectRelation = "referral"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.count { it.kind == "client" } ?: 0) > 1, modifier = Modifier.weight(1f)) { Text("绑定推荐") }
+                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "edges"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("管理连线") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        val isLarge = selectedNode.width >= 350f
+                        val targetWidth = if (isLarge) { if (selectedNode.kind == "client") 192f else 256f } else 384f
+                        val targetHeight = if (isLarge) { if (selectedNode.kind == "client") 132f else 168f } else 252f
+                        if (model.submit(canvasRequest("resize") { put("id",selectedNode.id); put("width",targetWidth); put("height",targetHeight) })) selected = null
+                    }, enabled = ready, modifier = Modifier.weight(1f)) { Text(if (selectedNode.width >= 350f) "缩小卡片" else "放大卡片") }
+                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "colors"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("颜色") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { editTargetId = selectedNode.id; dialog = "deleteNode"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("移除卡片") }
                     }
                 }
+                Text("卡片位置、大小和连线可以自由编辑。移除卡片不会删除原知识页面。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
             }
-        } else Text("单指移动 · 双指缩放 · 点卡片编辑", Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 
     if (panel.isNotBlank()) {
@@ -646,19 +767,36 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             Surface(Modifier.fillMaxWidth().padding(18.dp).heightIn(max = 580.dp), shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(when(panel) { "boards" -> "全部画布（${boards.size}）"; "pages" -> "加入页面"; "nodes" -> "所有卡片"; "edges" -> "卡片连线"; "colors" -> "卡片颜色"; else -> "画布设置" }, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                        Text(when(panel) { "addActions" -> "添加到画布"; "boards" -> "全部画布（${boards.size}）"; "pages" -> "引用已有页面"; "nodes" -> "定位卡片"; "edges" -> "卡片连线"; "colors" -> "卡片颜色"; else -> "画布工具" }, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                         TextButton(onClick = { panel = "" }) { Text("关闭") }
                     }
                     if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     when (panel) {
+                        "addActions" -> {
+                            Text("选择一种卡片类型", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (canvas?.template == "customer_network") {
+                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建客户", Modifier.fillMaxWidth()) }
+                                HorizontalDivider()
+                            }
+                            TextButton(onClick = { panel = ""; editorTitle = ""; editorText = ""; dialog = "noteAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建便签", Modifier.fillMaxWidth()) }
+                            HorizontalDivider()
+                            TextButton(onClick = { panel = ""; editorText = ""; pageCreationError = ""; dialog = "pageAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建知识页面", Modifier.fillMaxWidth()) }
+                            HorizontalDivider()
+                            TextButton(onClick = { panel = "pages" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 引用已有知识页面", Modifier.fillMaxWidth()) }
+                            if (canvas?.template != "customer_network") {
+                                HorizontalDivider()
+                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 更多卡片：客户", Modifier.fillMaxWidth()) }
+                            }
+                        }
                         "boards" -> {
-                            Button(enabled = model.canCreateBoard, onClick = createCanvas, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建画布") }
+                            Button(enabled = model.canCreateBoard, onClick = { panel = ""; showLibrary = true }, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建画布") }
                             if (boards.size >= 128) Text("已达 128 张画布上限", Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
                             LazyColumn(modifier = Modifier.weight(1f, fill = false)) { items(boards, key = { it.id }) { board ->
                                 val current = board.id == canvas?.id
                                 TextButton(enabled = ready && !current, modifier = Modifier.fillMaxWidth(), onClick = { model.submit(canvasRequest("switch") { put("id",board.id) }) }) {
                                     Text(board.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     if (current) Text("当前", Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.primary)
+                                    else if (board.template == "customer_network") Text("模板", Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             } }
                         }
@@ -672,32 +810,46 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             } }
                         }
                         "nodes" -> {
-                            if (canvas?.nodes.isNullOrEmpty()) Text("还没有卡片", Modifier.padding(vertical = 20.dp))
-                            LazyColumn { items(canvas?.nodes.orEmpty(), key = { it.id }) { node ->
+                            OutlinedTextField(value = nodeSearch, onValueChange = { nodeSearch = it.take(100) }, singleLine = true, label = { Text("搜索客户、便签或页面") }, modifier = Modifier.fillMaxWidth())
+                            val matches = canvas?.nodes.orEmpty().filter { node -> nodeSearch.isBlank() || cardTitle(node).contains(nodeSearch, ignoreCase = true) || cardBody(node).contains(nodeSearch, ignoreCase = true) }
+                            if (matches.isEmpty()) Text(if (nodeSearch.isBlank()) "还没有卡片" else "没有找到匹配的卡片", Modifier.padding(vertical = 20.dp))
+                            LazyColumn { items(matches, key = { it.id }) { node ->
                                 TextButton(enabled = ready, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    selected = node.id; panel = ""
-                                    model.submit(canvasRequest("view") { put("x",node.x + node.width/2); put("y",node.y + node.height/2); put("zoom",1f) })
-                                }) { Text(if(node.kind == "page") canvasPageLabel(pages[node.pageId]).first else node.text.ifBlank { "空白便签" }, Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                                    val from = connectFrom
+                                    if (from != null) {
+                                        if (from != node.id && model.submit(canvasRequest("connect") { put("from",from); put("to",node.id); put("relation",connectRelation) })) {
+                                            connectFrom = null; selected = null; panel = ""
+                                        }
+                                    } else {
+                                        selected = node.id; panel = ""
+                                        model.submit(canvasRequest("view") { put("x",node.x + node.width/2); put("y",node.y + node.height/2); put("zoom",1f) })
+                                    }
+                                }) { Text(cardTitle(node), Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             } }
                         }
                         "edges" -> {
-                            val edges = canvas?.edges.orEmpty().filter { it.from == selected || it.to == selected }
+                            val edges = canvas?.edges.orEmpty().filter { it.from == editTargetId || it.to == editTargetId }
                             val nodeIndex = remember(canvas?.nodes) { canvas?.nodes?.associateBy { it.id }.orEmpty() }
                             if (edges.isEmpty()) Text("这张卡片还没有连线", Modifier.padding(vertical = 20.dp))
                             LazyColumn { items(edges, key = { it.id }) { edge ->
-                                val other = nodeIndex[if(edge.from == selected) edge.to else edge.from]
+                                val other = nodeIndex[if(edge.from == editTargetId) edge.to else edge.from]
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text((if(edge.from == selected) "→ " else "← ") + (if(other?.kind == "page") canvasPageLabel(pages[other.pageId]).first else other?.text.orEmpty()), Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text((if(edge.from == editTargetId) "→ " else "← ") + (other?.let(cardTitle) ?: "未知卡片") + (if (canvasIsReferral(edge, canvas?.nodes.orEmpty())) " · 推荐" else " · 普通"), Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     TextButton(enabled = ready, onClick = { model.submit(canvasRequest("removeEdge") { put("id",edge.id) }) }) { Text("移除") }
                                 }
                             } }
                         }
                         "colors" -> listOf("blue" to "蓝色","green" to "绿色","amber" to "琥珀","pink" to "粉色","purple" to "紫色").forEach { (color,label) ->
-                            TextButton(enabled = ready && selectedNode != null, modifier = Modifier.fillMaxWidth(), onClick = { selectedNode?.let { model.submit(canvasRequest("color") { put("id",it.id); put("color",color) }) }; panel = "" }) { Text(label, color = canvasTint(color)) }
+                            TextButton(enabled = ready && editTargetId != null, modifier = Modifier.fillMaxWidth(), onClick = { editTargetId?.let { id -> model.submit(canvasRequest("color") { put("id",id); put("color",color) }) }; panel = "" }) { Text(label, color = canvasTint(color)) }
                         }
                         else -> {
-                            TextButton(enabled = ready, onClick = { editorText = canvas!!.title; dialog = "rename"; panel = "" }) { Text("重命名") }
-                            TextButton(enabled = ready && !canvas?.nodes.isNullOrEmpty(), onClick = { model.submit(canvasRequest("arrange")); panel = "" }) { Text("自动排列") }
+                            TextButton(enabled = ready && model.reply?.canUndo == true, onClick = { model.submit(canvasRequest("undo")); panel = "" }) { Text("撤销上一步") }
+                            TextButton(enabled = ready && model.reply?.canRedo == true, onClick = { model.submit(canvasRequest("redo")); panel = "" }) { Text("重做") }
+                            TextButton(enabled = ready && canvas?.nodes?.any { it.kind == "client" } == true, onClick = { model.submit(canvasRequest("arrangeTree")); panel = "" }) { Text("按推荐层级排列客户") }
+                            TextButton(enabled = ready && !canvas?.nodes.isNullOrEmpty(), onClick = { model.submit(canvasRequest("arrange")); panel = "" }) { Text("按网格排列所有卡片") }
+                            HorizontalDivider()
+                            TextButton(enabled = ready, onClick = { editorText = canvas!!.title; dialog = "rename"; panel = "" }) { Text("重命名画布") }
+                            TextButton(enabled = ready, onClick = { panel = "boards" }) { Text("管理全部画布") }
                             TextButton(enabled = ready, onClick = { dialog = "deleteCanvas"; panel = "" }) { Text("删除画布", color = MaterialTheme.colorScheme.error) }
                             Text("保存在当前账户的本机工作区", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -707,26 +859,66 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
         }
     }
     if (dialog.isNotBlank()) {
-        val textEdit = dialog in listOf("add","edit","new","rename")
-        val titleEdit = dialog in listOf("new","rename")
-        AlertDialog(onDismissRequest = { if (!model.busy) dialog = "" }, title = { Text(when(dialog) { "add" -> "新便签"; "edit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名"; "deleteNode" -> "删除卡片？"; else -> "删除画布？" }) },
+        val noteDialog = dialog == "noteAdd" || dialog == "noteEdit"
+        val clientDialog = dialog == "clientAdd" || dialog == "clientEdit"
+        val titleEdit = dialog == "new" || dialog == "rename" || dialog == "pageAdd"
+        val isEditing = dialog == "clientEdit" || dialog == "noteEdit"
+        AlertDialog(
+            onDismissRequest = { if (!model.busy) dialog = "" },
+            shape = RoundedCornerShape(24.dp),
+            title = { Text(when(dialog) { "clientAdd" -> "新建客户"; "clientEdit" -> "编辑客户"; "noteAdd" -> "新建便签"; "noteEdit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名画布"; "pageAdd" -> "新建知识页面"; "deleteNode" -> "移除这张卡片？"; else -> "删除整张画布？" }) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (textEdit) OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(if(titleEdit) 80 else 8000) }, label = { Text(if(titleEdit) "画布名称" else "内容") }, modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp), singleLine = titleEdit, minLines = if(titleEdit) 1 else 4)
-                    else Text(if(dialog == "deleteNode") "同时移除相连的线。可以撤销。" else "删除整张画布和其中的卡片，原知识页面会保留。")
-                    if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (clientDialog) {
+                        OutlinedTextField(value = clientName, onValueChange = { clientName = it.take(80) }, label = { Text("客户姓名") }, placeholder = { Text("例如：张先生") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        if (dialog == "clientAdd" && clientParentId != null) Text("会自动连接到所选推荐人", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        OutlinedTextField(value = clientDetails, onValueChange = { clientDetails = it.take(4000) }, label = { Text("客户资料与跟进记录") }, minLines = 3, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp))
+                    } else if (noteDialog) {
+                        OutlinedTextField(value = editorTitle, onValueChange = { editorTitle = it.take(80) }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(7800) }, label = { Text("内容") }, minLines = 3, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp))
+                    } else if (titleEdit) {
+                        OutlinedTextField(value = editorText, onValueChange = { editorText = it.take(80) }, label = { Text(if (dialog == "pageAdd") "页面标题" else "画布名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    } else Text(if(dialog == "deleteNode") "移除后相关连线也会消失，可以撤销。原知识页面不会删除。" else "删除此画布和卡片？其他画布及知识页面不受影响。")
+                    if (model.error.isNotBlank()) Text(model.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    if (pageCreationError.isNotBlank() && dialog == "pageAdd") Text(pageCreationError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-            }, confirmButton = { TextButton(enabled = ready && (dialog != "new" || model.canCreateBoard) && (!titleEdit || editorText.isNotBlank()), onClick = {
-                val request = when(dialog) {
-                    "add" -> canvasRequest("addNote") { put("text",editorText) }
-                    "edit" -> canvasRequest("text") { put("id",selectedNode?.id.orEmpty()); put("text",editorText) }
-                    "new" -> canvasRequest("new") { put("title",editorText.trim()) }
-                    "rename" -> canvasRequest("rename") { put("title",editorText) }
-                    "deleteNode" -> canvasRequest("removeNode") { put("id",selectedNode?.id.orEmpty()) }
-                    else -> canvasRequest("deleteCanvas")
-                }
-                if(model.submit(request)) dialogRequestPending = true
-            }) { Text(if(dialog == "new") "创建" else if(textEdit) "保存" else "删除") } }, dismissButton = { TextButton(enabled = !model.busy, onClick = { dialog = "" }) { Text("取消") } })
+            },
+            confirmButton = {
+                val allowed = ready && !creatingPage && (dialog != "new" || model.canCreateBoard) &&
+                    (!titleEdit || editorText.isNotBlank()) &&
+                    (!clientDialog || clientName.isNotBlank()) &&
+                    (!noteDialog || editorTitle.isNotBlank())
+                TextButton(enabled = allowed, onClick = {
+                    if (dialog == "pageAdd") {
+                        creatingPage = true; pageCreationError = ""
+                        onCreatePage(editorText.trim()) { createdId ->
+                            creatingPage = false
+                            if (createdId == null) pageCreationError = "页面创建失败，请重新尝试"
+                            else if (model.submit(canvasRequest("addPage") { put("pageId", createdId) })) dialogRequestPending = true
+                            else pageCreationError = "页面已创建，请在引用已有页面中加入"
+                        }
+                    } else {
+                    val request = when(dialog) {
+                        "clientAdd" -> canvasRequest("addClient") {
+                            put("name",clientName.trim()); put("details",clientDetails)
+                            clientParentId?.let { put("parentId",it) }
+                        }
+                        "clientEdit" -> canvasRequest("updateClient") {
+                            put("id",editTargetId.orEmpty()); put("name",clientName.trim()); put("details",clientDetails)
+                        }
+                        "noteAdd" -> canvasRequest("addNote") { put("text",editorTitle.trim()+"\n"+editorText) }
+                        "noteEdit" -> canvasRequest("text") { put("id",editTargetId.orEmpty()); put("text",editorTitle.trim()+"\n"+editorText) }
+                        "new" -> canvasRequest("new") { put("title",editorText.trim()); put("template",pendingTemplate) }
+                        "rename" -> canvasRequest("rename") { put("title",editorText.trim()) }
+                        "deleteNode" -> canvasRequest("removeNode") { put("id",editTargetId.orEmpty()) }
+                        else -> canvasRequest("deleteCanvas")
+                    }
+                    if (model.submit(request)) { dialogRequestPending = true; if (dialog == "new") showLibrary = false }
+                    }
+                }) { Text(if (clientDialog || noteDialog || titleEdit) { if (isEditing || dialog == "rename") "保存" else "创建" } else "删除") }
+            },
+            dismissButton = { TextButton(enabled = !model.busy && !creatingPage, onClick = { dialog = "" }) { Text("取消") } }
+        )
     }
 }
 
@@ -750,7 +942,7 @@ private class CanvasTextCache {
         if(old != null && old.width == node.width && old.height == node.height && old.title == title && old.body == body && old.color == textColor) return old.layout
         return run {
             val drawPaint = TextPaint(paint).apply { color = textColor }
-            val content = (title.take(160) + if(body.isBlank()) "" else "\n\n" + body.take(300))
+            val content = (title.take(80) + if(body.isBlank()) "" else "\n\n" + body.take(140))
             StaticLayout.Builder.obtain(content,0,content.length,drawPaint,(node.width-28).toInt().coerceAtLeast(1))
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL).setIncludePad(false).setLineSpacing(2f,1f)
                 .setMaxLines(((node.height-30)/20).toInt().coerceAtLeast(1)).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
@@ -760,7 +952,7 @@ private class CanvasTextCache {
 }
 
 @Composable
-private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit) {
+private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit, onAddFirst: () -> Unit) {
     val modelState by model.state.collectAsState()
     val visualReady = !modelState.busy || modelState.quietGesture
     val density = LocalDensity.current.density
@@ -881,15 +1073,19 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                 val nodeY = preview?.takeIf { it.id == node.id }?.y ?: node.y
                 if(nodeX + node.width >= left && nodeX <= right && nodeY + node.height >= top && nodeY <= bottom) {
                     paint.style=Paint.Style.FILL; paint.color=surface
-                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,12f,12f,paint)
+                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
                     paint.style=Paint.Style.STROKE; paint.strokeWidth=if(node.id==selected || node.id==connectFrom) 2.5f/viewport.zoom else 1f/viewport.zoom
                     paint.color=if(node.id==selected || node.id==connectFrom) primary else canvasTint(node.color).copy(alpha=0.45f).toArgb()
-                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,12f,12f,paint)
-                    paint.style=Paint.Style.FILL; paint.color=canvasTint(node.color).toArgb()
+                    native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
+                    paint.style=Paint.Style.FILL; paint.color=if (node.kind == "client") canvasTint("green").toArgb() else canvasTint(node.color).toArgb()
                     native.drawRoundRect(nodeX+12,nodeY+13,nodeX+16,nodeY+35,2f,2f,paint)
                     val textLayout = if(node.kind=="page") {
                         val label = textCache.label(pages[node.pageId]); textCache.layout(node,label.first,label.second,textColor)
-                    } else textCache.layout(node,node.text.ifBlank { "空白便签" },"",textColor)
+                    } else {
+                        val title = node.text.substringBefore("\n").ifBlank { if (node.kind == "client") "未命名客户" else "空白便签" }
+                        val body = node.text.substringAfter("\n", "").trim()
+                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,if (node.kind == "client") "点击查看客户资料" else body,textColor)
+                    }
                     native.save(); native.clipRect(nodeX+20,nodeY+12,nodeX+node.width-10,nodeY+node.height-10); native.translate(nodeX+24,nodeY+14)
                     textLayout.draw(native)
                     native.restore()
@@ -897,8 +1093,12 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             }
             native.restore()
         }
-        if(canvas.nodes.isEmpty()) Text("把想法放在一起", Modifier.align(Alignment.Center), color=MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.align(Alignment.BottomEnd).padding(8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp)), verticalAlignment=Alignment.CenterVertically) {
+        if(canvas.nodes.isEmpty()) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(if (canvas.template == "customer_network") "整理客户和推荐关系" else "从一个想法开始", style = MaterialTheme.typography.titleMedium)
+            Text(if (canvas.template == "customer_network") "客户、便签和知识页面都可以自由连接" else "添加便签或页面，自由组织卡片与连线", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = onAddFirst, enabled = visualReady) { Text(if (canvas.template == "customer_network") "＋ 添加第一个客户" else "＋ 添加第一张便签") }
+        }
+        Row(Modifier.align(Alignment.BottomEnd).padding(10.dp).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), RoundedCornerShape(18.dp)), verticalAlignment=Alignment.CenterVertically) {
             TextButton(enabled=visualReady, onClick={
                 val nodes=canvas.nodes
                 if(nodes.isNotEmpty() && size.width>0 && size.height>0) {

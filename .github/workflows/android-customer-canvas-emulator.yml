@@ -1,0 +1,101 @@
+name: Customer canvas UX Android emulator acceptance
+
+on:
+  push:
+    branches: [feat/android-customer-network-canvas-ux-20261111]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: customer-canvas-ux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    name: Signed APK customer network creation and restart on API 35
+    runs-on: ubuntu-22.04
+    timeout-minutes: 135
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Rust acceptance probe
+        shell: bash
+        run: rustc --edition=2021 -D warnings -O tools/android_customer_canvas_probe.rs -o android_customer_canvas_probe
+      - name: Wait for the corresponding signed APK build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The prior commit produced a fully signed APK. When only this
+          # Rust emulator probe and its workflow differ, reuse those exact
+          # immutable bytes and avoid an unnecessary second Android build.
+          baseline=a0e1997104d0b8dcca03b0daa1365577951a966b
+          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$baseline...$GITHUB_SHA")"
+          if printf '%s' "$comparison" | jq -e '(.files | length) > 0 and (.files | all(.filename == "tools/android_customer_canvas_probe.rs" or .filename == ".github/workflows/android-customer-canvas-emulator.yml"))' > /dev/null; then
+            echo "Application sources unchanged since verified signed APK build 42876775286"
+            echo 42876775286 > signed_build_run_id.txt
+          else
+            for attempt in $(seq 1 170); do
+              response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-customer-network-canvas-ux-20261111&per_page=50")"
+              match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
+              if test -n "$match"; then
+                read -r run_id status conclusion <<< "$match"
+                if test "$status" = completed; then
+                  if test "$conclusion" != success; then
+                    echo "Matching signed APK build $run_id ended with $conclusion" >&2
+                    exit 1
+                  fi
+                  echo "$run_id" > signed_build_run_id.txt
+                  break
+                fi
+              fi
+              sleep 30
+            done
+          fi
+          test -s signed_build_run_id.txt
+          gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
+          cd signed_apk
+          test -f tenfold_v2.23.4.15.apk
+          tr -d '\r' < tenfold_v2.23.4.15.apk.sha256 | sha256sum -c -
+      - name: Enable accelerated Android emulator
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Install app, create referrals, restart and verify persistence
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v2.23.4.15.apk
+            ./android_customer_canvas_probe customer_canvas_evidence
+      - name: Publish acceptance report to checks
+        if: always()
+        run: |
+          if test -f customer_canvas_evidence/report.md; then
+            cat customer_canvas_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Emulator acceptance never reached the report stage." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload emulator screenshots, accessibility and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-canvas-v2.23.4.15-emulator-evidence
+          path: |
+            customer_canvas_evidence/
+            signed_build_run_id.txt
+          if-no-files-found: warn
+          retention-days: 21

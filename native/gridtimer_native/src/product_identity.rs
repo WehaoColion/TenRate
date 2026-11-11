@@ -1,3 +1,5 @@
+// v2.23.4.16 Android - Universal canvas and optional template identity.
+// v2.23.4.15 Android - Align customer network canvas candidate identity.
 // v2.23.4.14 Android - Align identity for compact startup shell candidate.
 // v2.23.4.13 Android - Persist knowledge exclusions for legal analysis.
 // v2.23.4.12 Android - Stabilize and verify knowledge canvas gestures.
@@ -131,8 +133,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.11";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.23.4.14";
-pub const ANDROID_VERSION_CODE: i32 = 22344;
+pub const ANDROID_APP_VERSION: &str = "2.23.4.16";
+pub const ANDROID_VERSION_CODE: i32 = 22346;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

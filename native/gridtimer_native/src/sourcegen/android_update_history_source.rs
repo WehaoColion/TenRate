@@ -1,3 +1,5 @@
+// v2.23.4.16 - Restore all-purpose canvas and optional client-network template.
+// v2.23.4.15 - Record customer-network canvas interaction improvements.
 // v2.23.4.14 - Simplify the transient Android startup shell.
 // v2.23.4.13 - Keep Android legal AI knowledge exclusions encrypted and durable.
 // v2.23.4.12 - Stabilize Android canvas gestures and add emulator verification.
@@ -61,7 +63,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.14";
+pub const LATEST_VERSION: &str = "2.23.4.16";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -91,6 +93,36 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.16",
+        updatedAt = "",
+        summary = "画布回归通用工作空间，客户网络保留为可选模板",
+        sections = listOf(
+            AndroidUpdateSection("通用画布", listOf(
+                "新增画布首页，空白画布与客户网络模板分开选择。普通画布不再默认要求创建客户。",
+                "便签、页面、客户卡片均可自由连线、查看及删除连线、调整卡片大小，撤销重做入口恢复易用。"
+            )),
+            AndroidUpdateSection("关系与兼容", listOf(
+                "普通连线不受推荐关系的重复上级及循环约束；只有明确绑定推荐关系时才执行这些规则。",
+                "保留已有客户卡片、自动建立下级、树形布局及本地旧画布，新增模板可与通用卡片混用。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "2.23.4.15",
+        updatedAt = "",
+        summary = "知识画布新增客户网络卡片，优化点击详情和推荐关系操作",
+        sections = listOf(
+            AndroidUpdateSection("客户网络", listOf(
+                "画布卡片可独立填写客户姓名及备注，点击卡片在底部查看完整信息，并能直接添加其推荐的下级客户。",
+                "使用 Rust 保存推荐连线，避免重复上级绑定及循环关系，并提供按推荐层级排列。" 
+            )),
+            AndroidUpdateSection("画布操作", listOf(
+                "压缩顶部按钮，统一添加入口，支持新建知识页面、引用旧页面、便签标题与正文分开编辑。",
+                "支持搜索定位卡片，保留原知识页面及旧画布数据；本次不包含红包实际结算。" 
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.14",
         updatedAt = "2026-11-10 18:25",

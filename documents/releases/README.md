@@ -1,3 +1,5 @@
+Android 2.23.4.16 通用画布与可选客户网络模板候选：[说明](android/release_notes_v2.23.4.16.md)。
+Android 2.23.4.15 客户网络画布交互优化候选：[说明](android/release_notes_v2.23.4.15.md)。
 Android 2.23.4.14 启动加载过渡界面精简候选：[说明](android/release_notes_v2.23.4.14.md)。
 Android 2.23.4.10 计时首页顶部信息区视觉调整候选：[说明](android/release_notes_v2.23.4.10.md)。
 Android 2.23.4.9 计时首页顶部单行布局候选：[说明](android/release_notes_v2.23.4.9.md)。
