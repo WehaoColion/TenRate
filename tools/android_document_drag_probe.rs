@@ -107,7 +107,8 @@ fn knowledge(evidence_root:&Path)->Result<(),String>{
     for attempt in 0..9 {
         clear_overlay()?;
         let ui=tree()?;
-        if ui.contains("知识目录") || ui.contains("新建页面") || ui.contains("新建文件夹"){
+        if ui.contains("知识目录") || ui.contains("新建页面") || ui.contains("新建文件夹") ||
+            ui.contains("Directory") || ui.contains("New page") || ui.contains("Blank page"){
             return Ok(());
         }
         evidence(evidence_root,&format!("navigation_{attempt}"));
@@ -116,19 +117,19 @@ fn knowledge(evidence_root:&Path)->Result<(),String>{
     Err("Knowledge directory could not be reached".into())
 }
 fn add_page(root:&Path)->Result<(),String>{
-    if tap_label(&[TITLE])?{
+    // On a fresh English emulator the knowledge home already exposes a
+    // "Blank page" template. That creates a page without an intermediate
+    // "New page" choice; do not accidentally create two pages.
+    if tap_label(&["Blank page","空白页"])? {
+        evidence(root,"page_created_from_blank_template");
         return Ok(());
     }
-    let _=tap_label(&["新建","New"])?;
-    if !tap_label(&["新建页面","页面","Page"])? {
-        // Some releases open the editor directly when New is pressed.
-        if !tree()?.contains("从这里开始输入") && !tree()?.contains("输入 / 插入内容"){
-            evidence(root,"page_creation_missing");
-            return Err("Cannot create a knowledge page".into());
-        }
+    if tap_label(&["New page","新建页面"])? {
+        evidence(root,"page_created_from_new_action");
+        return Ok(());
     }
-    evidence(root,"page_created");
-    Ok(())
+    evidence(root,"page_creation_missing");
+    Err("Neither the blank-page template nor new-page button was visible".into())
 }
 fn edit_fields()->Result<Vec<Node>,String>{
     let ui=tree()?;
