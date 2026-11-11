@@ -162,24 +162,30 @@ fn main(){
         report.push_str("PASS: existing blank canvas remained generic; note creation and both page actions are present.\n\n");
         open_center_card()?;
         take("07_generic_card_detail",&out);
-        for name in ["自由连线","管理连线","放大卡片"] {
-            if seek(&[name])?.is_none(){return Err(format!("Generic card lost editing action {name}"));}
+        for (action, labels) in [
+            ("free link", &["自由连线", "Free link", "Connect"][..]),
+            ("manage links", &["管理连线", "Manage links", "Manage connections"][..]),
+            ("resize", &["放大卡片", "Enlarge card", "Expand card"][..]),
+        ] {
+            if seek(labels)?.is_none() {
+                return Err(format!("Generic card lost editing action {action}: {labels:?}"));
+            }
         }
         take("07_generic_card_tools",&out);
         report.push_str("PASS: ordinary note card exposes free linking, edge management and resize controls.\n\n");
-        must_tap(&["放大卡片"])?;
+        must_tap(&["放大卡片","Enlarge card","Expand card"])?;
         open_center_card()?;
-        if seek(&["缩小卡片"])?.is_none(){return Err("Canvas resize did not change card state".into());}
-        must_tap(&["缩小卡片"])?;
+        if seek(&["缩小卡片","Shrink card","Reduce card"])?.is_none(){return Err("Canvas resize did not change card state".into());}
+        must_tap(&["缩小卡片","Shrink card","Reduce card"])?;
         open_center_card()?;
-        must_tap(&["自由连线"])?;
+        must_tap(&["自由连线","Free link","Connect"])?;
         must_tap(&["查找"])?;
         must_tap(&["IdeaB"])?;
         count("1 条关系")?;
         take("08_generic_free_link",&out);
         report.push_str("PASS: two generic notes were linked through the real canvas UI.\n\n");
         open_center_card()?;
-        must_tap(&["管理连线"])?;
+        must_tap(&["管理连线","Manage links","Manage connections"])?;
         if seek(&["普通"])?.is_none(){return Err("Generic edge management did not expose ordinary link".into());}
         take("09_generic_edge_panel",&out);
         close_overlay()?;
@@ -193,13 +199,13 @@ fn main(){
         create_card("ClientA")?;
         count("1 张卡片")?;
         open_center_card()?;
-        if seek(&["绑定推荐"])?.is_none(){return Err("Customer referral action missing".into());}
-        must_tap(&["添加此客户推荐的人"])?;
+        if seek(&["绑定推荐","Bind referral","Set referral"])?.is_none(){return Err("Customer referral action missing".into());}
+        must_tap(&["添加此客户推荐的人","Add referral","Add person referred"])?;
         create_card("ClientB")?;
         count("2 张卡片")?;count("1 条关系")?;
         take("11_customer_template_referral",&out);
         report.push_str("PASS: optional customer template creates client cards with one referral connection.\n\n");
-        must_tap(&["更多"])?;
+        must_tap(&["更多","More"])?;
         must_tap(&["按推荐层级排列客户"])?;
         thread::sleep(Duration::from_millis(900));
         take("12_customer_tree",&out);
@@ -211,7 +217,7 @@ fn main(){
         navigate_board("客户网络")?;
         count("2 张卡片")?;count("1 条关系")?;
         take("13_customer_reopened",&out);
-        must_tap(&["返回"])?;
+        must_tap(&["返回","Back"])?;
         navigate_board("知识画布")?;
         count("2 张卡片")?;count("1 条关系")?;
         take("14_generic_reopened",&out);
