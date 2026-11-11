@@ -1,0 +1,123 @@
+name: Android document block drag emulator acceptance
+
+on:
+  push:
+    branches: [feat/android-document-block-drag-v2.23.4.18]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-document-grip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    name: Poll signed APK and emulator every 20 minutes until verified
+    runs-on: ubuntu-latest
+    timeout-minutes: 335
+    steps:
+      - name: Stop automatically when both checks pass or a check fails
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 16); do
+            release="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=$GITHUB_REF_NAME&per_page=100" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha) | (.status + ":" + (.conclusion // ""))] | first // "missing"')"
+            emulator="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" | jq -r '[.jobs[] | select(.name == "API 35 document block grip end to end") | (.status + ":" + (.conclusion // ""))] | first // "missing"')"
+            echo "Check $attempt: signed APK=$release, booted Android emulator=$emulator"
+            if [[ "$release" == completed:success && "$emulator" == completed:success ]]; then
+              echo "Signed APK and booted Android emulator both passed. 20-minute check terminates automatically." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            for status in "$release" "$emulator"; do
+              if [[ "$status" == completed:* && "$status" != completed:success ]]; then
+                echo "A required CI result failed: $status" >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
+            done
+            sleep 1200
+          done
+          echo "Acceptance not confirmed within the maximum monitoring window." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+  emulator:
+    name: API 35 document block grip end to end
+    runs-on: ubuntu-22.04
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Rust emulator driver
+        shell: bash
+        run: |
+          rustc --edition=2021 -D warnings -O tools/android_document_drag_probe.rs -o android_document_drag_probe
+      - name: Download and verify signed candidate APK from matching commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 220); do
+            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=${GITHUB_REF_NAME}&per_page=100")"
+            match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
+            if test -n "$match"; then
+              read -r run_id status conclusion <<< "$match"
+              if test "$status" = completed; then
+                if test "$conclusion" != success; then
+                  echo "Signed APK build $run_id failed: $conclusion" >&2
+                  exit 1
+                fi
+                echo "$run_id" > signed_build_run_id.txt
+                break
+              fi
+            fi
+            sleep 30
+          done
+          test -s signed_build_run_id.txt
+          gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
+          cd signed_apk
+          test -f tenfold_v2.23.4.18.apk
+          tr -d '\r' < tenfold_v2.23.4.18.apk.sha256 | sha256sum -c -
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Boot Android, install signed APK, drag and persist blocks
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v2.23.4.18.apk
+            ./android_document_drag_probe document_drag_evidence
+      - name: Publish simulator acceptance report
+        if: always()
+        shell: bash
+        run: |
+          if test -f document_drag_evidence/report.md; then
+            cat document_drag_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No complete emulator report was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload actual screenshots and accessibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-document-block-drag-v2.23.4.18-evidence
+          path: |
+            document_drag_evidence/
+            signed_build_run_id.txt
+          if-no-files-found: warn
+          retention-days: 21
