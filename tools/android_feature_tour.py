@@ -2,6 +2,7 @@
 # API35 unattended feature-tour evidence. All PNGs come from adb screencap.
 import csv
 import hashlib
+from functools import lru_cache
 import json
 import os
 import re
@@ -27,10 +28,11 @@ rows = []
 errors = []
 num = 0
 seen = set()
+seen_png = set()
 module_counts = {}
 MAX_PER_MODULE = 180
 MAX_TOTAL = 850
-MAX_DEPTH = 4
+MAX_DEPTH = 5
 DUMP = "/sdcard/feature_tour.xml"
 
 def adb(*args, timeout=22, binary=False):
@@ -113,6 +115,11 @@ def capture(module, action, xml=None, detail="", force=False):
     if not force and key in seen: return False
     data=image_bytes()
     if not data: return False
+    png_hash=hashlib.sha256(data).hexdigest()
+    if png_hash in seen_png:
+        errors.append("像素完全重复，跳过："+module+" / "+action)
+        return False
+    seen_png.add(png_hash)
     num+=1
     module_counts[module]=module_counts.get(module,0)+1
     seen.add(key)
@@ -171,6 +178,7 @@ def open_app():
             if not click(["Close app","关闭应用"]): break
         else: break
 
+@lru_cache(maxsize=1)
 def screen_height():
     result = safe_adb("shell","wm","size")
     found = re.search(r"(\d+)x(\d+)",result)
@@ -270,6 +278,10 @@ SAFE_ACTION_WORDS = (
     "统计","画布","目录","页面","文件夹","风险","预算","回收站","模板","属性","时间",
     "账单","提醒","目标","标签","帮助","选择","管理","详情","今日","本周","本月",
     "列表","清单","汇总","趋势","总览","最近","记录","收入","支出","全部","结构",
+    "新开始","开始","暂停","继续","结束","停止","完成","取消","创建","闪念","会议","复盘",
+    "视图","日账","月快照","季度","年度","收支","上一周期","下一周期","回到当前周期",
+    "适应","卡片","客户","纸张","内容","版式","日期","计时","时钟","置顶","粗体",
+    "最新","版本","确认","草稿","输入","备注","金额","类型","来源","添加第一张",
     "展开","折叠","待办","插入","移动","链接","分组","归档","颜色","格式","图表",
     "文本","文档","快捷操作","项目","通知","收藏","复制","预览","账户","个人"
 )
@@ -281,7 +293,7 @@ def eligible(n):
     if s.startswith("http") or "@" in s: return False
     if s in MODULES or re.fullmatch(r"v?\d+(?:\.\d+){2,}",s):return False
     if not any(hint in s for hint in SAFE_ACTION_WORDS): return False
-    if n["y"]<100 or n["y"]>screen_height()*.86: return False
+    if n["y"]<100 or n["y"]>screen_height()*.91: return False
     if n["class_"] not in ("android.widget.TextView","android.view.View") and not n["class_"].endswith(("Button","ImageButton")): return False
     return True
 
@@ -328,8 +340,10 @@ def explore(module, depth, trace, budget=0):
             break
         current=get_xml()
         if not current: break
-        if depth==0 and root_module(current)!=module:
+        if depth==0 and module in MODULES and root_module(current)!=module:
             current=at_module(module)
+        elif depth==0 and module=="画布" and "知识画布，" not in current:
+            current=at_canvas()
         current_nodes=nodes(current)
         found=next((x for x in current_nodes if x["label"]==n["label"] and
                     abs(x["y"]-n["y"])<170),None)
@@ -359,12 +373,32 @@ def explore(module, depth, trace, budget=0):
         if not restored:
             if depth==0:
                 try:
-                    restored=(root_module(at_module(module))==module)
+                    if module=="画布":
+                        restored=("知识画布，" in at_canvas())
+                    else:
+                        restored=(root_module(at_module(module))==module)
                 except Exception as ex:
                     errors.append("页面返回失败："+module+" / "+label+" / "+str(ex)[:90])
             if not restored:
                 # Do not tag unknown screens as this module.
                 break
+
+def at_canvas():
+    # Canvas is a nested route under Knowledge, not a fifth bottom-navigation module.
+    current=get_xml()
+    if "知识画布，" in current and "＋ 添加" in current:
+        return current
+    at_module("知识")
+    if not click(["画布","卡片与连线"]):
+        raise RuntimeError("知识模块没有画布入口")
+    current=get_xml()
+    if "知识画布，" not in current:
+        if not click(["知识画布","打开画布"]):
+            raise RuntimeError("画布列表中没有知识画布")
+        current=get_xml()
+    if "知识画布，" not in current or "＋ 添加" not in current:
+        raise RuntimeError("未进入实际画布编辑正文")
+    return current
 
 def seed_editor(module):
     # Only insert disposable, local demo data; never invoke AI, sync or payment.
@@ -444,14 +478,14 @@ def main():
             (ROOT/"模块导航问题.txt").write_text("\n".join(errors),encoding="utf-8")
             # Keep already captured valid modules as partial evidence. Do not forge coverage.
             continue
-    # Canvas is a distinct cross-module route and is also exercised by existing Rust UI probe.
+    # Canvas is a distinct nested route; capture its actual list and editing surface.
     try:
         at_module("知识")
-        if click(["画布","我的画布","知识画布","卡片与连线"]):
+        if click(["画布","卡片与连线"]):
             capture("画布","入口与画布列表",get_xml(),force=True)
-            if click(["知识画布","新建画布","打开画布"]):
-                capture("画布","画布打开",get_xml(),force=True)
-                explore("画布",0,["画布"])
+            canvas=at_canvas()
+            capture("画布","画布打开",canvas,force=True)
+            explore("画布",0,["画布"])
     except Exception as ex:
         errors.append("画布探索异常："+str(ex))
     # Final restart demonstrates app still starts after navigation.
