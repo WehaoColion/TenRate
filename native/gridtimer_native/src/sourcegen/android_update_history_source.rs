@@ -1,3 +1,4 @@
+// v2.13.5.3 - Describe today's time accurately before the first recorded session.
 // v2.13.5.2 - Paper-like knowledge rows, folder glyphs and quieter hierarchy chrome.
 // v2.13.5.1 - Compact referral forest layout and orthogonal connections.
 // v2.23.4.18 - Drag-to-reorder mobile document blocks with single save.
@@ -67,7 +68,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.2";
+pub const LATEST_VERSION: &str = "2.13.5.3";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -97,6 +98,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.3",
+        updatedAt = "2026-11-13 02:36",
+        summary = "首页今日计时标签不再错误显示为归档",
+        sections = listOf(
+            AndroidUpdateSection("今日计时", listOf(
+                "未产生计时时显示今日 0分钟；有计时时仍显示累计时长，避免把统计标签误认为归档入口。",
+                "英文界面在零时长下显示 Today 0m，保留历史与主题快捷按钮及原有归档功能。"
+            )),
+            AndroidUpdateSection("验证范围", listOf(
+                "由 Rust 生成器统一修正安卓首页展示，不改变 Windows 客户端、计时记录、持久化与同步数据。",
+                "GitHub API 35 模拟器启动与零时长界面检查以实际工作流结果为准。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.2",
         updatedAt = "2026-11-13 01:25",
