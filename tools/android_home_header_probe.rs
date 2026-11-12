@@ -11,7 +11,8 @@ use std::{
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 const VERSION: &str = "2.13.5.3";
-const ZERO_LABEL: &str = "今日 0分钟";
+const ZERO_LABEL_CN: &str = "今日 0分钟";
+const ZERO_LABEL_EN: &str = "Today 0m";
 
 fn adb(args: &[&str]) -> Result<Output, String> {
     Command::new("adb")
@@ -115,7 +116,11 @@ fn header_is_correct(view: &[Node]) -> Result<bool, String> {
     let Some(version) = view.iter().find(|node| node.label.contains(VERSION)) else {
         return Ok(false);
     };
-    let Some(today) = view.iter().find(|node| node.label == ZERO_LABEL) else {
+    // The emulator may launch in English even after set-app-locales is requested.
+    // Validate the observed language rather than mistaking a correct English badge for a failure.
+    let Some(today) = view.iter().find(|node| {
+        node.label == ZERO_LABEL_CN || node.label == ZERO_LABEL_EN
+    }) else {
         return Ok(false);
     };
     let version_y = (version.bounds[1] + version.bounds[3]) / 2;
@@ -153,6 +158,7 @@ fn wait_for_header(root: &Path, label: &str) -> Result<(), String> {
             if attempt == 5 || attempt == 12 {
                 if let Some(timer) = view.iter().find(|node| {
                     node.label == "计时" || node.description == "计时"
+                        || node.label == "Timer" || node.description == "Timer"
                 }) {
                     tap(timer)?;
                 }
@@ -209,7 +215,7 @@ fn main() {
             "# Android {VERSION} home header emulator acceptance\n\n\
              PASS: signed APK installed and started on Android API 35. \
              Cold start and forced restart both showed version {VERSION} \
-             beside the read-only '{ZERO_LABEL}' badge. \
+             beside a read-only zero-duration badge in the observed app language. \
              The incorrect archive badge was absent from the header. \
              Actual screenshots, hierarchies and AndroidRuntime logs are attached.\n"
         ),
