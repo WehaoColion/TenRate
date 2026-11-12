@@ -1,3 +1,4 @@
+Android 2.13.5.4 知识模块一致动效与触感反馈候选：[说明](android/release_notes_v2.13.5.4.md)。
 Android 2.13.5.3 首页今日计时零时长标签语义修复候选：[说明](android/release_notes_v2.13.5.3.md)。
 Android 2.13.5.2 知识模块轻拟物界面优化候选：[说明](android/release_notes_v2.13.5.2.md)。
 Android 2.13.5.1 客户推荐网络紧凑树状排布候选：[说明](android/release_notes_v2.13.5.1.md)。
