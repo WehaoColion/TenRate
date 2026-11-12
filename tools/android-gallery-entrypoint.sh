@@ -10,9 +10,12 @@ if ! adb install -r signed_apk/tenfold_v2.13.5.1.apk > apk_install_log.txt 2>&1;
   exit 1
 fi
 
+# Configure Android system and per-app language BEFORE any screenshots.
+bash tools/android-gallery-zh-locale.sh
 adb shell am start -W -n com.ofairyo.gridtimer/.MainActivity > app_launch_log.txt 2>&1 || true
 sleep 3
-adb exec-out screencap -p > feature_tour_evidence/截图/工作台/0000_模拟器实际启动.png || true
+# Raw boot evidence is excluded from the Chinese gallery until locale is verified.
+adb exec-out screencap -p > feature_tour_evidence/中文模式启动待核验.png || true
 
 timeout 80m python3 -u tools/android_feature_tour.py > gallery_tour_log.txt 2>&1
 tour_code=$?
