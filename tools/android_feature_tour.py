@@ -383,25 +383,32 @@ def main():
         encoding="utf-8")
     capture("工作台","简体中文首页",home,force=True)
     module_root_signatures={}
+    # First validate every top-level Chinese page, before attempting any editing.
+    for module in MODULES:
+        xml=at_module(module)
+        sig=body_signature(xml)
+        if sig in module_root_signatures.values():
+            raise RuntimeError("不同模块显示相同正文，拒绝错误标注："+module)
+        module_root_signatures[module]=sig
+        capture(module,"中文模块首页已验证",xml,force=True)
+    (ROOT/"中文模块导航验收.json").write_text(
+        json.dumps({"界面语言":"简体中文","导航核验":"通过",
+                    "模块根页面签名":module_root_signatures,
+                    "说明":"已逐个进入并核对四个不同模块的真实正文界面"},ensure_ascii=False,indent=2),encoding="utf-8")
+    # Only after the navigation gate has passed may deeper exploration begin.
     for module in MODULES:
         try:
             xml=at_module(module)
-            sig=body_signature(xml)
-            if sig in module_root_signatures.values():
-                raise RuntimeError("模块主页与其他模块完全相同，拒绝作为独立功能截图："+module)
-            module_root_signatures[module]=sig
-            capture(module,"中文模块首页",xml,force=True)
+            if body_signature(xml)!=module_root_signatures[module]:
+                errors.append("模块入口内容发生变化（继续按真实画面记录）："+module)
             if module in ("便签","知识","计时"): seed_editor(module)
             xml=at_module(module)
             explore(module,0,[module])
         except Exception as ex:
-            errors.append("模块 "+module+" 错误："+str(ex))
+            errors.append("模块 "+module+" 探索异常："+str(ex))
             (ROOT/"模块导航问题.txt").write_text("\n".join(errors),encoding="utf-8")
-            raise
-    (ROOT/"中文模块导航验收.json").write_text(
-        json.dumps({"界面语言":"简体中文","导航核验":"通过",
-                    "模块根页面签名":module_root_signatures,
-                    "说明":"所有模块主页均与其他模块不同，且底部导航为中文"},ensure_ascii=False,indent=2),encoding="utf-8")
+            # Keep already captured valid modules as partial evidence. Do not forge coverage.
+            continue
     # Canvas is a distinct cross-module route and is also exercised by existing Rust UI probe.
     try:
         at_module("知识")
