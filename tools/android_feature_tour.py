@@ -2,6 +2,8 @@
 # API35 unattended feature-tour evidence. All PNGs come from adb screencap.
 import csv
 import hashlib
+import io
+from PIL import Image, ImageStat
 from functools import lru_cache
 import json
 import os
@@ -72,7 +74,7 @@ def nodes(xml):
             text=a.get("text","").strip()
             desc=a.get("content-desc","").strip()
             label=text or desc
-            if not label or x2<=x1 or y2<=y1: continue
+            if (not label and not a.get("class", "").endswith("EditText")) or x2<=x1 or y2<=y1: continue
             output.append(dict(text=text,desc=desc,label=label,x=(x1+x2)//2,y=(y1+y2)//2,
                                bounds=(x1,y1,x2,y2),click=a.get("clickable","false")=="true",
                                scroll=a.get("scrollable","false")=="true",class_=a.get("class","")))
@@ -97,12 +99,29 @@ def clean(s):
     s=re.sub(r"[^\w\u4e00-\u9fff（）()、，.％%+-]+","_",str(s).strip())
     return s[:41].strip("_") or "无标题"
 
-def image_bytes():
+def real_frame(data):
+    """Reject status-bar-only black frames; valid PNG bytes alone are not proof of UI."""
     try:
-        data=adb("exec-out","screencap","-p",timeout=20,binary=True)
-        if data.startswith(b"\x89PNG"): return data
-    except Exception as ex:
-        errors.append(str(ex))
+        image=Image.open(io.BytesIO(data))
+        image.verify()
+        image=Image.open(io.BytesIO(data)).convert("RGB")
+        w,h=image.size
+        if w<300 or h<500: return False
+        center=image.crop((w//8,h//8,7*w//8,7*h//8)).resize((48,64))
+        stats=ImageStat.Stat(center)
+        return not (max(stats.mean)<8 and max(stats.stddev)<4)
+    except Exception:
+        return False
+
+def image_bytes():
+    for attempt in range(5):
+        try:
+            data=adb("exec-out","screencap","-p",timeout=20,binary=True)
+            if real_frame(data): return data
+        except Exception as ex:
+            if attempt==4: errors.append(str(ex))
+        time.sleep(0.85)
+    errors.append("真实截图画面为空白或全黑：连续5次重试后拒绝入库；UI XML 不等于实际像素")
     return b""
 
 def capture(module, action, xml=None, detail="", force=False):
@@ -313,7 +332,7 @@ def action_candidates(xml,module):
     def score(n):
         label=n["label"]
         return (0 if any(w in label for w in priority) else 1, n["y"],n["x"])
-    return sorted(found,key=score)[:24]
+    return sorted(found,key=score)[:36]
 
 def explore(module, depth, trace, budget=0):
     if depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE:
@@ -338,6 +357,9 @@ def explore(module, depth, trace, budget=0):
 
     for n in candidates:
         if num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE: break
+        # The global floating timer belongs to 计时, not to Knowledge/Notes/Risk.
+        if module not in ("计时", "画布") and n["label"] in ("暂停计时","继续计时","格子详情","开始计时"):
+            continue
         if not foreground_ok():
             safe_adb("shell","am","force-stop",PACKAGE)
             open_app()
@@ -404,44 +426,121 @@ def at_canvas():
         raise RuntimeError("未进入实际画布编辑正文")
     return current
 
+def use_latin_ime():
+    # Keep system and App zh-CN; only the keyboard is Latin for disposable demo text.
+    available=safe_adb("shell","ime","list","-s")
+    for name in available.splitlines():
+        name=name.strip()
+        if name.startswith("com.android.inputmethod.latin/"):
+            safe_adb("shell","ime","set",name)
+            return name
+    return "当前输入法（将尝试提交候选）"
+
+def committed_edit_text(expected):
+    xml=get_xml()
+    return any(n["class_"].endswith("EditText") and
+               n["text"].replace(" ","").lower()==expected.lower()
+               for n in nodes(xml))
+
+def fill_editor_field(index,value):
+    xml=get_xml()
+    edits=[n for n in nodes(xml) if n["class_"].endswith("EditText")
+           and n["bounds"][2]-n["bounds"][0]>70]
+    if index>=len(edits): return False
+    tap_node(edits[index])
+    safe_adb("shell","input","text",value)
+    time.sleep(0.55)
+    if committed_edit_text(value): return True
+    # Gboard composition can remain in the suggestion strip until committed.
+    safe_adb("shell","input","keyevent","66")
+    time.sleep(0.4)
+    if committed_edit_text(value): return True
+    safe_adb("shell","input","keyevent","61")
+    time.sleep(0.4)
+    return committed_edit_text(value)
+
 def seed_editor(module):
-    # Only insert disposable, local demo data; never invoke AI, sync or payment.
-    if module=="便签":
-        words=["＋ 新建便签","新建便签","新增便签","新建","＋ 添加","添加便签"]
-    elif module=="知识":
-        words=["＋ 新建知识页面","新建页面","创建页面","新建","＋ 添加"]
-    elif module=="计时":
-        words=["＋ 新增任务","新建任务","添加任务","新建计时","＋ 添加"]
-    else:
-        words=["记支出","记收入"]
-    if click(words):
-        capture(module,"创建或录入入口",get_xml(), "演示入口及空白表单")
-        if module in ("便签","知识","计时"):
-            xml=get_xml()
-            edits=[n for n in nodes(xml) if n["class_"].endswith("EditText")]
-            if edits:
-                tap_node(edits[0])
-                safe_adb("shell","input","text","GalleryDemo")
-                time.sleep(0.3)
-                entered=get_xml()
-                if "GalleryDemo" not in entered:
-                    # zh-CN Gboard may keep Latin text in the candidate strip.
-                    safe_adb("shell","input","keyevent","66")
-                    entered=get_xml()
-                if "GalleryDemo" not in entered:
-                    safe_adb("shell","input","keyevent","61")
-                    entered=get_xml()
-                if "GalleryDemo" not in entered:
-                    errors.append("输入法未把演示文本写入真实输入框："+module)
-                    capture(module,"输入法候选未提交_诊断",entered,
-                            "真实输入框未证实有内容；不计为已录入或已创建")
-                else:
-                    capture(module,"输入演示内容",entered,
-                            "已从真实界面结构验证虚构演示内容 GalleryDemo")
-                    # Only save explicit local creation, never send external data.
-                    if click(["创建","保存","完成","确定","Create","Save"]):
-                        capture(module,"本地创建完成",get_xml(),"本地演示数据")
+    # Seed only local, disposable records. Verify the actual EditText, never the
+    # Gboard suggestion strip or an unrelated screen label.
+    words={
+        "便签":["＋ 新建便签","新建便签","新增便签","新建","＋ 添加","添加便签"],
+        "知识":["＋ 新建知识页面","新建页面","创建页面","新建","＋ 添加"],
+        "计时":["＋ 新增任务","新建任务","添加任务","新建计时","＋ 添加"],
+        "风控":["记支出"],
+    }.get(module,[])
+    if not words or not click(words): return
+    capture(module,"创建或录入入口",get_xml(),"本地空白编辑器或录入表单")
+    use_latin_ime()
+    edits=[n for n in nodes(get_xml()) if n["class_"].endswith("EditText")]
+    if not edits:
+        errors.append("本地创建入口没有可编辑输入框："+module)
         back()
+        return
+    ok=fill_editor_field(0,"GalleryDemo")
+    if not ok:
+        errors.append("真实 EditText 未提交 GalleryDemo："+module)
+        # The form itself is valid, but it must not be marked as created.
+        back()
+        return
+    capture(module,"演示文本已写入真实输入框",get_xml(),
+            "UI XML EditText.text 已核实 GalleryDemo，非键盘候选")
+    if module=="风控":
+        if fill_editor_field(1,"12"):
+            capture(module,"金额12已写入真实输入框",get_xml(),
+                    "支出项目和金额均已填写，尚未提交")
+        else:
+            errors.append("风控金额未能写入真实 EditText")
+        # Only save an explicit local record, never an external transaction.
+        scroll_screen("down")
+        capture(module,"支出表单底部与保存入口",get_xml(),"真实滚动后的本地录入表单")
+    if click(["保存","创建","完成","确定","记入","添加记录"]):
+        capture(module,"本地演示记录提交后",get_xml(),
+                "点击本地保存，实际结果以可见画面为准，不自动声称成功")
+    back()
+
+def import_canvas_probe():
+    # Rust canvas probe uses real adb screencap. Its functional checkpoints
+    # are additional genuine states, not merely diagnostic attachments.
+    global num
+    base=Path("customer_canvas_evidence")
+    steps=[
+        ("03_customer_form","客户网络_打开创建客户表单"),
+        ("04_客户姓名已真实写入输入框","客户网络_真实输入客户姓名"),
+        ("04_customer_saved","客户网络_创建第一张客户卡片"),
+        ("05_customer_detail","客户网络_点击卡片查看客户详情"),
+        ("06_referral_saved","客户网络_添加推荐客户及连线"),
+        ("07_tree_layout","客户网络_按推荐层级自动排列"),
+        ("08_reopened_persisted","客户网络_重启后客户关系仍存在"),
+    ]
+    for stem,action in steps:
+        png=base/(stem+".png")
+        xml_file=base/(stem+".xml")
+        if not png.is_file() or not xml_file.is_file(): continue
+        data=png.read_bytes()
+        xml=xml_file.read_text(encoding="utf-8")
+        if not real_frame(data) or "<hierarchy" not in xml:
+            errors.append("画布探针截图无效，拒绝导入："+stem)
+            continue
+        digest=hashlib.sha256(data).hexdigest()
+        sig=body_signature(xml)
+        if digest in seen_png or sig in seen:
+            continue
+        if num>=MAX_TOTAL:break
+        num+=1
+        module="画布"
+        module_counts[module]=module_counts.get(module,0)+1
+        seen_png.add(digest)
+        seen.add(sig)
+        name=f"{num:04d}_画布_{clean(action)}"
+        dest=IMAGES/module
+        dest.mkdir(parents=True,exist_ok=True)
+        (dest/(name+".png")).write_bytes(data)
+        xdir=HIERARCHY/module
+        xdir.mkdir(parents=True,exist_ok=True)
+        (xdir/(name+".xml")).write_text(xml,encoding="utf-8")
+        rows.append([num,module,action,str(Path("截图")/module/(name+".png")),
+                     "Rust 画布专项探针真实 adb 截屏及 XML", "；".join(visible(xml)[:12])[:360]])
+        print("CAPTURE",num,module,action,flush=True)
 
 def main():
     global visited
@@ -489,7 +588,7 @@ def main():
             xml=at_module(module)
             if body_signature(xml)!=module_root_signatures[module]:
                 errors.append("模块入口内容发生变化（继续按真实画面记录）："+module)
-            if module in ("便签","知识","计时"): seed_editor(module)
+            seed_editor(module)
             xml=at_module(module)
             explore(module,0,[module])
         except Exception as ex:
@@ -514,6 +613,7 @@ def main():
         capture("工作台","强制停止后重新打开",get_xml(),force=True)
     except Exception as ex:
         errors.append("重启异常："+str(ex))
+    import_canvas_probe()
     (ROOT/"操作说明与截图索引.csv").write_text("",encoding="utf-8-sig")
     with (ROOT/"操作说明与截图索引.csv").open("w",newline="",encoding="utf-8-sig") as f:
         writer=csv.writer(f)
