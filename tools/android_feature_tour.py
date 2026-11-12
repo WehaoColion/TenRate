@@ -547,16 +547,22 @@ def seed_editor(module):
     if module in ("便签","知识"):
         actual_fields=[n for n in nodes(get_xml()) if n["class_"].endswith("EditText")
                        and n["bounds"][2]-n["bounds"][0]>70]
-        if len(actual_fields)>1:
-            body_ok=fill_editor_field(1,"GalleryBodyDemo")
-            if (body_ok and committed_edit_text("GalleryDemo",0)
-                    and committed_edit_text("GalleryBodyDemo",1)):
-                capture(module,"正文内容已真实输入",get_xml(),
-                        "分别核实标题与正文两个真实 EditText；不是同一输入框或输入法候选")
-            else:
-                errors.append("标题或正文未同时提交到各自真实 EditText："+module)
-        else:
+        if len(actual_fields)<2:
             errors.append("编辑器只有一个可见输入框，未伪造正文已输入状态："+module)
+            back()
+            return
+        body_ok=fill_editor_field(1,"GalleryBodyDemo")
+        title_ok=committed_edit_text("GalleryDemo",0)
+        body_verified=committed_edit_text("GalleryBodyDemo",1)
+        if not (body_ok and title_ok and body_verified):
+            errors.append("标题或正文未同时提交到各自真实 EditText："+module+
+                          "；标题="+str(title_ok)+"，正文="+str(body_verified))
+            # Never proceed to a save action or claim a completed note/page.
+            back()
+            return
+        capture(module,"标题与正文分别写入真实输入框",get_xml(),
+                "UI XML 逐字段核实：标题 GalleryDemo；正文 GalleryBodyDemo；"
+                "两个 EditText 均已提交，尚未证明持久化")
     if module=="风控":
         if fill_editor_field(1,"12"):
             capture(module,"金额12已写入真实输入框",get_xml(),
