@@ -23,8 +23,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ref_run="43092000607"
-          required_sha="896c9610b6d010dfe53d7990c607f0e3a5ab3fd9"
+          ref_run="43171317669"
+          required_sha="abbda87fea4fdd8b4725dfc504af340214421a1b"
           actual_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ref_run" --jq .head_sha)"
           test "$actual_sha" = "$required_sha"
           state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ref_run/jobs?per_page=100" --jq '[.jobs[] | select(.name=="release") | .conclusion] | first')"
