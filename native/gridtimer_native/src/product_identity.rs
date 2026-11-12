@@ -1,3 +1,4 @@
+// v2.13.5.5 Android - Customer canvas RMB amounts are independent from the finance ledger.
 // v2.13.5.3 Android - Keep the home daily-time badge truthful even when no sessions exist.
 // v2.13.5.2 Android - Material depth and paper/folder affordances for the knowledge workspace.
 // v2.13.5.1 Android - Match explicit compact customer referral layout candidate identity.
@@ -138,8 +139,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.11";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.13.5.3";
-pub const ANDROID_VERSION_CODE: i32 = 22351;
+pub const ANDROID_APP_VERSION: &str = "2.13.5.5";
+pub const ANDROID_VERSION_CODE: i32 = 22355;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
