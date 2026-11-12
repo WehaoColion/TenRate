@@ -1,3 +1,4 @@
+// v2.13.5.4 - Unified knowledge microinteractions and document transitions.
 // v2.13.5.1 - Compact customer referral forests and straighten relation connectors.
 // v2.23.4.18 - Drag and reorder knowledge document blocks using the grip.
 // v2.23.4.17 - Zoom the universal canvas down to one percent.
@@ -184,8 +185,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22351
-        versionName '2.13.5.3'
+        versionCode 22352
+        versionName '2.13.5.4'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
