@@ -48,9 +48,11 @@ jobs:
       - name: Compile existing canvas acceptance probe
         shell: bash
         run: rustc --edition=2021 -D warnings -O tools/android_customer_canvas_probe.rs -o android_customer_canvas_probe
-      - name: Install PNG visual inspection library
+      - name: Install PNG visual inspection library and check QA script syntax
         shell: bash
-        run: python3 -m pip install --disable-pip-version-check Pillow==11.3.0
+        run: |
+          python3 -m pip install --disable-pip-version-check Pillow==11.3.0
+          python3 -m py_compile tools/android_feature_tour.py
       - name: Boot Android Pixel 6 emulator and tour real screens
         uses: reactivecircus/android-emulator-runner@v2
         with:
