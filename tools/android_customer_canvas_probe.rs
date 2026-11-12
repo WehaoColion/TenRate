@@ -88,18 +88,49 @@ fn enter_name(name:&str,out:&Path)->Result<(),String>{
     let tree=xml()?;
     let field=elements(&tree).into_iter().find(|n|n.class.ends_with("EditText")&&n.bounds[2]-n.bounds[0]>50).ok_or("Customer name input missing")?;
     tap(&field)?;
-    run(&["shell","input","text",name])?;
-    // On English-language emulators Material3 translates confirm actions to Create.
-    // Do not send KEYCODE_BACK here: on some Android IME states it dismisses
-    // the entire AlertDialog instead of only hiding the soft keyboard.
-    thread::sleep(Duration::from_millis(400));
-    screenshot(out,"04_输入姓名后_诊断");
-    let post=xml()?;
-    if !post.contains(name) {
-        // Some Compose versions hide TextField values from accessibility.
-        // Keep a real screenshot for manual review; never infer success from a tap.
-        eprintln!("WARN: accessibility tree does not expose typed customer name {name}; see input screenshot");
+    // Android 35 zh-CN Gboard can leave ADB-injected Latin text in the IME
+    // composition strip instead of the Compose TextField. The previous run's
+    // real screenshot shows a greyed-out Create button and an empty field.
+    // Prefer an installed Latin-only IME if available; preserve zh-CN system UI.
+    if let Ok(imes)=run(&["shell","ime","list","-s"]) {
+        for candidate in imes.lines().map(str::trim) {
+            if candidate.starts_with("com.android.inputmethod.latin/") {
+                let _=run(&["shell","ime","set",candidate]);
+                break;
+            }
+        }
     }
+    run(&["shell","input","text",name])?;
+    thread::sleep(Duration::from_millis(450));
+    screenshot(out,"04a_键盘输入法候选未提交");
+    let committed=|tree:&str| {
+        elements(tree).iter().any(|n|n.class.ends_with("EditText") &&
+            n.text.replace(' ', "").eq_ignore_ascii_case(name))
+    };
+    let mut post=xml()?;
+    if !committed(&post) {
+        // Commit the Gboard composing candidate. Enter is not equivalent to
+        // clicking the disabled Create button.
+        run(&["shell","input","keyevent","66"])?;
+        thread::sleep(Duration::from_millis(450));
+        post=xml()?;
+        screenshot(out,"04b_确认输入法候选");
+    }
+    if !committed(&post) {
+        // Moving focus commits composing text in some Compose IME versions.
+        let fields:Vec<Target>=elements(&post).into_iter()
+            .filter(|n|n.class.ends_with("EditText")).collect();
+        if fields.len()>1 { tap(&fields[1])?; }
+        thread::sleep(Duration::from_millis(350));
+        post=xml()?;
+        screenshot(out,"04c_切换焦点确认输入");
+    }
+    if !committed(&post) {
+        return Err(format!(
+            "Gboard did not commit customer name {name} to the Compose EditText; see 04a/04b/04c screenshots"
+        ));
+    }
+    screenshot(out,"04_客户姓名已真实写入输入框");
     Ok(())
 }
 fn create_client(name:&str,out:&Path)->Result<(),String>{
