@@ -262,11 +262,15 @@ def at_module(module):
     raise RuntimeError("无法返回中文模块首页："+module+
                        "；当前可见："+ "；".join(visible(get_xml())[:25]))
 
-def scroll_screen(direction="down"):
-    # Pixel 6 emulator uses approx. 1080x2400 coordinates; read real size.
+@lru_cache(maxsize=1)
+def screen_dimensions():
     wh=safe_adb("shell","wm","size")
-    m=re.search(r"(\d+)x(\d+)",wh)
-    w,h=map(int,m.groups()) if m else (1080,2400)
+    m=re.search(r"(\\d+)x(\\d+)",wh)
+    return tuple(map(int,m.groups())) if m else (1080,2400)
+
+def scroll_screen(direction="down"):
+    # Emulator dimensions are stable; avoid an ADB subprocess per swipe.
+    w,h=screen_dimensions()
     x=w//2
     start=int(h*(0.79 if direction=="down" else 0.35))
     end=int(h*(0.32 if direction=="down" else 0.79))
@@ -418,10 +422,25 @@ def seed_editor(module):
             if edits:
                 tap_node(edits[0])
                 safe_adb("shell","input","text","GalleryDemo")
-                capture(module,"输入演示内容",get_xml(),"仅使用虚构演示内容 GalleryDemo")
-                # Only save explicit local creation, never send external data.
-                if click(["创建","保存","完成","确定","Create","Save"]):
-                    capture(module,"本地创建完成",get_xml(),"本地演示数据")
+                time.sleep(0.3)
+                entered=get_xml()
+                if "GalleryDemo" not in entered:
+                    # zh-CN Gboard may keep Latin text in the candidate strip.
+                    safe_adb("shell","input","keyevent","66")
+                    entered=get_xml()
+                if "GalleryDemo" not in entered:
+                    safe_adb("shell","input","keyevent","61")
+                    entered=get_xml()
+                if "GalleryDemo" not in entered:
+                    errors.append("输入法未把演示文本写入真实输入框："+module)
+                    capture(module,"输入法候选未提交_诊断",entered,
+                            "真实输入框未证实有内容；不计为已录入或已创建")
+                else:
+                    capture(module,"输入演示内容",entered,
+                            "已从真实界面结构验证虚构演示内容 GalleryDemo")
+                    # Only save explicit local creation, never send external data.
+                    if click(["创建","保存","完成","确定","Create","Save"]):
+                        capture(module,"本地创建完成",get_xml(),"本地演示数据")
         back()
 
 def main():
