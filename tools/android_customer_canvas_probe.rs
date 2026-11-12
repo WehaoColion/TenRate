@@ -87,7 +87,6 @@ fn navigate_to_canvas(out:&Path)->Result<(),String>{
 fn enter_name(name:&str,out:&Path)->Result<(),String>{
     let tree=xml()?;
     let field=elements(&tree).into_iter().find(|n|n.class.ends_with("EditText")&&n.bounds[2]-n.bounds[0]>50).ok_or("Customer name input missing")?;
-    tap(&field)?;
     // Android 35 zh-CN Gboard can leave ADB-injected Latin text in the IME
     // composition strip instead of the Compose TextField. The previous run's
     // real screenshot shows a greyed-out Create button and an empty field.
@@ -100,6 +99,7 @@ fn enter_name(name:&str,out:&Path)->Result<(),String>{
             }
         }
     }
+    tap(&field)?;
     run(&["shell","input","text",name])?;
     thread::sleep(Duration::from_millis(450));
     screenshot(out,"04a_键盘输入法候选未提交");
