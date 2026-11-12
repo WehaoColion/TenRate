@@ -17,7 +17,7 @@ jobs:
   full-gallery:
     name: Android 2.13.5.1 各模块截图采集与压缩
     runs-on: ubuntu-22.04
-    timeout-minutes: 160
+    timeout-minutes: 360
     steps:
       - name: Checkout exact 2.13.5.1-based QA branch
         uses: actions/checkout@v4
@@ -65,7 +65,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import zipfile, shutil
+          import zipfile, shutil, csv, hashlib, collections
           evidence=Path("feature_tour_evidence")
           evidence.mkdir(exist_ok=True)
           for filename in ("gallery_tour_log.txt","canvas_probe_log.txt","gallery_status.txt","apk_install_log.txt","app_launch_log.txt","app_clear_log.txt"):
@@ -80,13 +80,37 @@ jobs:
           with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=6,allowZip64=True) as z:
               for file in sorted(evidence.rglob("*")):
                   if file.is_file(): z.write(file,file.relative_to(evidence.parent))
-          images=list(evidence.rglob("*.png"))
+          # Only count verified, indexed tour screenshots. Diagnostic PNGs are not gallery.
+          images=list((evidence/"截图").rglob("*.png"))
           valid=[]
           for image in images:
               data=image.read_bytes()
               if len(data)>=24 and data[:8]==bytes([137,80,78,71,13,10,26,10]):
                   valid.append(image)
           png_count=len(valid)
+          index=evidence/"操作说明与截图索引.csv"
+          if not index.is_file(): raise RuntimeError("缺少中文截图索引")
+          with index.open(encoding="utf-8-sig",newline="") as f:
+              indexed=list(csv.DictReader(f))
+          if len(indexed)!=png_count:
+              raise RuntimeError(f"索引 {len(indexed)} 条，与有效截图 {png_count} 张不一致")
+          indexed_paths=set()
+          module_counts=collections.Counter()
+          for item in indexed:
+              module=item["功能模块"]
+              relative=item["截图相对路径"]
+              target=evidence/relative
+              if not target.is_file() or target not in valid:
+                  raise RuntimeError(f"索引指向不存在或损坏的图片：{relative}")
+              if target in indexed_paths or target.parent.name!=module:
+                  raise RuntimeError(f"重复索引或模块归属不符：{relative}")
+              indexed_paths.add(target)
+              module_counts[module]+=1
+          if len(indexed_paths)!=png_count:
+              raise RuntimeError("存在未入索引的截图")
+          digest=[hashlib.sha256(image.read_bytes()).hexdigest() for image in valid]
+          if len(set(digest))!=png_count:
+              raise RuntimeError("截图存在字节级完全重复，不允许重复凑数")
           proof=evidence/"中文模块导航验收.json"
           language=evidence/"中文界面验收.txt"
           if not proof.exists() or not language.exists():
@@ -104,12 +128,19 @@ jobs:
               print(f"FAIL: only {png_count} actual PNG screenshots; gallery cannot be accepted")
           else:
               print(f"PNG validation successful: {png_count} nonempty PNG files")
-          Path("截图统计.txt").write_text(f"实际采集PNG数量：{png_count}\n压缩包：{output.name}\n",encoding="utf-8")
+          Path("截图统计.txt").write_text(
+              f"已索引且字节唯一的真实截图：{png_count} 张\n"+
+              "".join(f"{m}：{module_counts[m]} 张\n" for m in ("计时","便签","知识","风控","画布","工作台"))+
+              f"目标：700至800张不同功能状态；本次是否达到700：{'是' if png_count>=700 else '否'}\n"+
+              f"压缩包：{output.name}\n",encoding="utf-8")
           print(f"Total real screenshots: {png_count}. Archive bytes: {output.stat().st_size}")
           with zipfile.ZipFile(output) as archive:
               bad=archive.testzip()
               if bad: raise RuntimeError(f"Corrupted screenshot ZIP member: {bad}")
-              if png_count<12: raise RuntimeError("No usable screenshot gallery; refusing success")
+              if png_count<700:
+                  raise RuntimeError(f"仅 {png_count} 张不同截图，尚未达到700张全面覆盖目标；保留ZIP作为阶段诊断，不得宣称全功能交付")
+              if any(module_counts[m]<50 for m in ("计时","便签","知识","风控")):
+                  raise RuntimeError(f"四模块覆盖不均衡：{dict(module_counts)}；不得宣称全面覆盖")
           PY
           cat 截图统计.txt >> "$GITHUB_STEP_SUMMARY"
           if test -f feature_tour_evidence/请先阅读.txt; then
