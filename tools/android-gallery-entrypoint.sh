@@ -29,7 +29,7 @@ canvas_code=$?
 if [[ "$canvas_code" -eq 0 ]]; then
   # Keep the gallery independent of disposable canvas test data.
   adb shell pm clear com.ofairyo.gridtimer >> app_clear_log.txt 2>&1 || true
-  timeout 260m python3 -u tools/android_feature_tour.py > gallery_tour_log.txt 2>&1
+  timeout 300m python3 -u tools/android_feature_tour.py > gallery_tour_log.txt 2>&1
   tour_code=$?
 else
   echo "客户画布关键创建状态失败；先修复真实输入与提交，不耗费70分钟重复无效全量探索。" > gallery_tour_log.txt
