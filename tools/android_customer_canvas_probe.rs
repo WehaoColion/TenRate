@@ -129,7 +129,14 @@ fn main(){
         navigate_to_canvas(&out)?;screenshot(&out,"02_canvas_open");
         report.push_str("PASS: signed Android app started and the canvas navigation opened.\n\n");
         if !tap_text(&["＋ 添加第一个客户","＋ 添加"])?{return Err("Customer add entrance missing".into());}
-        if seek(&["＋ 新建客户"])?.is_some(){if !tap_text(&["＋ 新建客户"])?{return Err("New customer choice missing".into());}}
+        // The customer template labels this option "新建客户"; a generic
+        // canvas deliberately keeps the same customer functionality under
+        // "更多卡片：客户". Both paths must be accepted by this UI probe.
+        if !elements(&xml()?).iter().any(|n| n.class.ends_with("EditText")) {
+            if !tap_text(&["＋ 新建客户", "＋ 更多卡片：客户"])? {
+                return Err("Customer card choice missing from add menu".into());
+            }
+        }
         screenshot(&out,"03_customer_form");
         create_client("ClientA")?;
         count("1 张卡片")?;screenshot(&out,"04_customer_saved");
@@ -142,7 +149,9 @@ fn main(){
         create_client("ClientB")?;
         count("2 张卡片")?;count("1 条关系")?;screenshot(&out,"06_referral_saved");
         report.push_str("PASS: adding a referred customer creates exactly two cards and one directed relationship.\n\n");
-        if !tap_text(&["布局"])?{return Err("Canvas layout menu missing".into());}
+        // The layout actions live in the top-right overflow menu, not in
+        // a standalone "布局" toolbar button.
+        if !tap_text(&["⋯ 更多", "更多"])?{return Err("Canvas more menu missing".into());}
         if !tap_text(&["按推荐层级排列客户"])?{return Err("Tree arrangement action missing".into());}
         thread::sleep(Duration::from_millis(900));screenshot(&out,"07_tree_layout");
         report.push_str("PASS: tree layout command completed on the emulator.\n\n");

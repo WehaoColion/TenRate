@@ -1,3 +1,4 @@
+// v0.0.6 - Make Windows temporary cleanup tolerant of delayed file-handle release.
 // v0.0.5 - Exercise compact history references through the native sync and receipt paths.
 // v0.0.4 - Verify publication requirements separately from recovery attachment work.
 // v0.0.3 - Verify journal-only receipt persistence without restoring old note content.
@@ -215,6 +216,30 @@ fn private_media_transport_declaration_cannot_cross_owner_with_same_ciphertext()
     fs::remove_dir_all(root).unwrap();
 }
 
+// The authenticated receipt assertions must remain strict. Windows can retain
+// a SQLite/file handle briefly after the client and store have been dropped,
+// especially on hosted runners with an active file indexer. Test-only cleanup
+// must not turn a successful domain check into a false regression.
+fn cleanup_private_transport_fixture(root: &Path) {
+    for attempt in 0..12 {
+        match fs::remove_dir_all(root) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if cfg!(windows) && error.raw_os_error() == Some(32) => {
+                if attempt == 11 {
+                    eprintln!(
+                        "Windows delayed-handle cleanup deferred for disposable test directory {}: {error}",
+                        root.display()
+                    );
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(error) => panic!("private transport test fixture cleanup failed: {error}"),
+        }
+    }
+}
+
 #[test]
 fn private_media_transport_desktop_receipt_is_durable_idempotent_and_account_bound() {
     let root = temp_test_dir("private-transport-native");
@@ -295,7 +320,7 @@ fn private_media_transport_desktop_receipt_is_durable_idempotent_and_account_bou
     drop(source_store);
     drop(source);
     drop(receiver);
-    fs::remove_dir_all(root).unwrap();
+    cleanup_private_transport_fixture(&root);
 }
 
 #[test]

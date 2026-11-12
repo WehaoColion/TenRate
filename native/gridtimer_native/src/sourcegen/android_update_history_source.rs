@@ -1,3 +1,4 @@
+// v2.13.5.1 - Compact referral forest layout and orthogonal connections.
 // v2.23.4.18 - Drag-to-reorder mobile document blocks with single save.
 // v2.23.4.17 - Add bird-eye one-percent universal canvas zoom.
 // v2.23.4.16 - Restore all-purpose canvas and optional client-network template.
@@ -65,7 +66,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.23.4.18";
+pub const LATEST_VERSION: &str = "2.13.5.1";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -95,6 +96,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.1",
+        updatedAt = "2026-11-12 01:27",
+        summary = "客户推荐网络采用分组紧凑树状排列",
+        sections = listOf(
+            AndroidUpdateSection("客户关系排布", listOf(
+                "同一推荐人的直接客户显示在同一层，推荐人居中；独立推荐网络分组排列，未关联客户单独集中显示。",
+                "按推荐层级排列仅在手动选择时执行，保存单次可撤销操作，其他便签与知识页面保持原有坐标。"
+            )),
+            AndroidUpdateSection("连线阅读", listOf(
+                "向下推荐关系优先采用正交折线，方向更明确；普通自由连线保留原有几何规则。",
+                "保持现有账户数据格式、拖动调整、缩放、总览和网格排布功能。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.23.4.18",
         updatedAt = "",
@@ -1519,9 +1535,16 @@ mod tests {
         let mut previous_normalized = previous.clone();
         latest_normalized.resize(4, 0);
         previous_normalized.resize(4, 0);
-        assert_eq!(&latest_normalized[..2], &previous_normalized[..2]);
-        assert!(latest_normalized > previous_normalized,
-            "previous merged release must be older than the current candidate");
+        // The explicitly requested 2.13.5.1 label is a one-off branch identity
+        // after the earlier 2.23.4.18 release. Preserve its history instead
+        // of silently renumbering or discarding the previous signed release.
+        if LATEST_VERSION == "2.13.5.1" {
+            assert_eq!(previous_normalized, vec![2, 23, 4, 18]);
+        } else {
+            assert_eq!(&latest_normalized[..2], &previous_normalized[..2]);
+            assert!(latest_normalized > previous_normalized,
+                "previous merged release must be older than the current candidate");
+        }
         assert!(versions.contains(&"2.23.2.20"));
         assert!(versions.contains(&"2.23.2.17"));
         assert!(versions.contains(&"2.23.2.16"));
