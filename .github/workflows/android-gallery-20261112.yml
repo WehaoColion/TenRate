@@ -48,6 +48,9 @@ jobs:
       - name: Compile existing canvas acceptance probe
         shell: bash
         run: rustc --edition=2021 -D warnings -O tools/android_customer_canvas_probe.rs -o android_customer_canvas_probe
+      - name: Install PNG visual inspection library
+        shell: bash
+        run: python3 -m pip install --disable-pip-version-check Pillow==11.3.0
       - name: Boot Android Pixel 6 emulator and tour real screens
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -65,7 +68,8 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import zipfile, shutil, csv, hashlib, collections
+          import zipfile, shutil, csv, hashlib, collections, re
+          from PIL import Image, ImageStat
           evidence=Path("feature_tour_evidence")
           evidence.mkdir(exist_ok=True)
           for filename in ("gallery_tour_log.txt","canvas_probe_log.txt","gallery_status.txt","apk_install_log.txt","app_launch_log.txt","app_clear_log.txt"):
@@ -88,6 +92,21 @@ jobs:
               if len(data)>=24 and data[:8]==bytes([137,80,78,71,13,10,26,10]):
                   valid.append(image)
           png_count=len(valid)
+          # Real PNG signature and byte uniqueness are insufficient: the prior
+          # run indexed four full-black emulator frames as valid screenshots.
+          # Independently decode and inspect the actual visible App content.
+          for image in valid:
+              with Image.open(image) as decoded:
+                  decoded.verify()
+              with Image.open(image) as decoded:
+                  frame=decoded.convert("RGB")
+                  width,height=frame.size
+                  if width<300 or height<500:
+                      raise RuntimeError(f"截图尺寸异常：{image}")
+                  center=frame.crop((width//8,height//8,7*width//8,7*height//8)).resize((48,64))
+                  stats=ImageStat.Stat(center)
+                  if max(stats.mean)<8 and max(stats.stddev)<4:
+                      raise RuntimeError(f"实际画面全黑/空白（尽管 XML 可能含文字），禁止交付：{image}")
           index=evidence/"操作说明与截图索引.csv"
           if not index.is_file(): raise RuntimeError("缺少中文截图索引")
           with index.open(encoding="utf-8-sig",newline="") as f:
@@ -104,6 +123,11 @@ jobs:
                   raise RuntimeError(f"索引指向不存在或损坏的图片：{relative}")
               if target in indexed_paths or target.parent.name!=module:
                   raise RuntimeError(f"重复索引或模块归属不符：{relative}")
+              if not re.search(r"[\u4e00-\u9fff]",item["操作说明"]):
+                  raise RuntimeError(f"操作步骤缺少中文说明：{relative}")
+              xml=evidence/"界面结构"/module/(target.stem+".xml")
+              if not xml.is_file() or "<hierarchy" not in xml.read_text(encoding="utf-8"):
+                  raise RuntimeError(f"缺少对应的真实 Android UI 结构证据：{relative}")
               indexed_paths.add(target)
               module_counts[module]+=1
           if len(indexed_paths)!=png_count:
