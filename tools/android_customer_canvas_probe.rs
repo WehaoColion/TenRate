@@ -84,7 +84,7 @@ fn navigate_to_canvas(out:&Path)->Result<(),String>{
     }
     Err("Cannot open knowledge canvas from home".into())
 }
-fn enter_name(name:&str)->Result<(),String>{
+fn enter_name(name:&str,out:&Path)->Result<(),String>{
     let tree=xml()?;
     let field=elements(&tree).into_iter().find(|n|n.class.ends_with("EditText")&&n.bounds[2]-n.bounds[0]>50).ok_or("Customer name input missing")?;
     tap(&field)?;
@@ -93,20 +93,34 @@ fn enter_name(name:&str)->Result<(),String>{
     // Do not send KEYCODE_BACK here: on some Android IME states it dismisses
     // the entire AlertDialog instead of only hiding the soft keyboard.
     thread::sleep(Duration::from_millis(400));
+    screenshot(out,"04_输入姓名后_诊断");
+    let post=xml()?;
+    if !post.contains(name) {
+        // Some Compose versions hide TextField values from accessibility.
+        // Keep a real screenshot for manual review; never infer success from a tap.
+        eprintln!("WARN: accessibility tree does not expose typed customer name {name}; see input screenshot");
+    }
     Ok(())
 }
-fn create_client(name:&str)->Result<(),String>{
-    enter_name(name)?;
+fn create_client(name:&str,out:&Path)->Result<(),String>{
+    enter_name(name,out)?;
     if !tap_text(&["创建","Create"])?{return Err("Customer create button missing: inspect the post-input accessibility hierarchy".into());}
-    thread::sleep(Duration::from_secs(1));
+    thread::sleep(Duration::from_secs(2));
+    screenshot(out,"05_点击创建后_诊断");
     Ok(())
 }
-fn count(expected:&str)->Result<(),String>{
+fn count(expected:&str,out:&Path)->Result<(),String>{
     for _ in 0..5 {
         if xml()?.contains(expected){return Ok(());}
         thread::sleep(Duration::from_millis(650));
     }
-    Err(format!("Canvas did not show {expected}"))
+    screenshot(out,"06_未达到预期_诊断");
+    let current=xml().unwrap_or_default();
+    let labels=elements(&current).into_iter()
+        .filter(|n| !n.text.is_empty() || !n.description.is_empty())
+        .map(|n| if n.text.is_empty(){n.description}else{n.text})
+        .take(24).collect::<Vec<_>>().join(" / ");
+    Err(format!("Canvas did not show {expected}; actual visible labels: {labels}"))
 }
 fn open_center_card()->Result<(),String>{
     let tree=xml()?;
@@ -138,16 +152,16 @@ fn main(){
             }
         }
         screenshot(&out,"03_customer_form");
-        create_client("ClientA")?;
-        count("1 张卡片")?;screenshot(&out,"04_customer_saved");
+        create_client("ClientA",&out)?;
+        count("1 张卡片",&out)?;screenshot(&out,"04_customer_saved");
         report.push_str("PASS: customer creation retained a named card on the network.\n\n");
         open_center_card()?;
         if seek(&["ClientA"])?.is_none(){return Err("Tapping a customer did not show its name in detail sheet".into());}
         screenshot(&out,"05_customer_detail");
         report.push_str("PASS: tapping a canvas card shows the customer detail sheet without leaving the canvas.\n\n");
         if !tap_text(&["添加此客户推荐的人"])?{return Err("Direct referral add action missing".into());}
-        create_client("ClientB")?;
-        count("2 张卡片")?;count("1 条关系")?;screenshot(&out,"06_referral_saved");
+        create_client("ClientB",&out)?;
+        count("2 张卡片",&out)?;count("1 条关系",&out)?;screenshot(&out,"06_referral_saved");
         report.push_str("PASS: adding a referred customer creates exactly two cards and one directed relationship.\n\n");
         // The layout actions live in the top-right overflow menu, not in
         // a standalone "布局" toolbar button.
@@ -158,7 +172,7 @@ fn main(){
         run(&["shell","am","force-stop",APP])?;
         run(&["shell","am","start","-W","-n","com.ofairyo.gridtimer/.MainActivity"])?;
         thread::sleep(Duration::from_secs(5));navigate_to_canvas(&out)?;
-        count("2 张卡片")?;count("1 条关系")?;screenshot(&out,"08_reopened_persisted");
+        count("2 张卡片",&out)?;count("1 条关系",&out)?;screenshot(&out,"08_reopened_persisted");
         report.push_str("PASS: force-stop and reopen preserved customer cards and their connection.\n\n");
         let process=run(&["shell","pidof",APP])?;
         if process.trim().is_empty(){return Err("Application process died".into());}
