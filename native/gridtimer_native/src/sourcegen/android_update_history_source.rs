@@ -1,3 +1,4 @@
+// v2.13.5.2 - Paper-like knowledge rows, folder glyphs and quieter hierarchy chrome.
 // v2.13.5.1 - Compact referral forest layout and orthogonal connections.
 // v2.23.4.18 - Drag-to-reorder mobile document blocks with single save.
 // v2.23.4.17 - Add bird-eye one-percent universal canvas zoom.
@@ -66,7 +67,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.1";
+pub const LATEST_VERSION: &str = "2.13.5.2";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -96,6 +97,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.2",
+        updatedAt = "2026-11-13 01:25",
+        summary = "知识目录与文档首页采用轻拟物的文件夹和纸张视觉",
+        sections = listOf(
+            AndroidUpdateSection("目录与文档", listOf(
+                "文件夹采用带折页的暖色图标，知识页面采用纸张折角，目录行增加轻微空间层次，文档内子项保持紧凑。",
+                "完整目录以较鲜明的新建页面按钮突出主操作，保留文件夹新建、拖动排序、返回与原有无障碍操作。"
+            )),
+            AndroidUpdateSection("兼容与边界", listOf(
+                "只调整 Android 界面呈现，不改变 Windows 端、文档内容、文件夹位置、编辑草稿及同步协议。",
+                "文件夹和纸张图标直接绘制，兼容深色模式，不依赖外部图片；实际界面以 GitHub 模拟器截图验收为准。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.1",
         updatedAt = "2026-11-12 01:27",

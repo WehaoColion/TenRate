@@ -536,6 +536,8 @@ pub const CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
@@ -555,9 +557,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -587,6 +595,61 @@ import kotlin.math.roundToInt
 
 internal data class KnowledgeHierarchyRequest(val action: String, val id: String? = null, val parentId: String? = null)
 
+
+/** Decorative physical object, drawn at screen density rather than loaded as a bitmap. */
+@Composable
+internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifier) {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val rear = if (dark) Color(0xFF80694E) else Color(0xFFD7AA6E)
+    val front = if (dark) Color(0xFFAE916A) else Color(0xFFF0D19B)
+    val sheet = if (dark) Color(0xFF4D555E) else Color(0xFFFFFEFA)
+    val crease = if (dark) Color(0xFF77818B) else Color(0xFFE6E2DA)
+    val ink = if (dark) Color(0xFFADB5BD) else Color(0xFFB4ADA3)
+    Canvas(modifier.size(32.dp)) {
+        val x = size.width / 32f
+        val y = size.height / 32f
+        if (isFolder) {
+            drawRoundRect(Color.Black.copy(alpha = if (dark) 0.22f else 0.10f),
+                topLeft = Offset(3f * x, 12f * y), size = Size(27f * x, 17f * y),
+                cornerRadius = CornerRadius(3f * x, 3f * y))
+            val tab = Path().apply {
+                moveTo(4f*x, 25f*y); lineTo(4f*x, 8f*y)
+                quadraticBezierTo(4f*x, 6f*y, 6f*x, 6f*y)
+                lineTo(12f*x, 6f*y); lineTo(15f*x, 9f*y)
+                lineTo(26f*x, 9f*y); quadraticBezierTo(29f*x, 9f*y, 29f*x, 12f*y)
+                lineTo(29f*x, 25f*y); close()
+            }
+            drawPath(tab, rear)
+            drawRoundRect(front, topLeft = Offset(2f*x, 12f*y),
+                size = Size(28f*x, 16f*y),
+                cornerRadius = CornerRadius(3f*x, 3f*y))
+            drawLine(Color.White.copy(alpha = if (dark) 0.20f else 0.55f),
+                Offset(5f*x, 13.5f*y), Offset(27f*x, 13.5f*y), 1.2f*x)
+        } else {
+            drawRoundRect(Color.Black.copy(alpha = if (dark) 0.23f else 0.11f),
+                topLeft = Offset(7f*x, 4f*y), size = Size(22f*x, 26f*y),
+                cornerRadius = CornerRadius(2.5f*x, 2.5f*y))
+            val paper = Path().apply {
+                moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
+                lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
+                quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
+                lineTo(9f*x, 28f*y)
+                quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
+            }
+            drawPath(paper, sheet)
+            val fold = Path().apply {
+                moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
+                lineTo(29f*x, 9f*y); close()
+            }
+            drawPath(fold, crease)
+            for (i in 0..2) {
+                val h = (14f + i*4f)*y
+                drawLine(ink, Offset(11f*x,h), Offset((if(i==2) 21f else 25f)*x,h), 1.2f*x)
+            }
+        }
+    }
+}
+
 @Composable
 private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrowse: (String?) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -601,15 +664,20 @@ private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrows
 private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: KnowledgeHierarchy,
     modifier: Modifier = Modifier, enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null, onOpen: () -> Unit) {
-    ListItem(modifier = modifier.fillMaxWidth().clickable(enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen),
-        headlineContent = { Text((if (node.isFolder) "▣ " else "▤ ") + node.title.ifBlank { "无标题" }) },
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, shadowElevation = 1.dp) {
+    ListItem(modifier = Modifier.fillMaxWidth().clickable(enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen),
+        headlineContent = { Text(node.title.ifBlank { "无标题" }, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+        leadingContent = { KnowledgeObjectGlyph(node.isFolder) },
         supportingContent = { Text(when {
             index.issues[node.id] == KnowledgeHierarchyIssue.IDENTITY_CONFLICT -> "记录编号冲突，已保护原页面和旧文件夹，暂停修改"
             node.note?.encryption != null -> "加密页面"
             index.issues.containsKey(node.id) -> "上级不可用，已放在目录中"
             !node.writable -> "只读 · ${index.children(node.id).size} 个子项"
             else -> "${if (node.isFolder) "文件夹" else "页面"} · ${index.children(node.id).size} 个子项"
-        }) }, trailingContent = trailing ?: { Text("›") })
+        }) }, trailingContent = trailing ?: { Text("›") },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface))
+    }
 }
 
 // The inline list belongs to the document's own scroll surface. Keep entries
@@ -633,13 +701,14 @@ private fun KnowledgeHierarchyInlineRow(
     }
     Row(
         modifier = Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(11.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.20f))
             .heightIn(min = 52.dp)
             .clickable(enabled = enabled && issue != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(if (node.isFolder) "▣" else "▤", style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        KnowledgeObjectGlyph(node.isFolder, Modifier.size(28.dp))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(node.title.ifBlank { "无标题" }, maxLines = 2,
@@ -662,8 +731,8 @@ private fun KnowledgeHierarchyActions(index: KnowledgeHierarchy, parentId: Strin
     onRequest: (KnowledgeHierarchyRequest) -> Unit, onOpenBody: (() -> Unit)? = null) {
     val node = parentId?.let(index.nodes::get)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        OutlinedButton(enabled = !busy && index.mayCreateInside(parentId), onClick = { onRequest(KnowledgeHierarchyRequest("create_page", parentId = parentId)) }) { Text("新建子页面") }
-        OutlinedButton(enabled = !busy && index.mayCreateInside(parentId), onClick = { onRequest(KnowledgeHierarchyRequest("create_folder", parentId = parentId)) }) { Text("新建子文件夹") }
+        Button(enabled = !busy && index.mayCreateInside(parentId), onClick = { onRequest(KnowledgeHierarchyRequest("create_page", parentId = parentId)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("新建子页面") }
+        OutlinedButton(enabled = !busy && index.mayCreateInside(parentId), onClick = { onRequest(KnowledgeHierarchyRequest("create_folder", parentId = parentId)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("新建子文件夹") }
         if (node != null) {
             TextButton(enabled = !busy && node.writable, onClick = { onRequest(KnowledgeHierarchyRequest("move", node.id, node.parentId)) }) { Text("移动") }
             TextButton(enabled = !busy && node.writable, onClick = { onRequest(KnowledgeHierarchyRequest("rename", node.id, node.parentId)) }) { Text("重命名") }
@@ -1059,7 +1128,16 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                     if (busy || saving || loading) CircularProgressIndicator(Modifier.size(22.dp))
                 }
                 KnowledgeBreadcrumbs(index, parentId) { navigation { onBrowse(it) } }
-                Text(node?.title?.ifBlank { "无标题" } ?: "页面与文件夹", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    KnowledgeObjectGlyph(node?.isFolder != false, Modifier.size(42.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(node?.title?.ifBlank { "无标题" } ?: "页面与文件夹",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
+                        Text("${displayedIds.size} 个子项", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 KnowledgeHierarchyActions(index, parentId, !navigationEnabled,
                     onRequest = { request -> navigation { onRequest(request) } },
                     onOpenBody = node?.note?.let { { navigation { onOpen(node) } } })
@@ -1071,7 +1149,6 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                         style = MaterialTheme.typography.bodySmall)
                     if (!loaded && !loading) TextButton(onClick = { orderMessage = ""; reload++ }) { Text("重试") }
                 }
-                Text("${displayedIds.size} 个子项", style = MaterialTheme.typography.labelLarge)
             }
             items(displayedIds, key = { it }) { id ->
                 val child = index.nodes[id]
