@@ -265,7 +265,7 @@ def at_module(module):
 @lru_cache(maxsize=1)
 def screen_dimensions():
     wh=safe_adb("shell","wm","size")
-    m=re.search(r"(\\d+)x(\\d+)",wh)
+    m=re.search(r"(\d+)x(\d+)",wh)
     return tuple(map(int,m.groups())) if m else (1080,2400)
 
 def scroll_screen(direction="down"):
