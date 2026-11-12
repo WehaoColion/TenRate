@@ -1,3 +1,4 @@
+// v2.13.5.5 - 客户收付款以独立分字段存储，不接入风控账本。
 // v2.22.49.5 Android - Encode borrowed replies and send only viewport deltas for pan/zoom.
 // v2.22.49.4 Android - Account-scoped, transactional knowledge canvases.
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,7 @@ const MAX_BYTES: usize = 16 * 1024 * 1024;
 const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_NODES: usize = 1000;
 const MAX_EDGES: usize = 4000;
+const MAX_CLIENT_MONEY_CENTS: i64 = 99_999_999_999;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -65,6 +67,10 @@ pub struct Node {
     pub width: f32,
     pub height: f32,
     pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paid_cents: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_cents: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -151,6 +157,9 @@ impl Canvas {
                         || !node.text.is_empty()))
                 || ((node.kind == "note" || node.kind == "client") && !node.page_id.is_empty())
                 || (node.kind == "client" && (node.text.lines().next().unwrap_or("").trim().is_empty() || node.text.lines().next().unwrap_or("").chars().count() > 80))
+                || (node.kind != "client" && (node.paid_cents.is_some() || node.pending_cents.is_some()))
+                || node.paid_cents.is_some_and(|v| !(0..=MAX_CLIENT_MONEY_CENTS).contains(&v))
+                || node.pending_cents.is_some_and(|v| !(0..=MAX_CLIENT_MONEY_CENTS).contains(&v))
             {
                 return Err("卡片数据无效".into());
             }
@@ -514,6 +523,46 @@ fn number(request: &Value, key: &str) -> Result<f32, String> {
         .ok_or_else(|| format!("画布数值无效：{key}"))
 }
 
+// Client money crosses this boundary only as decimal text. No float and no
+// finance-ledger state participates in customer canvas persistence.
+fn client_money_yuan(value: &str) -> Result<Option<i64>, String> {
+    let raw = value.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let (whole, fraction) = raw.split_once('.').unwrap_or((raw, ""));
+    if whole.is_empty()
+        || whole.len() > 9
+        || (whole.len() > 1 && whole.starts_with('0'))
+        || !whole.bytes().all(|b| b.is_ascii_digit())
+        || fraction.len() > 2
+        || !fraction.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err("客户金额须为不超过九位整数和两位小数的人民币金额".into());
+    }
+    let yuan: i64 = whole.parse().map_err(|_| "客户金额不合法")?;
+    let cents: i64 = match fraction.len() {
+        0 => 0,
+        1 => fraction.parse::<i64>().map_err(|_| "客户金额不合法")? * 10,
+        2 => fraction.parse::<i64>().map_err(|_| "客户金额不合法")?,
+        _ => return Err("客户金额最多保留两位小数".into()),
+    };
+    let result = yuan.checked_mul(100).and_then(|n| n.checked_add(cents))
+        .filter(|&n| n <= MAX_CLIENT_MONEY_CENTS)
+        .ok_or("客户金额超过允许上限")?;
+    Ok(Some(result))
+}
+
+// Missing fields keep prior amounts; an empty string explicitly clears them.
+fn client_money_change(request: &Value, key: &str) -> Result<Option<Option<i64>>, String> {
+    match request.get(key) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(value)) => Ok(Some(client_money_yuan(value)?)),
+        _ => Err(format!("{key} 须为人民币金额文本")),
+    }
+}
+
 // Find the nearest unoccupied position without changing the on-disk canvas schema.
 // Positions are deterministic, respect mixed card sizes, and stay in the validated world.
 fn free_card_position(canvas: &Canvas, width: f32, height: f32) -> Result<(f32, f32), String> {
@@ -599,6 +648,14 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
             }
             let (width, height) = if client { (192.0, 132.0) } else { (256.0, 168.0) };
             let (x, y) = free_card_position(canvas, width, height)?;
+            let (paid_cents, pending_cents) = if client {
+                (
+                    client_money_change(request, "paidYuan")?.flatten(),
+                    client_money_change(request, "pendingYuan")?.flatten(),
+                )
+            } else {
+                (None, None)
+            };
             canvas.nodes.push(Node {
                 id: identifier(),
                 kind: if page { "page" } else if client { "client" } else { "note" }.into(),
@@ -609,6 +666,8 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                 width,
                 height,
                 color: "blue".into(),
+                paid_cents,
+                pending_cents,
             });
             if !parent.is_empty() {
                 let to = canvas.nodes.last().expect("new client").id.clone();
@@ -637,7 +696,15 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                     if name.is_empty() || name.chars().count() > 80 || details.chars().count() > 4000 {
                         return Err("客户姓名或备注不符合要求".into());
                     }
+                    let paid = client_money_change(request, "paidYuan")?;
+                    let pending = client_money_change(request, "pendingYuan")?;
                     node.text = format!("{name}\n{details}");
+                    if let Some(value) = paid {
+                        node.paid_cents = value;
+                    }
+                    if let Some(value) = pending {
+                        node.pending_cents = value;
+                    }
                 }
                 "color" => node.color = text(request, "color")?.into(),
                 _ => return Err("页面卡片正文不能在画布中修改".into()),

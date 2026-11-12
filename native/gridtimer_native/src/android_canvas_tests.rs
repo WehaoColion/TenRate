@@ -1,3 +1,4 @@
+// v2.13.5.5 - 客户金额分精度、旧卡片兼容与失败回滚。
 // v2.22.49.6 - Verify independent boards reopen correctly and failed creation preserves saved state.
 // v2.22.49.5 - Verify compact replies preserve durable state and graph edits.
 // v2.22.49.4 - Exercise real canvas transactions, recovery and edit barriers.
@@ -19,6 +20,8 @@ fn view_transactions_share_card_text_and_inactive_boards() {
             width: 256.0,
             height: 168.0,
             color: "blue".into(),
+            paid_cents: None,
+            pending_cents: None,
         });
     }
     store.canvases.push(canvas.into());
@@ -39,6 +42,54 @@ fn view_transactions_share_card_text_and_inactive_boards() {
     ));
     assert_eq!(store.canvases[1].center_x, 0.0);
     assert_eq!(next.canvases[1].center_x, 30.0);
+}
+
+#[test]
+fn client_payment_money_contract_rejects_fractional_or_negative_invalid_values() {
+    assert_eq!(client_money_yuan("").unwrap(), None);
+    assert_eq!(client_money_yuan("0.01").unwrap(), Some(1));
+    assert_eq!(client_money_yuan("15.2").unwrap(), Some(1520));
+    assert_eq!(client_money_yuan("999999999.99").unwrap(), Some(MAX_CLIENT_MONEY_CENTS));
+    for invalid in ["-1", "+1", ".5", "01", "1.234", "1e3", "NaN",
+                    "1,000", "1000000000", "999999999.999", "1..2", "￥1"] {
+        assert!(client_money_yuan(invalid).is_err(), "{invalid} should fail");
+    }
+}
+#[test]
+fn customer_money_survives_legacy_reopen_comment_edit_and_failed_transaction() {
+    let mut fixture = Fixture::new();
+    let opened = fixture.open("isolated-client-money");
+    let blank = apply(&opened, json!({"op":"addClient","name":"旧客户","details":"备注"}));
+    let client_id = id(&blank, 0);
+    assert!(blank["canvas"]["nodes"][0].get("paidCents").is_none());
+    let paid = apply(&blank, json!({
+        "op":"updateClient","id":client_id,"name":"旧客户","details":"备注",
+        "paidYuan":"1500.25","pendingYuan":"500.70"
+    }));
+    assert_eq!(paid["canvas"]["nodes"][0]["paidCents"], 150025);
+    assert_eq!(paid["canvas"]["nodes"][0]["pendingCents"], 50070);
+    let comment = apply(&paid, json!({"op":"updateClient","id":client_id,"name":"旧客户","details":"新备注"}));
+    assert_eq!(comment["canvas"]["nodes"][0]["paidCents"], 150025);
+    let undone = apply(&comment, json!({"op":"undo"}));
+    assert_eq!(undone["canvas"]["nodes"][0]["paidCents"], 150025);
+    let reopened = fixture.open("isolated-client-money");
+    assert_eq!(reopened["canvas"]["nodes"][0]["pendingCents"], 50070);
+    let file = scoped_path(&fixture.root, "isolated-client-money").unwrap();
+    let prior = fs::read(&file).unwrap();
+    for invalid in [
+        json!({"op":"updateClient","id":client_id,"name":"旧客户","details":"x","paidYuan":"1.234"}),
+        json!({"op":"updateClient","id":client_id,"name":"旧客户","details":"x","pendingYuan":-1}),
+    ] {
+        assert!(command(reopened["token"].as_str().unwrap(), &invalid.to_string()).is_err());
+        assert_eq!(fs::read(&file).unwrap(), prior);
+    }
+    let cleared = apply(&reopened, json!({
+        "op":"updateClient","id":client_id,"name":"旧客户","details":"新备注","pendingYuan":""
+    }));
+    assert!(cleared["canvas"]["nodes"][0].get("pendingCents").is_none());
+    assert_eq!(cleared["canvas"]["nodes"][0]["paidCents"], 150025);
+    let note = apply(&cleared, json!({"op":"addNote","text":"普通便签"}));
+    assert!(note["canvas"]["nodes"][1].get("paidCents").is_none());
 }
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());

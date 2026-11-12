@@ -1,3 +1,4 @@
+// v2.13.5.5 - 客户卡片展示独立人民币收付款，旧卡片无损打开。
 // v2.23.4.12 Android - Stabilize canvas pan and card drag through save acknowledgement.
 // v2.22.49.7 Android - Reuse edge geometry and draw buffers; isolate gesture zoom recomposition.
 // v2.22.49.6 Android - Keep multi-canvas creation and selection visible and guard capacity.
@@ -102,6 +103,21 @@ class KnowledgeCanvasTest {
         assertTrue(model.submit(request)); assertFalse(model.submit(request))
         model.close(); assertFalse(model.submit(request)); backend.release.countDown()
         assertTrue(backend.closed.await(5,TimeUnit.SECONDS))
+    }
+    @Test fun customerMoneyFieldsDecodeOldCardsAndFormatCents() {
+        val old = """{"id":"client","kind":"client","pageId":"","text":"旧客户\n备注","x":0,"y":0,"width":192,"height":132,"color":"blue"}"""
+        val decoded = Json.decodeFromString<CanvasNode>(old)
+        assertNull(decoded.paidCents); assertNull(decoded.pendingCents)
+        val revised = decoded.copy(paidCents = 150025L, pendingCents = 50L)
+        val restored = Json.decodeFromString<CanvasNode>(Json.encodeToString(CanvasNode.serializer(), revised))
+        assertEquals(revised, restored)
+        assertEquals("¥1,500.25", canvasYuan(restored.paidCents))
+        assertEquals("¥0.50", canvasYuan(restored.pendingCents))
+        assertEquals("1500.25", canvasMoneyDraft(restored.paidCents))
+        assertTrue(canvasMoneyValid(""))
+        assertTrue(canvasMoneyValid("999999999.99"))
+        assertFalse(canvasMoneyValid("1.123"))
+        assertFalse(canvasMoneyValid("-1"))
     }
     private fun node(id: String, x: Float = 0f, y: Float = 0f) = CanvasNode(id,"note","","card",x,y,256f,168f,"blue")
     private fun boardReply(count: Int, active: Int, revision: Long) = Json.encodeToString(CanvasReply.serializer(), CanvasReply(ok=true, token="bound-account", revision=revision,
@@ -342,7 +358,7 @@ private object DeviceCanvasBackend : CanvasBackend {
     override fun close(token: String) = KnowledgeCanvasNative.close(token)
 }
 
-@Serializable internal data class CanvasNode(val id: String, val kind: String, val pageId: String, val text: String, val x: Float, val y: Float, val width: Float, val height: Float, val color: String)
+@Serializable internal data class CanvasNode(val id: String, val kind: String, val pageId: String, val text: String, val x: Float, val y: Float, val width: Float, val height: Float, val color: String, val paidCents: Long? = null, val pendingCents: Long? = null)
 @Serializable internal data class CanvasEdge(val id: String, val from: String, val to: String, val relation: String? = null)
 @Serializable internal data class CanvasBoard(val id: String, val title: String, val centerX: Float, val centerY: Float, val zoom: Float, val nodes: List<CanvasNode>, val edges: List<CanvasEdge>, val template: String = "blank")
 @Serializable internal data class CanvasSummary(val id: String, val title: String, val template: String = "blank")
@@ -600,6 +616,20 @@ private fun canvasIsReferral(edge: CanvasEdge, nodes: List<CanvasNode>): Boolean
         nodes.any { it.id == edge.from && it.kind == "client" } &&
         nodes.any { it.id == edge.to && it.kind == "client" })
 
+// Display only. Rust validates every incoming decimal amount.
+internal fun canvasYuan(cents: Long?): String {
+    if (cents == null) return "未填写"
+    val integer = java.lang.String.format(java.util.Locale.US, "%,d", cents / 100)
+    return "¥$integer.${(cents % 100).toString().padStart(2, '0')}"
+}
+internal fun canvasMoneyDraft(cents: Long?): String =
+    cents?.let { "${it / 100}.${(it % 100).toString().padStart(2, '0')}" } ?: ""
+internal fun canvasMoneyValid(text: String): Boolean =
+    text.isEmpty() || Regex("""^(0|[1-9][0-9]{0,8})(\.[0-9]{0,2})?$""").matches(text)
+internal fun canvasClientPaymentSummary(node: CanvasNode): String =
+    if (node.paidCents == null && node.pendingCents == null) "点击查看客户资料"
+    else "已支付 ${canvasYuan(node.paidCents)}\n待支付 ${canvasYuan(node.pendingCents)}"
+
 private fun canvasTint(name: String): Color = when (name) {
     "green" -> Color(0xFF2D806B); "amber" -> Color(0xFFA06A24); "pink" -> Color(0xFFAF5279); "purple" -> Color(0xFF7C61A8); else -> Color(0xFF457DA3)
 }
@@ -623,6 +653,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     var editorTitle by remember(workspace) { mutableStateOf("") }
     var clientName by remember(workspace) { mutableStateOf("") }
     var clientDetails by remember(workspace) { mutableStateOf("") }
+    var clientPaidInput by remember(workspace) { mutableStateOf("") }
+    var clientPendingInput by remember(workspace) { mutableStateOf("") }
     var clientParentId by remember(workspace) { mutableStateOf<String?>(null) }
     var editTargetId by remember(workspace) { mutableStateOf<String?>(null) }
     var creatingPage by remember(workspace) { mutableStateOf(false) }
@@ -748,7 +780,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         if (model.submit(canvasRequest("connect") { put("from",from); put("to",target); put("relation",connectRelation) })) connectFrom = null
                     }
                 },
-                onAddFirst = { if (canvas.template == "customer_network") { clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" } else { editorTitle = ""; editorText = ""; dialog = "noteAdd" } })
+                onAddFirst = { if (canvas.template == "customer_network") { clientName = ""; clientDetails = ""; clientPaidInput = ""; clientPendingInput = ""; clientParentId = null; dialog = "clientAdd" } else { editorTitle = ""; editorText = ""; dialog = "noteAdd" } })
         } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(if (model.busy) "正在载入画布" else "画布未能载入", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -765,12 +797,27 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 val parentNode = canvas?.nodes?.firstOrNull { it.id == parent?.from }
                 Text(if (selectedNode.kind == "client") "客户 · 直接推荐 ${children} 人" else kindLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 if (parentNode != null) Text("推荐人：${cardTitle(parentNode)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                if (selectedNode.kind == "client") {
+                    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), shape = RoundedCornerShape(14.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("收付款信息 · 人民币", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("已支付", style = MaterialTheme.typography.bodyMedium)
+                                Text(canvasYuan(selectedNode.paidCents), style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("待支付", style = MaterialTheme.typography.bodyMedium)
+                                Text(canvasYuan(selectedNode.pendingCents), style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
                 val body = cardBody(selectedNode)
                 if (body.isNotBlank()) Text(body, style = MaterialTheme.typography.bodyMedium, maxLines = 8, overflow = TextOverflow.Ellipsis)
                 else Text(if (selectedNode.kind == "client") "尚未填写客户备注" else "尚无其他内容", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (selectedNode.kind == "client") {
                     Button(onClick = {
-                        clientParentId = selectedNode.id; clientName = ""; clientDetails = ""; selected = null; dialog = "clientAdd"
+                        clientParentId = selectedNode.id; clientName = ""; clientDetails = ""; clientPaidInput = ""; clientPendingInput = ""; selected = null; dialog = "clientAdd"
                     }, enabled = ready, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("＋ 添加此客户推荐的人") }
                 }
                 Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -781,7 +828,10 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         OutlinedButton(onClick = {
                             editTargetId = selectedNode.id
                             if (selectedNode.kind == "client") {
-                                clientName = cardTitle(selectedNode); clientDetails = cardBody(selectedNode); dialog = "clientEdit"
+                                clientName = cardTitle(selectedNode); clientDetails = cardBody(selectedNode)
+                                clientPaidInput = canvasMoneyDraft(selectedNode.paidCents)
+                                clientPendingInput = canvasMoneyDraft(selectedNode.pendingCents)
+                                dialog = "clientEdit"
                             } else {
                                 editorTitle = cardTitle(selectedNode).take(80)
                                 editorText = selectedNode.text.removePrefix(editorTitle).trimStart('\n')
@@ -827,7 +877,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         "addActions" -> {
                             Text("选择一种卡片类型", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (canvas?.template == "customer_network") {
-                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建客户", Modifier.fillMaxWidth()) }
+                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientPaidInput = ""; clientPendingInput = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建客户", Modifier.fillMaxWidth()) }
                                 HorizontalDivider()
                             }
                             TextButton(onClick = { panel = ""; editorTitle = ""; editorText = ""; dialog = "noteAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 新建便签", Modifier.fillMaxWidth()) }
@@ -837,7 +887,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             TextButton(onClick = { panel = "pages" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 引用已有知识页面", Modifier.fillMaxWidth()) }
                             if (canvas?.template != "customer_network") {
                                 HorizontalDivider()
-                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 更多卡片：客户", Modifier.fillMaxWidth()) }
+                                TextButton(onClick = { panel = ""; clientName = ""; clientDetails = ""; clientPaidInput = ""; clientPendingInput = ""; clientParentId = null; dialog = "clientAdd" }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("＋ 更多卡片：客户", Modifier.fillMaxWidth()) }
                             }
                         }
                         "boards" -> {
@@ -920,9 +970,21 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             shape = RoundedCornerShape(24.dp),
             title = { Text(when(dialog) { "clientAdd" -> "新建客户"; "clientEdit" -> "编辑客户"; "noteAdd" -> "新建便签"; "noteEdit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名画布"; "pageAdd" -> "新建知识页面"; "deleteNode" -> "移除这张卡片？"; else -> "删除整张画布？" }) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (clientDialog) {
                         OutlinedTextField(value = clientName, onValueChange = { clientName = it.take(80) }, label = { Text("客户姓名") }, placeholder = { Text("例如：张先生") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Text("收付款信息 · 人民币", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(value = clientPaidInput, onValueChange = { clientPaidInput = it.take(12) },
+                            label = { Text("已支付（元）") }, placeholder = { Text("0.00") },
+                            isError = !canvasMoneyValid(clientPaidInput), singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
+                        OutlinedTextField(value = clientPendingInput, onValueChange = { clientPendingInput = it.take(12) },
+                            label = { Text("待支付（元）") }, placeholder = { Text("0.00") },
+                            isError = !canvasMoneyValid(clientPendingInput), singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
+                        Text(if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) "金额最多九位整数和两位小数" else "仅保存在客户画布，不记入风控账本",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                         if (dialog == "clientAdd" && clientParentId != null) Text("会自动连接到所选推荐人", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         OutlinedTextField(value = clientDetails, onValueChange = { clientDetails = it.take(4000) }, label = { Text("客户资料与跟进记录") }, minLines = 3, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp))
                     } else if (noteDialog) {
@@ -938,7 +1000,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             confirmButton = {
                 val allowed = ready && !creatingPage && (dialog != "new" || model.canCreateBoard) &&
                     (!titleEdit || editorText.isNotBlank()) &&
-                    (!clientDialog || clientName.isNotBlank()) &&
+                    (!clientDialog || (clientName.isNotBlank() && canvasMoneyValid(clientPaidInput) && canvasMoneyValid(clientPendingInput))) &&
                     (!noteDialog || editorTitle.isNotBlank())
                 TextButton(enabled = allowed, onClick = {
                     if (dialog == "pageAdd") {
@@ -953,10 +1015,12 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                     val request = when(dialog) {
                         "clientAdd" -> canvasRequest("addClient") {
                             put("name",clientName.trim()); put("details",clientDetails)
+                            put("paidYuan",clientPaidInput); put("pendingYuan",clientPendingInput)
                             clientParentId?.let { put("parentId",it) }
                         }
                         "clientEdit" -> canvasRequest("updateClient") {
                             put("id",editTargetId.orEmpty()); put("name",clientName.trim()); put("details",clientDetails)
+                            put("paidYuan",clientPaidInput); put("pendingYuan",clientPendingInput)
                         }
                         "noteAdd" -> canvasRequest("addNote") { put("text",editorTitle.trim()+"\n"+editorText) }
                         "noteEdit" -> canvasRequest("text") { put("id",editTargetId.orEmpty()); put("text",editorTitle.trim()+"\n"+editorText) }
@@ -1162,7 +1226,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     } else {
                         val title = node.text.substringBefore("\n").ifBlank { if (node.kind == "client") "未命名客户" else "空白便签" }
                         val body = node.text.substringAfter("\n", "").trim()
-                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,if (viewport.zoom < 0.35f) "" else if (node.kind == "client") "点击查看客户资料" else body,textColor)
+                        textCache.layout(node,if(node.kind == "client") "●  "+title else title,if (viewport.zoom < 0.35f) "" else if (node.kind == "client") canvasClientPaymentSummary(node) else body,textColor)
                     }
                     native.save(); native.clipRect(nodeX+20,nodeY+12,nodeX+node.width-10,nodeY+node.height-10); native.translate(nodeX+24,nodeY+14)
                     textLayout.draw(native)
