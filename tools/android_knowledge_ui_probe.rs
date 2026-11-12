@@ -1,10 +1,11 @@
 //! Android API 35 smoke and visual evidence for the knowledge workspace.
+//! The Android 2.13.5.4 run keeps system animations enabled and retains a transition frame.
 //! The driver runs only against an installed signed APK, never a mocked UI.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "2.13.5.2";
+const VERSION: &str = "2.13.5.4";
 const FOLDER: &str = "PaperFolder";
 
 #[derive(Clone)]
@@ -59,6 +60,14 @@ fn dump() -> Result<String, String> {
 }
 fn capture(dir: &Path, title: &str) {
     if let Ok(xml) = dump() { let _ = fs::write(dir.join(format!("{title}.xml")), xml); }
+    if let Ok(out) = adb(&["exec-out", "screencap", "-p"]) {
+        if out.status.success() && out.stdout.starts_with(b"\x89PNG") {
+            let _ = fs::write(dir.join(format!("{title}.png")), out.stdout);
+        }
+    }
+}
+// A PNG-only frame avoids waiting for accessibility extraction during motion.
+fn capture_motion_frame(dir: &Path, title: &str) {
     if let Ok(out) = adb(&["exec-out", "screencap", "-p"]) {
         if out.status.success() && out.stdout.starts_with(b"\x89PNG") {
             let _ = fs::write(dir.join(format!("{title}.png")), out.stdout);
@@ -148,6 +157,22 @@ fn create_folder(root: &Path) -> Result<(), String> {
     }
     if cmd(&["shell", "pidof", PACKAGE])?.trim().is_empty() {
         return Err("App exited after adding a knowledge folder".into());
+    }
+    // The folder may already be the current browsing location after creation.
+    // Keep this additional motion evidence best-effort; the create action and
+    // running process above remain the hard business-state assertions.
+    if let Ok(Some(folder)) = find(&[FOLDER]) {
+        let x = (folder.bounds[0] + folder.bounds[2]) / 2;
+        let y = (folder.bounds[1] + folder.bounds[3]) / 2;
+        if cmd(&["shell", "input", "tap", &x.to_string(), &y.to_string()]).is_ok() {
+            capture_motion_frame(root, "05_folder_transition_frame");
+            sleep(Duration::from_millis(420));
+            capture(root, "06_folder_opened");
+            if let Ok(Some(back)) = find(&["返回"]) {
+                let _ = tap(&back);
+                capture(root, "07_folder_returned");
+            }
+        }
     }
     Ok(())
 }

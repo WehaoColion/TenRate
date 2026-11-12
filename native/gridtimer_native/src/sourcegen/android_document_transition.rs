@@ -1,3 +1,4 @@
+// v2.13.5.4 - Add directional paper-like Android document transitions without changing editor identity.
 // v2.23.2.28 - Preserve knowledge editor identity during a bounded exit fade.
 // Android presentation and its access policy are authored in this Rust emitter.
 
@@ -69,7 +70,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         return Ok(source);
     }
     replace_once(&mut source, "package com.ofairyo.gridtimer.ui\n",
-        "package com.ofairyo.gridtimer.ui\nimport androidx.compose.animation.fadeIn\nimport androidx.compose.animation.fadeOut\nimport androidx.compose.animation.togetherWith\nimport androidx.compose.animation.core.tween\nimport androidx.compose.ui.semantics.clearAndSetSemantics\n")?;
+        "package com.ofairyo.gridtimer.ui\nimport androidx.compose.animation.fadeIn\nimport androidx.compose.animation.fadeOut\nimport androidx.compose.animation.slideInHorizontally\nimport androidx.compose.animation.slideOutHorizontally\nimport androidx.compose.animation.togetherWith\nimport androidx.compose.animation.core.FastOutSlowInEasing\nimport androidx.compose.animation.core.tween\nimport androidx.compose.ui.semantics.clearAndSetSemantics\n")?;
     let start = source
         .find("internal fun NoteStudioSheet(")
         .ok_or("missing knowledge studio")?;
@@ -183,8 +184,28 @@ const TRANSITION_END: &str = r####"                )
                     targetState = transitionTarget,
                     modifier = Modifier.fillMaxSize(),
                     transitionSpec = {
-                        (fadeIn(animationSpec = tween(160)) togetherWith
-                            fadeOut(animationSpec = tween(120))).using(null)
+                        // Entering a document moves gently into the reader; backing out
+                        // restores the collection from the opposite direction. Keep the
+                        // editor record and its access barrier alive across the fade.
+                        if (targetState == null) {
+                            (fadeIn(animationSpec = tween(175)) +
+                                slideInHorizontally(initialOffsetX = { -it / 34 },
+                                    animationSpec = tween(225, easing = FastOutSlowInEasing))
+                            ).togetherWith(
+                                fadeOut(animationSpec = tween(145)) +
+                                    slideOutHorizontally(targetOffsetX = { it / 30 },
+                                        animationSpec = tween(185, easing = FastOutSlowInEasing))
+                            ).using(null)
+                        } else {
+                            (fadeIn(animationSpec = tween(195)) +
+                                slideInHorizontally(initialOffsetX = { it / 27 },
+                                    animationSpec = tween(260, easing = FastOutSlowInEasing))
+                            ).togetherWith(
+                                fadeOut(animationSpec = tween(140)) +
+                                    slideOutHorizontally(targetOffsetX = { -it / 35 },
+                                        animationSpec = tween(180, easing = FastOutSlowInEasing))
+                            ).using(null)
+                        }
                     },
                     contentKey = { (it != null) to it?.note?.id },
                     label = "knowledge-document-transition"
