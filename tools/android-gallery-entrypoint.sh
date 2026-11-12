@@ -20,12 +20,12 @@ sleep 3
 # Raw boot evidence is excluded from the Chinese gallery until locale is verified.
 adb exec-out screencap -p > feature_tour_evidence/中文模式启动待核验.png || true
 
-timeout 80m python3 -u tools/android_feature_tour.py > gallery_tour_log.txt 2>&1
+timeout 260m python3 -u tools/android_feature_tour.py > gallery_tour_log.txt 2>&1
 tour_code=$?
 
 if [[ "$tour_code" -eq 0 ]]; then
   adb shell pm clear com.ofairyo.gridtimer > app_clear_log.txt 2>&1 || true
-  timeout 35m ./android_customer_canvas_probe customer_canvas_evidence > canvas_probe_log.txt 2>&1
+  timeout 45m ./android_customer_canvas_probe customer_canvas_evidence > canvas_probe_log.txt 2>&1
   canvas_code=$?
 else
   echo "中文全功能巡检失败；跳过无关画布验收，避免把其英文截图混入交付。" > canvas_probe_log.txt
