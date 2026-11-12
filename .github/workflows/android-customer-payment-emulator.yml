@@ -10,7 +10,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: customer-payment-${ github.ref }
+  group: customer-payment-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -27,7 +27,7 @@ jobs:
       - name: Wait for this commit's formally signed APK
         shell: bash
         env:
-          GH_TOKEN: ${ github.token }
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           found=0
