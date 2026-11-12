@@ -17,7 +17,7 @@ ACTIVITY = "com.ofairyo.gridtimer/.MainActivity"
 ROOT = Path("feature_tour_evidence")
 IMAGES = ROOT / "截图"
 HIERARCHY = ROOT / "界面结构"
-MODULES = ["计时", "便签", "知识", "风控"]
+MODULES = ["计时", "便签", "知识", "风控", "我的"]
 RISKY = ("删除", "清空", "注销", "退出登录", "重置", "永久", "付款", "支付", "充值", "结算",
          "发送", "上传", "同步", "共享", "分享", "发布", "恢复出厂", "清除数据", "移除账号",
          "移除所有", "解绑", "导出", "确认删除", "覆盖原文", "向", "购买",
@@ -28,9 +28,9 @@ errors = []
 num = 0
 seen = set()
 module_counts = {}
-MAX_PER_MODULE = 95
-MAX_TOTAL = 360
-MAX_DEPTH = 3
+MAX_PER_MODULE = 180
+MAX_TOTAL = 850
+MAX_DEPTH = 4
 DUMP = "/sdcard/feature_tour.xml"
 
 def adb(*args, timeout=22, binary=False):
@@ -109,7 +109,7 @@ def capture(module, action, xml=None, detail="", force=False):
     if not force and module_counts.get(module,0)>=MAX_PER_MODULE: return False
     xml=xml if xml is not None else get_xml()
     if not xml: return False
-    key=(module,identity(xml))
+    key=identity(xml)
     if not force and key in seen: return False
     data=image_bytes()
     if not data: return False
@@ -171,16 +171,66 @@ def open_app():
             if not click(["Close app","关闭应用"]): break
         else: break
 
+def screen_height():
+    result = safe_adb("shell","wm","size")
+    found = re.search(r"(\\d+)x(\\d+)",result)
+    return int(found.group(2)) if found else 2400
+
+def bottom_nav(xml):
+    height=screen_height()
+    candidates=nodes(xml)
+    return {name: next((n for n in candidates if n["label"]==name and n["y"]>height*.82),None)
+            for name in MODULES}
+
+def require_zh(xml):
+    tabs=bottom_nav(xml)
+    missing=[name for name in ("计时","便签","知识","风控") if tabs.get(name) is None]
+    if missing:
+        raise RuntimeError("简体中文界面验证失败，缺少底部导航："+"、".join(missing)+
+                           "；实见："+ "；".join(visible(xml)[:35]))
+    if any(x in xml for x in ("Quick notes", "Risk Control", "Start anew", "Suggested action")):
+        raise RuntimeError("检测到英文界面，禁止采集并归类为中文截图")
+
+def body_signature(xml):
+    height=screen_height()
+    main=[n["label"] for n in nodes(xml)
+          if n["y"]<height*.84 and n["label"] not in MODULES
+          and not re.fullmatch(r"v?\\d+(?:\\.\\d+){2,}", n["label"])
+          and "时钟" not in n["desc"]]
+    stable=[]
+    for label in main:
+        value=re.sub(r"\\b\\d{1,2}:\\d{2}(?::\\d{2})?\\b","<时间>",label)
+        value=re.sub(r"\\b\\d+\\s*(?:分|秒|小时|m|h)\\b","<时长>",value)
+        value=re.sub(r"\\d+(?:\\.\\d+)?%","<百分比>",value)
+        if value not in stable: stable.append(value)
+    return hashlib.sha256("\\u241e".join(stable[:100]).encode("utf-8")).hexdigest()
+
 def at_module(module):
     if not app_alive(): open_app()
-    for attempt in range(4):
-        if click([module, module+"模块", "进入"+module]): return get_xml()
-        if attempt==1:
-            back()
-        if attempt==2:
-            safe_adb("shell","am","start","-n",ACTIVITY)
-        time.sleep(0.3)
-    return get_xml()
+    for retry in range(7):
+        xml=get_xml()
+        tabs=bottom_nav(xml)
+        if all(tabs.get(name) for name in ("计时","便签","知识","风控")):
+            current=body_signature(xml)
+            target=tabs.get(module)
+            if not target: raise RuntimeError("中文导航入口不存在："+module)
+            tap_node(target)
+            time.sleep(1.0)
+            opened=get_xml()
+            if not opened: raise RuntimeError("点击 "+module+" 后界面结构不可读")
+            require_zh(opened)
+            new=body_signature(opened)
+            if module!="计时" and new==current:
+                time.sleep(1.5)
+                opened=get_xml()
+                new=body_signature(opened)
+                if new==current:
+                    raise RuntimeError("点击 "+module+" 后正文未变化，不能冒充已经进入该模块")
+            if module in MODULES and module!="计时" and globals().get("timer_body_signature")==new:
+                raise RuntimeError("错误模块："+module+" 仍显示计时首页")
+            return opened
+        back()
+    raise RuntimeError("无法返回包含完整中文底部导航的工作台："+module)
 
 def scroll_screen(direction="down"):
     # Pixel 6 emulator uses approx. 1080x2400 coordinates; read real size.
@@ -193,44 +243,46 @@ def scroll_screen(direction="down"):
     safe_adb("shell","input","swipe",x,start,x,end,370,timeout=20)
     time.sleep(0.4)
 
+SAFE_ACTION_WORDS = (
+    "新建","新增","添加","更多","设置","查看","搜索","编辑","分类","任务","历史","筛选","排序",
+    "统计","画布","目录","页面","文件夹","风险","预算","回收站","模板","属性","时间",
+    "账单","提醒","目标","标签","帮助","选择","管理","详情","今日","本周","本月",
+    "列表","清单","汇总","趋势","总览","最近","记录","收入","支出","全部","结构",
+    "展开","折叠","待办","插入","移动","链接","分组","归档","颜色","格式","图表",
+    "文本","文档","快捷操作","项目","通知","收藏","复制","预览","账户","个人"
+)
+
 def eligible(n):
     s=n["label"].strip()
-    if len(s)>80 or len(s)<1: return False
+    if len(s)>48 or len(s)<2: return False
     if any(w in s for w in RISKY+BORING): return False
     if s.startswith("http") or "@" in s: return False
-    if n["y"]<50 or n["y"]>2500: return False
-    if not n["click"] and not n["class_"].endswith(("Button","ImageButton")):
-        # Compose commonly places its clickable semantics on the label's parent.
-        if n["class_"] not in ("android.widget.TextView","android.view.View"): return False
-    if s in ("确定","返回","取消","关闭","Done","OK","Cancel","Close"): return False
+    if s in MODULES or re.fullmatch(r"v?\\d+(?:\\.\\d+){2,}",s):return False
+    if not any(hint in s for hint in SAFE_ACTION_WORDS): return False
+    if n["y"]<100 or n["y"]>screen_height()*.86: return False
+    if n["class_"] not in ("android.widget.TextView","android.view.View") and not n["class_"].endswith(("Button","ImageButton")): return False
     return True
 
-def action_candidates(xml, module):
-    ns=nodes(xml)
-    result=[]; keys=set()
-    for n in ns:
+def action_candidates(xml,module):
+    found=[]; seen_labels=set()
+    for n in nodes(xml):
         if not eligible(n): continue
         label=n["label"]
-        if module in MODULES and label==module: continue
-        key=label[:48]
-        if key in keys: continue
-        keys.add(key);result.append(n)
-    # Favor controls above content and menu actions, do not depend on XML order alone.
+        if label in seen_labels:continue
+        seen_labels.add(label);found.append(n)
+    priority=("更多","新建","新增","添加","搜索","设置","筛选","分类","目录","页面",
+              "统计","画布","列表","查看","详情","编辑","历史","预算")
     def score(n):
-        s=n["label"]
-        hints=("新建","添加","更多","设置","查看","搜索","编辑","分类","任务","历史","筛选","排序",
-               "日账","周账","月账","时间","统计","画布","目录","页面","文件夹","风险","预算","回收站",
-               "模板","属性","开始","计时","账单","提醒","目标","标签","通知","帮助","选择")
-        return (0 if any(h in s for h in hints) else 1, n["y"])
-    result.sort(key=score)
-    return result[:18]
+        label=n["label"]
+        return (0 if any(w in label for w in priority) else 1, n["y"],n["x"])
+    return sorted(found,key=score)[:24]
 
 def explore(module, depth, trace, budget=0):
     if depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE:
         return
     screen=get_xml()
     if not screen: return
-    start_identity=identity(screen)
+    start_identity=body_signature(screen)
     sig=(module,start_identity,depth)
     if sig in visited: return
     visited.add(sig)
@@ -239,7 +291,7 @@ def explore(module, depth, trace, budget=0):
         scroll_screen("down")
         scrolled=get_xml()
         capture(module, "下滑查看"+(trace[-1] if trace else "列表"), scrolled, "滚动后的实际界面")
-        if identity(scrolled)!=start_identity:
+        if body_signature(scrolled)!=start_identity:
             # Avoid recursively operating on a scrolled list; return to top.
             scroll_screen("up")
             screen=get_xml()
@@ -249,32 +301,33 @@ def explore(module, depth, trace, budget=0):
             back()
             break
         if not get_xml(): break
-        current_nodes=nodes(get_xml())
+        current_xml=get_xml()
+        current_nodes=nodes(current_xml)
         # Skip controls that disappeared after an earlier action
         found=next((x for x in current_nodes if x["label"]==n["label"] and
                     abs(x["y"]-n["y"])<170),None)
         if not found: continue
-        prior=identity(get_xml())
+        prior=body_signature(current_xml)
         tap_node(found)
         after=get_xml()
         if not after: back();continue
-        changed=identity(after)!=prior
+        changed=body_signature(after)!=prior
         if changed:
             label=n["label"].replace("\n"," ")[:32]
             capture(module,"→".join(trace[-2:]+[label]),after,
                     "实际点击："+n["label"][:100])
-            if depth<MAX_DEPTH and (module,identity(after),depth+1) not in visited:
+            if depth<MAX_DEPTH and (module,body_signature(after),depth+1) not in visited:
                 explore(module,depth+1,trace+[label])
         # Return to parent: single back normally exits sheets/pages.
         back()
         returned=get_xml()
-        if identity(returned)!=prior:
+        if body_signature(returned)!=prior:
             # Dismiss one extra layer, then try restoring the module if navigated away.
             back()
             returned=get_xml()
         if identity(returned)!=prior:
             after_nav=at_module(module)
-            if identity(after_nav)!=start_identity:
+            if body_signature(after_nav)!=start_identity:
                 errors.append("返回路径已变化："+module+" / "+n["label"][:40])
                 break
 
@@ -312,26 +365,43 @@ def main():
     version=re.search(r"versionName=([^\s]+)",pkg)
     ver=version.group(1) if version else "未知"
     (ROOT/"验证元数据.json").write_text(json.dumps({
-        "应用包名":PACKAGE,"安装版本":ver,"模拟器":"Android API35 / Pixel 6",
-        "来源提交":"896c9610b6d010dfe53d7990c607f0e3a5ab3fd9",
+        "应用包名":PACKAGE,"安装版本":ver,"模拟器":"Android API35 / Pixel 6；中文模式 zh-CN",
+        "来源提交":"abbda87fea4fdd8b4725dfc504af340214421a1b",
         "方法":"Android 真正启动；adb screencap + uiautomator XML 自动抓取，未手工制造界面"
     },ensure_ascii=False,indent=2),encoding="utf-8")
     if ver!="2.13.5.1":
-        errors.append("严重：安装版本不符合预期: "+ver)
+        raise RuntimeError("安装版本不符合要求："+ver)
     open_app()
-    capture("工作台","初次启动与首页",get_xml(),force=True)
+    home=get_xml()
+    require_zh(home)
+    global timer_body_signature
+    timer_body_signature=body_signature(home)
+    (ROOT/"中文界面验收.txt").write_text(
+        "简体中文导航：通过\\n底部入口：计时、便签、知识、风控\\n"+
+        "系统语言："+safe_adb("shell","getprop","persist.sys.locale").strip()+"\\n"+
+        "App独立语言："+safe_adb("shell","cmd","locale","get-app-locales",PACKAGE,"--user","0").strip()+"\\n",
+        encoding="utf-8")
+    capture("工作台","简体中文首页",home,force=True)
+    module_root_signatures={}
     for module in MODULES:
         try:
             xml=at_module(module)
-            capture(module,"模块首页",xml,force=True)
-            seed_editor(module)
+            sig=body_signature(xml)
+            if sig in module_root_signatures.values():
+                raise RuntimeError("模块主页与其他模块完全相同，拒绝作为独立功能截图："+module)
+            module_root_signatures[module]=sig
+            capture(module,"中文模块首页",xml,force=True)
+            if module in ("便签","知识","计时"): seed_editor(module)
             xml=at_module(module)
-            capture(module,"返回模块首页",xml)
             explore(module,0,[module])
         except Exception as ex:
-            errors.append("模块 "+module+" 异常："+str(ex))
-            try: open_app()
-            except Exception: pass
+            errors.append("模块 "+module+" 错误："+str(ex))
+            (ROOT/"模块导航问题.txt").write_text("\\n".join(errors),encoding="utf-8")
+            raise
+    (ROOT/"中文模块导航验收.json").write_text(
+        json.dumps({"界面语言":"简体中文","导航核验":"通过",
+                    "模块根页面签名":module_root_signatures,
+                    "说明":"所有模块主页均与其他模块不同，且底部导航为中文"},ensure_ascii=False,indent=2),encoding="utf-8")
     # Canvas is a distinct cross-module route and is also exercised by existing Rust UI probe.
     try:
         at_module("知识")
@@ -363,12 +433,14 @@ def main():
             "注意：自动探索不等于全部功能通过测试。未登录账户、真实同步、真实 AI 调用、付款、删除和外部分享等未执行。\n"
             "遇到导航失败将留在“未覆盖与异常记录.txt”；真实覆盖量以索引和图片数量为准。\n"
             "虚构本地演示数据：GalleryDemo。截图为应用实际运行画面。\n"
-            "APK 来源提交：896c9610b6d010dfe53d7990c607f0e3a5ab3fd9\n"
+            "APK 来源提交：abbda87fea4fdd8b4725dfc504af340214421a1b\n"
             "源码分支：feat/android-referral-forest-layout-v2.13.5.1\n"
             + "\n各模块张数：\n" + "\n".join(f"{m}：{c}" for m,c in module_counts.items()) + "\n")
     (ROOT/"请先阅读.txt").write_text(README,encoding="utf-8")
     print(README)
     if num<12:
         raise RuntimeError(f"有效截图仅 {num} 张，不足以证明自动化正常；请查阅日志和错误记录")
+    if len(module_root_signatures)!=len(MODULES):
+        raise RuntimeError("模块导航验收未覆盖全部中文模块")
 if __name__=="__main__":
     main()
