@@ -489,11 +489,16 @@ def use_latin_ime():
             return name
     return "当前输入法（将尝试提交候选）"
 
-def committed_edit_text(expected):
+def committed_edit_text(expected, index=None):
+    """Verify a committed value in the intended real EditText, not a Gboard candidate."""
     xml=get_xml()
-    return any(n["class_"].endswith("EditText") and
-               n["text"].replace(" ","").lower()==expected.lower()
-               for n in nodes(xml))
+    fields=[n for n in nodes(xml) if n["class_"].endswith("EditText")
+            and n["bounds"][2]-n["bounds"][0]>70]
+    if index is not None:
+        if index>=len(fields): return False
+        fields=[fields[index]]
+    return any(n["text"].strip().replace(" ","").lower()==expected.lower()
+               for n in fields)
 
 def fill_editor_field(index,value):
     xml=get_xml()
@@ -503,14 +508,14 @@ def fill_editor_field(index,value):
     tap_node(edits[index])
     safe_adb("shell","input","text",value)
     time.sleep(0.55)
-    if committed_edit_text(value): return True
+    if committed_edit_text(value,index): return True
     # Gboard composition can remain in the suggestion strip until committed.
     safe_adb("shell","input","keyevent","66")
     time.sleep(0.4)
-    if committed_edit_text(value): return True
+    if committed_edit_text(value,index): return True
     safe_adb("shell","input","keyevent","61")
     time.sleep(0.4)
-    return committed_edit_text(value)
+    return committed_edit_text(value,index)
 
 def seed_editor(module):
     # Seed only local, disposable records. Verify the actual EditText, never the
@@ -537,6 +542,21 @@ def seed_editor(module):
         return
     capture(module,"演示文本已写入真实输入框",get_xml(),
             "UI XML EditText.text 已核实 GalleryDemo，非键盘候选")
+    # The first field is a title in Notes/Knowledge. A title-only page is not
+    # evidence that the actual body editor or note content works.
+    if module in ("便签","知识"):
+        actual_fields=[n for n in nodes(get_xml()) if n["class_"].endswith("EditText")
+                       and n["bounds"][2]-n["bounds"][0]>70]
+        if len(actual_fields)>1:
+            body_ok=fill_editor_field(1,"GalleryBodyDemo")
+            if (body_ok and committed_edit_text("GalleryDemo",0)
+                    and committed_edit_text("GalleryBodyDemo",1)):
+                capture(module,"正文内容已真实输入",get_xml(),
+                        "分别核实标题与正文两个真实 EditText；不是同一输入框或输入法候选")
+            else:
+                errors.append("标题或正文未同时提交到各自真实 EditText："+module)
+        else:
+            errors.append("编辑器只有一个可见输入框，未伪造正文已输入状态："+module)
     if module=="风控":
         if fill_editor_field(1,"12"):
             capture(module,"金额12已写入真实输入框",get_xml(),
