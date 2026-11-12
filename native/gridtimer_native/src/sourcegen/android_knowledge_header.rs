@@ -182,10 +182,14 @@ private fun NoteSummaryCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    text = if (trashMode) "回收站" else "文档",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    KnowledgeObjectGlyph(isFolder = trashMode, modifier = Modifier.size(34.dp))
+                    Text(
+                        text = if (trashMode) "回收站" else "文档",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                }
                 FlowusPropertyBadge(
                     label = if (visibleCount == totalCount) "$totalCount 页"
                         else "显示 $visibleCount / 共 $totalCount 页",
@@ -228,7 +232,7 @@ private fun NoteSummaryCard(
             // Reuse the original privacy-aware preview accessor, not raw note content.
             latestNote?.let { note ->
                 Text(
-                    text = "${noteUpdatedLabel(note, now)}。${note.previewBody()}",
+                    text = "最近编辑 · ${noteUpdatedLabel(note, now)} · ${note.previewBody()}",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall.copy(
