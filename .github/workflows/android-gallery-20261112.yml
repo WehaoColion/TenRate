@@ -53,6 +53,7 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check Pillow==11.3.0
           python3 -m py_compile tools/android_feature_tour.py
+          python3 -m py_compile tools/android_gallery_visual_audit.py
       - name: Boot Android Pixel 6 emulator and tour real screens
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -64,6 +65,11 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: bash tools/android-gallery-entrypoint.sh
+      - name: Independently audit app pixels and module ownership
+        if: always()
+        shell: bash
+        run: |
+          python3 tools/android_gallery_visual_audit.py feature_tour_evidence
       - name: Package Chinese-labeled screenshots and evaluation index
         if: always()
         shell: bash
