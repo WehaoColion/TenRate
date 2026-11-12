@@ -5,6 +5,10 @@ on:
     branches: [qa/android-full-gallery-20261112]
   workflow_dispatch:
 
+concurrency:
+  group: android-gallery-zh-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   actions: read
@@ -83,6 +87,19 @@ jobs:
               if len(data)>=24 and data[:8]==bytes([137,80,78,71,13,10,26,10]):
                   valid.append(image)
           png_count=len(valid)
+          proof=evidence/"中文模块导航验收.json"
+          language=evidence/"中文界面验收.txt"
+          if not proof.exists() or not language.exists():
+              raise RuntimeError("缺少真实中文模块切换验收证明；拒绝将截图包标为成功")
+          checked=__import__("json").loads(proof.read_text(encoding="utf-8"))
+          if checked.get("界面语言")!="简体中文" or len(checked.get("模块根页面签名",{}))!=4:
+              raise RuntimeError("中文语言或四模块导航验收失败")
+          if len(set(checked["模块根页面签名"].values()))!=4:
+              raise RuntimeError("模块页面重复，无法证明导航成功")
+          for module in ("计时","便签","知识","风控"):
+              if not any((evidence/"截图"/module).glob("*.png")):
+                  raise RuntimeError(f"模块{module}没有真实截图")
+          print("中文界面与四模块独立导航审核：通过")
           if png_count<12:
               print(f"FAIL: only {png_count} actual PNG screenshots; gallery cannot be accepted")
           else:
