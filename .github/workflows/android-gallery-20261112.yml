@@ -54,21 +54,7 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
-          script: |
-            set +e
-            adb install -r signed_apk/tenfold_v2.13.5.1.apk
-            code=$?
-            if [ "$code" -ne 0 ]; then
-              echo "APK installation failed: $code" > gallery_status.txt
-              exit "$code"
-            fi
-            python3 tools/android_feature_tour.py > gallery_tour_log.txt 2>&1
-            tour_code=$?
-            adb shell pm clear com.ofairyo.gridtimer
-            ./android_customer_canvas_probe customer_canvas_evidence > canvas_probe_log.txt 2>&1
-            canvas_code=$?
-            echo "Tour exit: $tour_code; customer canvas probe exit: $canvas_code" | tee gallery_status.txt
-            if [ "$tour_code" -ne 0 ] && [ "$canvas_code" -ne 0 ]; then exit 1; fi
+          script: bash tools/android-gallery-entrypoint.sh
       - name: Package Chinese-labeled screenshots and evaluation index
         if: always()
         shell: bash
@@ -78,7 +64,7 @@ jobs:
           import zipfile, shutil
           evidence=Path("feature_tour_evidence")
           evidence.mkdir(exist_ok=True)
-          for filename in ("gallery_tour_log.txt","canvas_probe_log.txt","gallery_status.txt"):
+          for filename in ("gallery_tour_log.txt","canvas_probe_log.txt","gallery_status.txt","apk_install_log.txt","app_launch_log.txt","app_clear_log.txt"):
               file=Path(filename)
               if file.exists(): shutil.copy2(file,evidence/filename)
           existing=Path("customer_canvas_evidence")
@@ -90,9 +76,23 @@ jobs:
           with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=6,allowZip64=True) as z:
               for file in sorted(evidence.rglob("*")):
                   if file.is_file(): z.write(file,file.relative_to(evidence.parent))
-          png_count=len(list(evidence.rglob("*.png")))
+          images=list(evidence.rglob("*.png"))
+          valid=[]
+          for image in images:
+              data=image.read_bytes()
+              if len(data)>=24 and data[:8]==bytes([137,80,78,71,13,10,26,10]):
+                  valid.append(image)
+          png_count=len(valid)
+          if png_count<12:
+              print(f"FAIL: only {png_count} actual PNG screenshots; gallery cannot be accepted")
+          else:
+              print(f"PNG validation successful: {png_count} nonempty PNG files")
           Path("截图统计.txt").write_text(f"实际采集PNG数量：{png_count}\n压缩包：{output.name}\n",encoding="utf-8")
           print(f"Total real screenshots: {png_count}. Archive bytes: {output.stat().st_size}")
+          with zipfile.ZipFile(output) as archive:
+              bad=archive.testzip()
+              if bad: raise RuntimeError(f"Corrupted screenshot ZIP member: {bad}")
+              if png_count<12: raise RuntimeError("No usable screenshot gallery; refusing success")
           PY
           cat 截图统计.txt >> "$GITHUB_STEP_SUMMARY"
           if test -f feature_tour_evidence/请先阅读.txt; then
