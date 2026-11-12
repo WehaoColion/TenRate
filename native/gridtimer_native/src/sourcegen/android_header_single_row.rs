@@ -1,3 +1,4 @@
+// v2.13.5.3 - Keep the home summary badge about today's time, including zero and English.
 // v2.23.4.10 - Refine balanced groups and compact squircle actions.
 // v2.23.4.9 - Keep the timer home header controls on one row on phones.
 const SCREEN: &str = "com/ofairyo/gridtimer/ui/GridTimerScreen.kt";
@@ -35,7 +36,7 @@ const HEADER_ROW: &str = r####"    // Prefer content-sized labels, a quiet gap a
                     modifier = Modifier.weight(1f, fill = false)
                 )
                 HomeHeaderMetaBadge(
-                    label = if (todayTotal > 0L && englishUi) "Today " + englishTimerDuration(todayTotal)
+                    label = if (englishUi) "Today " + englishTimerDuration(todayTotal)
                         else if (todayTotal > 0L) "今日 ${formatCompactDuration(todayTotal)}"
                         else thirdBadgeLabel,
                     accent = neutralAccent
@@ -134,7 +135,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     replace_once(
         &mut output,
         "thirdBadgeLabel = \"归档状态\",",
-        "thirdBadgeLabel = \"归档\",",
+        "thirdBadgeLabel = \"今日 0分钟\",",
     )?;
 
     if output.matches(ROW_START).count() != 1 {
@@ -216,9 +217,9 @@ mod tests {
     }
 
     #[test]
-    fn archive_badge_and_actions_share_one_bounded_row() {
+    fn today_summary_and_actions_share_one_bounded_row() {
         let rendered = render(SCREEN, &english_home_source()).expect("home header patch");
-        assert!(rendered.contains("thirdBadgeLabel = \"归档\","));
+        assert!(rendered.contains("thirdBadgeLabel = \"今日 0分钟\","));
         assert!(!rendered.contains("thirdBadgeLabel = \"归档状态\","));
         assert!(rendered.contains("val compactHeader = maxWidth < 430.dp"));
         assert!(rendered.contains("val tightHeader = maxWidth < 300.dp"));
@@ -236,7 +237,11 @@ mod tests {
         assert!(header.contains("testTag = \"home_header_history\""));
         assert!(header.contains("onClick = onOpenHistory"));
         assert!(header.contains("onThemeModeSelected = onThemeModeSelected"));
-        assert!(header.contains("if (todayTotal > 0L && englishUi)"));
+        assert!(header.contains("label = if (englishUi) \"Today \" + englishTimerDuration(todayTotal)"));
+        assert!(header.contains("else if (todayTotal > 0L)"));
+        assert!(header.contains("else thirdBadgeLabel,"));
+        assert!(!header.contains("if (todayTotal > 0L && englishUi)"));
+        assert!(!header.contains("\"归档\""));
         assert!(rendered.contains("maxLines = 1,\n            softWrap = false,\n            overflow = TextOverflow.Ellipsis"));
         assert!(rendered.contains("testTag = \"home_header_theme\""));
         assert_eq!(rendered.matches("private fun HomeHeaderMetaBadge(").count(), 1);
