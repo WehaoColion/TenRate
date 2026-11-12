@@ -554,6 +554,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -937,6 +938,13 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val workerScope = rememberCoroutineScope()
+    // A folder changes browsing context, not the underlying document or save state.
+    // Key the presentation animation to location so data refreshes never replay it.
+    val browserEntry = remember(workspace, parentId) { Animatable(0f) }
+    val browserEntryOffsetPx = with(density) { 10.dp.toPx() }
+    LaunchedEffect(workspace, parentId) {
+        browserEntry.animateTo(1f, animationSpec = tween(220, easing = FastOutSlowInEasing))
+    }
     val listState = key(workspace, parentId) { rememberLazyListState() }
     val directoryScope = remember(index, workspace, parentId, active, busy) {
         knowledgeDirectoryOrderScope(index, workspace, parentId, active && !busy)
@@ -1178,7 +1186,11 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                 }
             }
         }) {
-        LazyColumn(Modifier.fillMaxSize(), state = listState, userScrollEnabled = dragging == null && !saving,
+        LazyColumn(Modifier.fillMaxSize().graphicsLayer {
+            val progress = browserEntry.value
+            alpha = 0.94f + 0.06f * progress
+            translationY = browserEntryOffsetPx * (1f - progress)
+        }, state = listState, userScrollEnabled = dragging == null && !saving,
             contentPadding = PaddingValues(bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item(key = 0L) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
