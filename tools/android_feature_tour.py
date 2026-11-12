@@ -32,9 +32,9 @@ num = 0
 seen = set()
 seen_png = set()
 module_counts = {}
-MAX_PER_MODULE = 180
+MAX_PER_MODULE = 235
 MAX_TOTAL = 850
-MAX_DEPTH = 5
+MAX_DEPTH = 6
 DUMP = "/sdcard/feature_tour.xml"
 
 def adb(*args, timeout=22, binary=False):
@@ -306,7 +306,12 @@ SAFE_ACTION_WORDS = (
     "适应","卡片","客户","纸张","内容","版式","日期","计时","时钟","置顶","粗体",
     "最新","版本","确认","草稿","输入","备注","金额","类型","来源","添加第一张",
     "展开","折叠","待办","插入","移动","链接","分组","归档","颜色","格式","图表",
-    "文本","文档","快捷操作","项目","通知","收藏","复制","预览","账户","个人"
+    "文本","文档","快捷操作","项目","通知","收藏","复制","预览","账户","个人",
+    "正文","折叠块","简单表格","赤陶","雾蓝","松绿","湖青","劳动型","资产型",
+    "债务压降","日常消费","长期配置","固定支出","成长投入","机动预留",
+    "核对","预测","当前判断","待核对","新增块","子项","子页面","子文件夹",
+    "布局","清单","关闭","保存","启用","禁用","图文","恢复","菜单",
+    "边框","字号","行距","卡片类型","关联","推荐层级","收起"
 )
 
 def eligible(n):
@@ -332,7 +337,7 @@ def action_candidates(xml,module):
     def score(n):
         label=n["label"]
         return (0 if any(w in label for w in priority) else 1, n["y"],n["x"])
-    return sorted(found,key=score)[:36]
+    return sorted(found,key=score)[:44]
 
 def explore(module, depth, trace, budget=0):
     if depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE:
@@ -493,9 +498,12 @@ def seed_editor(module):
         # Only save an explicit local record, never an external transaction.
         scroll_screen("down")
         capture(module,"支出表单底部与保存入口",get_xml(),"真实滚动后的本地录入表单")
+    before=body_signature(get_xml())
     if click(["保存","创建","完成","确定","记入","添加记录"]):
-        capture(module,"本地演示记录提交后",get_xml(),
-                "点击本地保存，实际结果以可见画面为准，不自动声称成功")
+        after=get_xml()
+        if body_signature(after)!=before:
+            capture(module,"本地演示记录提交后",after,
+                    "点击本地保存后确实发生页面状态变化，最终保存结果仍需复核")
     back()
 
 def import_canvas_probe():
