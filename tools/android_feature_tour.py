@@ -31,10 +31,11 @@ errors = []
 num = 0
 seen = set()
 seen_png = set()
+seen_app_pixels = set()
 module_counts = {}
 MAX_PER_MODULE = 235
 MAX_TOTAL = 850
-MAX_DEPTH = 6
+MAX_DEPTH = 7
 DUMP = "/sdcard/feature_tour.xml"
 
 def adb(*args, timeout=22, binary=False):
@@ -113,6 +114,15 @@ def real_frame(data):
     except Exception:
         return False
 
+def app_pixel_hash(data):
+    """Ignore the Android status/navigation bars: clock-only differences do not count."""
+    with Image.open(io.BytesIO(data)) as image:
+        frame = image.convert("RGB")
+        w, h = frame.size
+        app = frame.crop((0, int(h * .075), w, int(h * .925)))
+        return hashlib.sha256(app.tobytes()).hexdigest()
+
+
 def image_bytes():
     for attempt in range(5):
         try:
@@ -130,15 +140,26 @@ def capture(module, action, xml=None, detail="", force=False):
     if not force and module_counts.get(module,0)>=MAX_PER_MODULE: return False
     xml=xml if xml is not None else get_xml()
     if not xml: return False
+    # A nested click must not silently move into another bottom-navigation module.
+    if module in MODULES:
+        actual_root = root_module(xml)
+        if actual_root and actual_root != module:
+            errors.append("跨模块误标被拒绝：" + module + " / " + action + "，实际为" + actual_root)
+            return False
     key=body_signature(xml)
     if not force and key in seen: return False
     data=image_bytes()
     if not data: return False
     png_hash=hashlib.sha256(data).hexdigest()
     if png_hash in seen_png:
-        errors.append("像素完全重复，跳过："+module+" / "+action)
+        errors.append("PNG 字节重复，跳过："+module+" / "+action)
+        return False
+    app_hash = app_pixel_hash(data)
+    if app_hash in seen_app_pixels:
+        errors.append("App 内容像素重复（仅状态栏可能不同），跳过："+module+" / "+action)
         return False
     seen_png.add(png_hash)
+    seen_app_pixels.add(app_hash)
     num+=1
     module_counts[module]=module_counts.get(module,0)+1
     seen.add(key)
@@ -326,18 +347,43 @@ def eligible(n):
     return True
 
 def action_candidates(xml,module):
-    found=[]; seen_labels=set()
+    found=[]; seen_targets=set()
     for n in nodes(xml):
         if not eligible(n): continue
         label=n["label"]
-        if label in seen_labels:continue
-        seen_labels.add(label);found.append(n)
+        target=(label,round(n["x"]/80),round(n["y"]/80))
+        if target in seen_targets:continue
+        seen_targets.add(target);found.append(n)
     priority=("更多","新建","新增","添加","搜索","设置","筛选","分类","目录","页面",
               "统计","画布","列表","查看","详情","编辑","历史","预算")
     def score(n):
         label=n["label"]
         return (0 if any(w in label for w in priority) else 1, n["y"],n["x"])
-    return sorted(found,key=score)[:44]
+    return sorted(found,key=score)[:60]
+
+def restore_trace(module, trace, expected_signature):
+    """Replay the proven path from the module root when Back cannot restore a page.
+    Never claim the replay succeeded unless the actual Android UI matches.
+    """
+    for attempt in range(2):
+        try:
+            current = at_canvas() if module == "画布" else at_module(module)
+            if body_signature(current) == expected_signature:
+                return True
+            for label in trace[1:]:
+                if not tap_text([label], exact=True):
+                    scroll_screen("down")
+                    if not tap_text([label], exact=True):
+                        raise RuntimeError("找不到路径操作：" + label)
+                current = get_xml()
+                if not current or not foreground_ok():
+                    raise RuntimeError("路径回放时丢失 App 界面")
+            if body_signature(current) == expected_signature:
+                return True
+        except Exception as ex:
+            errors.append("路径回放失败：" + module + " / " + "→".join(trace[-3:]) + " / " + str(ex)[:100])
+    return False
+
 
 def explore(module, depth, trace, budget=0):
     if depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE:
@@ -345,7 +391,7 @@ def explore(module, depth, trace, budget=0):
     screen=get_xml()
     if not screen: return
     start_identity=body_signature(screen)
-    sig=(module,start_identity,depth)
+    sig=(module,start_identity)
     if sig in visited: return
     visited.add(sig)
     candidates=action_candidates(screen,module)
@@ -371,10 +417,13 @@ def explore(module, depth, trace, budget=0):
             break
         current=get_xml()
         if not current: break
-        if depth==0 and module in MODULES and root_module(current)!=module:
-            current=at_module(module)
-        elif depth==0 and module=="画布" and "知识画布，" not in current:
-            current=at_canvas()
+        if body_signature(current)!=start_identity:
+            if not restore_trace(module, trace, start_identity):
+                errors.append("当前分支无法恢复，放弃而非误标："+module+" / "+"→".join(trace[-3:]))
+                break
+            current=get_xml()
+        if not current or body_signature(current)!=start_identity:
+            break
         current_nodes=nodes(current)
         found=next((x for x in current_nodes if x["label"]==n["label"] and
                     abs(x["y"]-n["y"])<170),None)
@@ -384,6 +433,11 @@ def explore(module, depth, trace, budget=0):
         after=get_xml()
         if not after: continue
         changed=body_signature(after)!=prior
+        actual_root = root_module(after)
+        if module in MODULES and actual_root and actual_root != module:
+            errors.append("点击后跨模块，未计入：" + module + " / " + n["label"][:40])
+            restore_trace(module,trace,prior)
+            continue
         if not changed:
             # Important: do not press Back when a tap had no effect.
             # Doing so exited the entire application in the prior run.
@@ -391,26 +445,20 @@ def explore(module, depth, trace, budget=0):
         label=n["label"].replace("\n"," ")[:32]
         capture(module,"→".join(trace[-2:]+[label]),after,
                 "实际点击："+n["label"][:100])
-        if depth<MAX_DEPTH and (module,body_signature(after),depth+1) not in visited:
+        if depth<MAX_DEPTH and (module,body_signature(after)) not in visited:
             explore(module,depth+1,trace+[label])
         # Back is valid only after a proven navigation to a distinct page.
         restored=False
-        for _ in range(3):
+        for _ in range(2):
             now=get_xml()
             if now and body_signature(now)==prior:
                 restored=True
                 break
             back()
         if not restored:
-            if depth==0:
-                try:
-                    if module=="画布":
-                        restored=("知识画布，" in at_canvas())
-                    else:
-                        restored=(root_module(at_module(module))==module)
-                except Exception as ex:
-                    errors.append("页面返回失败："+module+" / "+label+" / "+str(ex)[:90])
+            restored=restore_trace(module,trace,prior)
             if not restored:
+                errors.append("页面返回和路径回放均失败："+module+" / "+label)
                 # Do not tag unknown screens as this module.
                 break
 
@@ -531,13 +579,15 @@ def import_canvas_probe():
             continue
         digest=hashlib.sha256(data).hexdigest()
         sig=body_signature(xml)
-        if digest in seen_png or sig in seen:
+        app_hash = app_pixel_hash(data)
+        if digest in seen_png or app_hash in seen_app_pixels or sig in seen:
             continue
         if num>=MAX_TOTAL:break
         num+=1
         module="画布"
         module_counts[module]=module_counts.get(module,0)+1
         seen_png.add(digest)
+        seen_app_pixels.add(app_hash)
         seen.add(sig)
         name=f"{num:04d}_画布_{clean(action)}"
         dest=IMAGES/module
