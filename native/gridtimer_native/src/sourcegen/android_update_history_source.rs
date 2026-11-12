@@ -1,3 +1,4 @@
+// v2.13.5.4 - Add tactile knowledge folder disclosure and directional document motion.
 // v2.13.5.3 - Describe today's time accurately before the first recorded session.
 // v2.13.5.2 - Paper-like knowledge rows, folder glyphs and quieter hierarchy chrome.
 // v2.13.5.1 - Compact referral forest layout and orthogonal connections.
@@ -68,7 +69,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.3";
+pub const LATEST_VERSION: &str = "2.13.5.4";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -98,6 +99,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.4",
+        updatedAt = "2026-11-13 04:15",
+        summary = "知识模块文件夹与页面拥有一致、轻柔且有空间感的动效",
+        sections = listOf(
+            AndroidUpdateSection("文件夹与目录", listOf(
+                "文件夹子项展开和收起采用短时高度变化、淡入淡出及同步旋转箭头，避免内容突然跳位。",
+                "目录行与文档内子项在按压时有细微缩放；拖动目录卡片增加悬浮感，放下时邻近项目平滑归位。",
+                "超过24个子项的长目录不进行整组高度动画，减少滚动和布局负担。"
+            )),
+            AndroidUpdateSection("文档切换与安全边界", listOf(
+                "进入文档时小幅从右侧出现，返回目录时反向过渡，继续保留原有文档身份、当前帧授权和旧页面输入隔离。",
+                "动效不参与数据写入、拖动保存或同步；仅改 Android 源码生成器，不改 Windows、知识正文、同步协议和账户身份。"
+            )),
+            AndroidUpdateSection("验收", listOf(
+                "正式签名 APK、Rust 生成器、Android 编译与 API35 模拟器启动和知识目录截图以 GitHub Actions 实际结果为准；未运行通过前不宣称验收完成。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.3",
         updatedAt = "2026-11-13 02:36",
