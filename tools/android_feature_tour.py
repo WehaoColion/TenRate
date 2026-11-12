@@ -17,7 +17,7 @@ ACTIVITY = "com.ofairyo.gridtimer/.MainActivity"
 ROOT = Path("feature_tour_evidence")
 IMAGES = ROOT / "截图"
 HIERARCHY = ROOT / "界面结构"
-MODULES = ["计时", "便签", "知识", "风控", "我的"]
+MODULES = ["计时", "便签", "知识", "风控"]
 RISKY = ("删除", "清空", "注销", "退出登录", "重置", "永久", "付款", "支付", "充值", "结算",
          "发送", "上传", "同步", "共享", "分享", "发布", "恢复出厂", "清除数据", "移除账号",
          "移除所有", "解绑", "导出", "确认删除", "覆盖原文", "向", "购买",
@@ -173,7 +173,7 @@ def open_app():
 
 def screen_height():
     result = safe_adb("shell","wm","size")
-    found = re.search(r"(\\d+)x(\\d+)",result)
+    found = re.search(r"(\d+)x(\d+)",result)
     return int(found.group(2)) if found else 2400
 
 def bottom_nav(xml):
@@ -195,15 +195,15 @@ def body_signature(xml):
     height=screen_height()
     main=[n["label"] for n in nodes(xml)
           if n["y"]<height*.84 and n["label"] not in MODULES
-          and not re.fullmatch(r"v?\\d+(?:\\.\\d+){2,}", n["label"])
+          and not re.fullmatch(r"v?\d+(?:\.\d+){2,}", n["label"])
           and "时钟" not in n["desc"]]
     stable=[]
     for label in main:
-        value=re.sub(r"\\b\\d{1,2}:\\d{2}(?::\\d{2})?\\b","<时间>",label)
-        value=re.sub(r"\\b\\d+\\s*(?:分|秒|小时|m|h)\\b","<时长>",value)
-        value=re.sub(r"\\d+(?:\\.\\d+)?%","<百分比>",value)
+        value=re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b","<时间>",label)
+        value=re.sub(r"\b\d+\s*(?:分|秒|小时|m|h)\b","<时长>",value)
+        value=re.sub(r"\d+(?:\.\d+)?%","<百分比>",value)
         if value not in stable: stable.append(value)
-    return hashlib.sha256("\\u241e".join(stable[:100]).encode("utf-8")).hexdigest()
+    return hashlib.sha256("\u241e".join(stable[:100]).encode("utf-8")).hexdigest()
 
 def at_module(module):
     if not app_alive(): open_app()
@@ -257,7 +257,7 @@ def eligible(n):
     if len(s)>48 or len(s)<2: return False
     if any(w in s for w in RISKY+BORING): return False
     if s.startswith("http") or "@" in s: return False
-    if s in MODULES or re.fullmatch(r"v?\\d+(?:\\.\\d+){2,}",s):return False
+    if s in MODULES or re.fullmatch(r"v?\d+(?:\.\d+){2,}",s):return False
     if not any(hint in s for hint in SAFE_ACTION_WORDS): return False
     if n["y"]<100 or n["y"]>screen_height()*.86: return False
     if n["class_"] not in ("android.widget.TextView","android.view.View") and not n["class_"].endswith(("Button","ImageButton")): return False
@@ -377,9 +377,9 @@ def main():
     global timer_body_signature
     timer_body_signature=body_signature(home)
     (ROOT/"中文界面验收.txt").write_text(
-        "简体中文导航：通过\\n底部入口：计时、便签、知识、风控\\n"+
-        "系统语言："+safe_adb("shell","getprop","persist.sys.locale").strip()+"\\n"+
-        "App独立语言："+safe_adb("shell","cmd","locale","get-app-locales",PACKAGE,"--user","0").strip()+"\\n",
+        "简体中文导航：通过\n底部入口：计时、便签、知识、风控\n"+
+        "系统语言："+safe_adb("shell","getprop","persist.sys.locale").strip()+"\n"+
+        "App独立语言："+safe_adb("shell","cmd","locale","get-app-locales",PACKAGE,"--user","0").strip()+"\n",
         encoding="utf-8")
     capture("工作台","简体中文首页",home,force=True)
     module_root_signatures={}
@@ -396,7 +396,7 @@ def main():
             explore(module,0,[module])
         except Exception as ex:
             errors.append("模块 "+module+" 错误："+str(ex))
-            (ROOT/"模块导航问题.txt").write_text("\\n".join(errors),encoding="utf-8")
+            (ROOT/"模块导航问题.txt").write_text("\n".join(errors),encoding="utf-8")
             raise
     (ROOT/"中文模块导航验收.json").write_text(
         json.dumps({"界面语言":"简体中文","导航核验":"通过",
