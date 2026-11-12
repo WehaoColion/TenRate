@@ -530,9 +530,7 @@ jobs:
         run: |
           set -euo pipefail
           cd knowledge_apk
-          checksum=$(find . -maxdepth 1 -name 'tenfold_v*.apk.sha256' -print -quit)
-          test -n "$checksum"
-          tr -d '\r' < "$checksum" | sha256sum -c -
+          tr -d '\r' < tenfold_v2.13.5.4.apk.sha256 | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_knowledge_ui_probe.rs -o android_knowledge_ui_probe
       - name: Enable Android hardware acceleration
@@ -554,9 +552,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            apk=$(find knowledge_apk -maxdepth 1 -name 'tenfold_v*.apk' -print -quit)
-            test -n "$apk"
-            adb install -r "$apk"
+            adb install -r knowledge_apk/tenfold_v2.13.5.4.apk
             adb shell settings put global window_animation_scale 1
             adb shell settings put global transition_animation_scale 1
             adb shell settings put global animator_duration_scale 1
