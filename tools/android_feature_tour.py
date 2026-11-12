@@ -109,7 +109,7 @@ def capture(module, action, xml=None, detail="", force=False):
     if not force and module_counts.get(module,0)>=MAX_PER_MODULE: return False
     xml=xml if xml is not None else get_xml()
     if not xml: return False
-    key=identity(xml)
+    key=body_signature(xml)
     if not force and key in seen: return False
     data=image_bytes()
     if not data: return False
@@ -205,32 +205,54 @@ def body_signature(xml):
         if value not in stable: stable.append(value)
     return hashlib.sha256("\u241e".join(stable[:100]).encode("utf-8")).hexdigest()
 
+def root_module(xml):
+    # Distinguish top-level screens from their actual Chinese body labels, never from a filename.
+    labels=set(visible(xml))
+    if "快捷记入今天" in labels and ("记支出" in labels or "记收入" in labels):
+        return "风控"
+    if "最近便签" in labels and "回收站" in labels:
+        return "便签"
+    if "AI 对话" in labels and ("目录" in labels or "画布" in labels):
+        return "知识"
+    if "建议动作" in labels and ("开始提示" in labels or "展开概览" in labels):
+        return "计时"
+    return None
+
 def at_module(module):
-    if not app_alive(): open_app()
-    for retry in range(7):
+    if module not in MODULES:
+        raise RuntimeError("未知模块："+module)
+    if not app_alive() or not foreground_ok():
+        open_app()
+    for attempt in range(12):
         xml=get_xml()
+        if not xml:
+            open_app()
+            continue
+        if root_module(xml)==module and all(bottom_nav(xml).get(x) for x in MODULES):
+            return xml
         tabs=bottom_nav(xml)
-        if all(tabs.get(name) for name in ("计时","便签","知识","风控")):
-            current=body_signature(xml)
-            target=tabs.get(module)
-            if not target: raise RuntimeError("中文导航入口不存在："+module)
-            tap_node(target)
-            time.sleep(1.0)
-            opened=get_xml()
-            if not opened: raise RuntimeError("点击 "+module+" 后界面结构不可读")
-            require_zh(opened)
-            new=body_signature(opened)
-            if module!="计时" and new==current:
-                time.sleep(1.5)
-                opened=get_xml()
-                new=body_signature(opened)
-                if new==current:
-                    raise RuntimeError("点击 "+module+" 后正文未变化，不能冒充已经进入该模块")
-            if module in MODULES and module!="计时" and globals().get("timer_body_signature")==new:
-                raise RuntimeError("错误模块："+module+" 仍显示计时首页")
-            return opened
-        back()
-    raise RuntimeError("无法返回包含完整中文底部导航的工作台："+module)
+        if tabs.get(module):
+            tap_node(tabs[module])
+            time.sleep(0.7)
+            after=get_xml()
+            if root_module(after)==module:
+                return after
+            # Compose may preserve scroll position after reselecting a tab.
+            for _ in range(2):
+                scroll_screen("up")
+                after=get_xml()
+                if root_module(after)==module:
+                    return after
+        if attempt < 4:
+            back()
+        elif attempt in (4,8):
+            # A blank editor, keyboard or modal may leave the root navigation inaccessible.
+            safe_adb("shell","am","force-stop",PACKAGE)
+            open_app()
+        else:
+            scroll_screen("up")
+    raise RuntimeError("无法返回中文模块首页："+module+
+                       "；当前可见："+ "；".join(visible(get_xml())[:25]))
 
 def scroll_screen(direction="down"):
     # Pixel 6 emulator uses approx. 1080x2400 coordinates; read real size.
@@ -287,48 +309,61 @@ def explore(module, depth, trace, budget=0):
     if sig in visited: return
     visited.add(sig)
     candidates=action_candidates(screen,module)
-    if depth<2:
+
+    if depth<3:
         scroll_screen("down")
         scrolled=get_xml()
-        capture(module, "下滑查看"+(trace[-1] if trace else "列表"), scrolled, "滚动后的实际界面")
+        capture(module,"下滑查看"+(trace[-1] if trace else "列表"),scrolled,"滚动后真实视图")
         if body_signature(scrolled)!=start_identity:
-            # Avoid recursively operating on a scrolled list; return to top.
             scroll_screen("up")
             screen=get_xml()
+        else:
+            scroll_screen("up")
+
     for n in candidates:
         if num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE: break
         if not foreground_ok():
-            back()
+            safe_adb("shell","am","force-stop",PACKAGE)
+            open_app()
             break
-        if not get_xml(): break
-        current_xml=get_xml()
-        current_nodes=nodes(current_xml)
-        # Skip controls that disappeared after an earlier action
+        current=get_xml()
+        if not current: break
+        if depth==0 and root_module(current)!=module:
+            current=at_module(module)
+        current_nodes=nodes(current)
         found=next((x for x in current_nodes if x["label"]==n["label"] and
                     abs(x["y"]-n["y"])<170),None)
-        if not found: continue
-        prior=body_signature(current_xml)
+        if not found:continue
+        prior=body_signature(current)
         tap_node(found)
         after=get_xml()
-        if not after: back();continue
+        if not after: continue
         changed=body_signature(after)!=prior
-        if changed:
-            label=n["label"].replace("\n"," ")[:32]
-            capture(module,"→".join(trace[-2:]+[label]),after,
-                    "实际点击："+n["label"][:100])
-            if depth<MAX_DEPTH and (module,body_signature(after),depth+1) not in visited:
-                explore(module,depth+1,trace+[label])
-        # Return to parent: single back normally exits sheets/pages.
-        back()
-        returned=get_xml()
-        if body_signature(returned)!=prior:
-            # Dismiss one extra layer, then try restoring the module if navigated away.
+        if not changed:
+            # Important: do not press Back when a tap had no effect.
+            # Doing so exited the entire application in the prior run.
+            continue
+        label=n["label"].replace("\n"," ")[:32]
+        capture(module,"→".join(trace[-2:]+[label]),after,
+                "实际点击："+n["label"][:100])
+        if depth<MAX_DEPTH and (module,body_signature(after),depth+1) not in visited:
+            explore(module,depth+1,trace+[label])
+        # Back is valid only after a proven navigation to a distinct page.
+        restored=False
+        for _ in range(3):
+            now=get_xml()
+            if now and body_signature(now)==prior:
+                restored=True
+                break
             back()
-            returned=get_xml()
-        if identity(returned)!=prior:
-            after_nav=at_module(module)
-            if body_signature(after_nav)!=start_identity:
-                errors.append("返回路径已变化："+module+" / "+n["label"][:40])
+        if not restored:
+            if depth==0:
+                try:
+                    restored=(root_module(at_module(module))==module)
+                except Exception as ex:
+                    errors.append("页面返回失败："+module+" / "+label+" / "+str(ex)[:90])
+            if not restored:
+                # Do not tag unknown screens as this module.
                 break
 
 def seed_editor(module):
