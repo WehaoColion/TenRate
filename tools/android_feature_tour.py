@@ -33,6 +33,8 @@ seen = set()
 seen_png = set()
 seen_app_pixels = set()
 module_counts = {}
+black_action_failures = {}
+black_diagnostic_count = 0
 MAX_PER_MODULE = 210
 MAX_TOTAL = 850
 MAX_DEPTH = 4
@@ -163,11 +165,14 @@ def app_pixel_hash(data):
         return hashlib.sha256(app.tobytes()).hexdigest()
 
 
-def image_bytes():
+def image_bytes(module="", action="", xml=""):
+    global black_diagnostic_count
+    last_frame = b""
     for attempt in range(5):
         try:
             data=adb("exec-out","screencap","-p",timeout=20,binary=True)
             if real_frame(data): return data
+            last_frame = data
             if attempt == 0:
                 # A real screenshot revealed the system notification shade
                 # over TenRate although uiautomator still reported the App
@@ -177,6 +182,25 @@ def image_bytes():
         except Exception as ex:
             if attempt==4: errors.append(str(ex))
         time.sleep(0.85)
+    # Keep a bounded, explicitly non-gallery diagnostic sample. A valid XML
+    # package does not prove that the emulator rendered a visible App screen.
+    # Never index these PNGs as feature coverage.
+    if last_frame and black_diagnostic_count < 16:
+        try:
+            black_diagnostic_count += 1
+            folder = ROOT / "拒收黑帧诊断_不计入图库"
+            folder.mkdir(parents=True, exist_ok=True)
+            stem = f"{black_diagnostic_count:03d}_{clean(module)}_{clean(action)}"
+            (folder / (stem + ".png")).write_bytes(last_frame)
+            (folder / (stem + ".xml")).write_text(xml or get_xml(), encoding="utf-8")
+            (folder / (stem + ".json")).write_text(json.dumps({
+                "模块": module, "尝试操作": action, "原因": "五次截图均无有效可见正文",
+                "XML顶层包名": screen_owner(xml),
+                "当前窗口摘要": safe_adb("shell", "dumpsys", "window", "windows", timeout=15)[:2500],
+                "是否计入图库": False
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as ex:
+            errors.append("黑帧诊断保存失败：" + str(ex)[:150])
     errors.append("真实截图画面为空白或全黑：连续5次重试后拒绝入库；UI XML 不等于实际像素")
     return b""
 
@@ -216,7 +240,7 @@ def capture(module, action, xml=None, detail="", force=False):
             return False
     key=body_signature(xml)
     if not force and key in seen: return False
-    data=image_bytes()
+    data=image_bytes(module, action, xml)
     if not data: return None  # Black pixels are not a traversable child.
     png_hash=hashlib.sha256(data).hexdigest()
     if png_hash in seen_png:
@@ -535,6 +559,11 @@ def explore(module, depth, trace, budget=0):
         # variants of the Notes editor while starving Knowledge and Risk.
         if n["label"] in trace[1:]:
             continue
+        # A Risk action that repeatedly opens an unrendered surface must not
+        # consume the entire module budget on identical five-frame retries.
+        # Other actions and other modules remain eligible for exploration.
+        if module == "风控" and black_action_failures.get((module, n["label"]), 0) >= 3:
+            continue
         # The global floating timer belongs to 计时, not to Knowledge/Notes/Risk.
         if module != "计时" and any(word in n["label"] for word in ("暂停计时","继续计时","格子详情","开始计时")):
             continue
@@ -605,6 +634,8 @@ def explore(module, depth, trace, budget=0):
             # XML can be present while emulator pixels are black. Do not
             # recursively explore an invisible dialog or exhaust the module.
             errors.append("黑帧子页面停止探索并返回：" + module + " / " + label)
+            key = (module, n["label"])
+            black_action_failures[key] = black_action_failures.get(key, 0) + 1
             back()
             restored_xml=get_xml()
             if (not restored_xml or screen_owner(restored_xml)!=PACKAGE or
@@ -736,7 +767,10 @@ def seed_editor(module):
         errors.append("本地创建入口进入外部界面，未尝试填写：" + module)
         back()
         return
-    capture(module,"创建或录入入口",entry,"本地空白编辑器或录入表单")
+    if capture(module,"创建或录入入口",entry,"本地空白编辑器或录入表单") is None:
+        errors.append("录入表单未渲染真实可见画面，停止输入与提交：" + module)
+        back()
+        return
     use_latin_ime()
     edits=[n for n in nodes(get_xml()) if n["class_"].endswith("EditText")]
     if not edits:
