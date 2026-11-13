@@ -170,8 +170,19 @@ fn main(){
         }
         report.push_str("PASS: tapping a canvas card shows the customer detail sheet without leaving the canvas.\n\n");
         if !tap_text(&["添加此客户推荐的人"])?{return Err("Direct referral add action missing".into());}
+        screenshot(&out,"06_referral_form");
         create_client("ClientB")?;
-        count("2 张卡片")?;count("1 条关系")?;screenshot(&out,"06_referral_saved");
+        screenshot(&out,"07_after_referral_submit");
+        if let Err(err) = count("2 张卡片") {
+            screenshot(&out,"08_referral_failure");
+            let tree = xml().unwrap_or_default();
+            let labels = elements(&tree).into_iter()
+                .filter(|n| !n.text.is_empty() || !n.description.is_empty())
+                .map(|n| format!("{} [{}]",n.text,n.description))
+                .collect::<Vec<_>>().join(" | ");
+            return Err(format!("{err}; visible elements: {}", labels.chars().take(2000).collect::<String>()));
+        }
+        count("1 条关系")?;screenshot(&out,"09_referral_saved");
         report.push_str("PASS: adding a referred customer creates exactly two cards and one directed relationship.\n\n");
         // The layout actions live in the top-right overflow menu, not in
         // a standalone "布局" toolbar button.

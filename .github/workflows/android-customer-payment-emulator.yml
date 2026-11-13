@@ -30,8 +30,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # If only this Rust emulator probe or its workflow changed since
+          # the successfully signed candidate, use exactly those checked bytes.
+          # Never reuse an APK after app, Rust library, or UI source changes.
+          baseline=972dcee9eb649f66de89a6ae677bd6a594289484
+          original_run=43325966925
+          if gh api "repos/$GITHUB_REPOSITORY/compare/$baseline...$GITHUB_SHA" |
+             jq -e '(.files | length) > 0 and (.files | all(.filename == "tools/android_customer_canvas_probe.rs" or .filename == ".github/workflows/android-customer-payment-emulator.yml"))' >/dev/null; then
+            echo "$original_run" > signed_build_run_id.txt
+            echo "Reusing immutable signed 2.13.5.5 APK from verified build $original_run; application sources unchanged."
+          fi
           found=0
+          if test -s signed_build_run_id.txt; then found=1; fi
           for attempt in $(seq 1 200); do
+            if test "$found" -eq 1; then break; fi
             response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-customer-payment-v2.13.5.5&per_page=30")"
             result="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
             if test -n "$result"; then
