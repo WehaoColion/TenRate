@@ -647,7 +647,7 @@ internal fun canvasClientPending(node: CanvasNode): Long =
 internal fun canvasClientPaymentSummary(node: CanvasNode): String =
     if (node.paidCents == null && node.pendingCents == null && node.charges.isEmpty()) "点击查看客户资料"
     else "已支付 ${canvasYuan(canvasClientPaid(node))}\n待支付 ${canvasYuan(canvasClientPending(node))}"
-private fun canvasEnteredCents(value: String): Long? {
+internal fun canvasEnteredCents(value: String): Long? {
     if (!canvasMoneyValid(value) || value.isBlank() || value.endsWith(".")) return null
     val parts = value.split(".", limit = 2)
     return parts[0].toLongOrNull()?.times(100L)?.plus(parts.getOrElse(1) { "" }.padEnd(2, '0').toLongOrNull() ?: return null)
