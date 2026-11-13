@@ -1,3 +1,4 @@
+// v2.13.5.7 - 真实模拟器从编辑客户进入逐笔收付款，验证旧金额入口和重启持久化。
 // v2.13.5.6 - 在 GitHub API35 模拟器真实启动客户收付款逐笔记录 UI。
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread, time::Duration};
 
@@ -158,6 +159,10 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     if run(&["shell", "pidof", APP])?.trim().is_empty() {
         return Err("Process did not start".into());
     }
+    let package = run(&["shell", "dumpsys", "package", APP])?;
+    if !package.contains("versionName=2.13.5.7") {
+        return Err("Installed APK is not Android 2.13.5.7".into());
+    }
     open_canvas(folder)?;
     snapshot(folder, "02_画布");
     if tree()?.contains("我的画布") {
@@ -172,6 +177,10 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     if elements(&tree()?).iter().all(|n| !n.class.ends_with("EditText")) {
         required(&["＋ 新建客户", "＋ 更多卡片：客户"])?;
     }
+    // Validate the original existing-money controls in the user-facing create form.
+    verify("已支付（元）")?;
+    verify("待支付（元）")?;
+    snapshot(folder, "03a_原金额输入栏已保留");
     edit(0, "ClientDetail")?;
     run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
     required(&["创建", "Create"])?;
@@ -179,7 +188,14 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     snapshot(folder, "03_客户已建立");
     open_first_card()?;
     snapshot(folder, "04_客户详情");
-    required(&["收付款信息", "查看明细"])?;
+    verify("收付款明细 · 记录款项与实际收款")?;
+    required(&["编辑客户"])?;
+    verify("编辑客户")?;
+    verify("已支付（元）")?;
+    verify("待支付（元）")?;
+    verify("详细记录每笔款项和收款")?;
+    snapshot(folder, "04a_编辑客户明确显示收款入口");
+    required(&["详细记录每笔款项和收款"])?;
     verify("收付款明细")?;
     snapshot(folder, "05_收付款空态");
     required(&["新增款项项目"])?;
@@ -198,7 +214,7 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     verify("已结清")?;
     verify("1,220.00")?;
     snapshot(folder, "09_收款已结清");
-    report.push_str("PASS: New client, charge project, received RMB amount and payment details were created on the actual emulator.\n\n");
+    report.push_str("PASS: Restored original customer amount inputs, opened charge details from Edit Customer, and created a charge and receipt on actual Android.\n\n");
     required(&["完成", "Done"])?;
     run(&["shell", "am", "force-stop", APP])?;
     run(&["shell", "am", "start", "-W", "-n", "com.ofairyo.gridtimer/.MainActivity"])?;
@@ -209,18 +225,20 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
         verify("1 张卡片")?;
     }
     open_first_card()?;
-    required(&["收付款信息", "查看明细"])?;
+    required(&["编辑客户"])?;
+    verify("详细记录每笔款项和收款")?;
+    required(&["详细记录每笔款项和收款"])?;
     verify("1,220.00")?;
     verify("已结清")?;
     snapshot(folder, "10_重启仍保留收款");
-    report.push_str("PASS: Forced application restart preserved the recorded charge and receipt.\n\n");
+    report.push_str("PASS: Force-stop and reopen via Edit Customer preserved customer charge, receipt and exact amounts.\n\n");
     Ok(())
 }
 fn main() {
     let folder = env::args().nth(1).map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("client_payment_detail_evidence"));
     fs::create_dir_all(&folder).expect("Evidence folder");
-    let mut report = String::from("# Android 2.13.5.6 customer payment details\n\n");
+    let mut report = String::from("# Android 2.13.5.7 customer payment details\n\n");
     match scenario(&folder, &mut report) {
         Ok(()) => report.push_str("Overall: PASS\n"),
         Err(error) => {

@@ -657,7 +657,7 @@ jobs:
         run: |
           set -euo pipefail
           cd client_payment_signed
-          tr -d '\r' < tenfold_v2.13.5.6.apk.sha256 | sha256sum -c -
+          tr -d '\r' < tenfold_v2.13.5.7.apk.sha256 | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_client_payment_detail_probe.rs -o android_client_payment_detail_probe
       - name: Enable accelerated emulator
@@ -679,7 +679,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r client_payment_signed/tenfold_v2.13.5.6.apk
+            adb install -r client_payment_signed/tenfold_v2.13.5.7.apk
             ./android_client_payment_detail_probe client_payment_detail_evidence
       - name: Summarize actual emulator result
         if: always()
@@ -694,7 +694,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-client-payment-detail-v2.13.5.6-api35
+          name: android-client-payment-detail-v2.13.5.7-api35
           path: client_payment_detail_evidence/
           if-no-files-found: warn
           retention-days: 21
