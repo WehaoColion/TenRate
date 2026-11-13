@@ -43,6 +43,10 @@ def semantic_text(xml_file):
         if not label or label in MODULES or len(label) > 120:
             continue
         label = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", "<时间>", label)
+        if "格子详情" in ET.tostring(root, encoding="unicode") or "建议动作" in ET.tostring(root, encoding="unicode"):
+            label = re.sub(r"\b记录\s*\d+\b", "记录 <次数>", label)
+            label = re.sub(r"\b\d+\s*次记录\b", "<次数>次记录", label)
+            label = re.sub(r"\b\d+\s*(?:分|秒|小时)\b", "<时长>", label)
         if label not in labels:
             labels.append(label)
     return hashlib.sha256("\u241e".join(labels).encode()).hexdigest()[:20]
@@ -56,6 +60,7 @@ def audit(root):
         records = list(csv.DictReader(f))
     seen_paths, seen_pixels = set(), {}
     signatures, issues = [], []
+    semantic_keys = set()  # XML candidate states, not independently proven business functions.
     counts = Counter()
     for record in records:
         module = record["功能模块"]
@@ -77,6 +82,16 @@ def audit(root):
             issues.append("模块目录不一致：" + rel)
         if module != "计时" and any(w in action for w in TIMER_ACTIONS):
             issues.append("疑似跨模块误标：" + rel)
+        # The timer detail can overlay the Knowledge canvas with a perfectly
+        # valid TenRate package. Check real XML content, not only the action.
+        try:
+            raw = xml.read_text(encoding="utf-8")
+            if module != "计时" and "格子详情" in raw:
+                issues.append("实际计时详情误标为" + module + "：" + rel)
+            if module == "画布" and not any(w in raw for w in ("画布", "客户", "Client", "卡片", "推荐")):
+                issues.append("画布截图缺少画布或客户内容证据：" + rel)
+        except Exception as ex:
+            issues.append("XML 无法读取：" + rel + "：" + str(ex))
         try:
             semantic = semantic_text(xml)
             with Image.open(path) as im:
@@ -98,6 +113,7 @@ def audit(root):
                 else:
                     seen_pixels[digest] = rel
                 signatures.append((rel, module, semantic, dhash(app)))
+                semantic_keys.add((module, semantic))
                 counts[module] += 1
         except Exception as ex:
             issues.append("图片/XML 解码失败：" + rel + "：" + str(ex))
@@ -114,6 +130,7 @@ def audit(root):
                 near.append({"第一张": other, "第二张": path,
                              "视觉距离": distance, "正文签名相同": semantic == other_semantic})
     return {"索引总数": len(records), "App内容唯一数": len(seen_pixels),
+            "XML语义候选唯一数": len(semantic_keys),
             "各模块张数": dict(counts), "阻断问题": issues,
             "高度相似待人工复核": near, "高度相似对数": len(near)}
 

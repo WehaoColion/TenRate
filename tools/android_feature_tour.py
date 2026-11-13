@@ -199,6 +199,12 @@ def capture(module, action, xml=None, detail="", force=False):
     if owner != PACKAGE:
         errors.append("非应用界面拒绝入库：" + module + " / " + action + "；前台包名=" + owner)
         return False
+    # The canvas is nested under Knowledge. A floating timer sheet may cover
+    # it while the XML still reports the TenRate package; never label that
+    # timer sheet as a canvas feature.
+    if module == "画布" and ("格子详情" in xml or root_module(xml) == "计时"):
+        errors.append("画布误标拒绝：实际为计时详情 / " + action)
+        return False
     # A nested click must not silently move into another bottom-navigation module.
     if module in MODULES:
         actual_root = root_module(xml)
@@ -310,11 +316,20 @@ def body_signature(xml):
           if n["y"]<height*.84 and n["label"] not in MODULES
           and not re.fullmatch(r"v?\d+(?:\.\d+){2,}", n["label"])
           and "时钟" not in n["desc"]]
+    timer_screen = ("格子详情" in xml or ("建议动作" in xml and "任务" in xml))
     stable=[]
     for label in main:
         value=re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b","<时间>",label)
         value=re.sub(r"\b\d+\s*(?:分|秒|小时|m|h)\b","<时长>",value)
         value=re.sub(r"\d+(?:\.\d+)?%","<百分比>",value)
+        # A running timer changes its clock, accumulated duration and record
+        # count without exposing a new feature. Keep Start/Pause/Continue
+        # labels distinct, but never count elapsed seconds as coverage.
+        if timer_screen:
+            value=re.sub(r"\b记录\s*\d+\b", "记录 <次数>", value)
+            value=re.sub(r"\b\d+\s*次记录\b", "<次数>次记录", value)
+            value=re.sub(r"\b(?:完成|已记录)\s*\d+\s*次\b", "<次数>", value)
+            value=re.sub(r"\b\d+\s*个格子正在计时\b", "<数量>个格子正在计时", value)
         # A list badge changing from 6 张 to 7 张 without a newly visible
         # item is not a new demonstrable feature state. Keep canvas card and
         # relationship counts intact: those do prove distinct business states.
@@ -460,6 +475,10 @@ def restore_trace(module, trace, expected_signature):
     """Replay the proven path from the module root when Back cannot restore a page.
     Never claim the replay succeeded unless the actual Android UI matches.
     """
+    # Start/Pause/Continue mutate persistent timer state. Replaying the old
+    # label cannot reconstruct the earlier page; recover the live root instead.
+    if module == "计时" and any(label in ("开始", "暂停计时", "继续计时", "暂停", "继续") for label in trace[1:]):
+        return False
     for attempt in range(2):
         try:
             current = at_canvas() if module == "画布" else at_module(module)
@@ -489,6 +508,9 @@ def explore(module, depth, trace, budget=0):
         return
     screen=get_xml()
     if not screen or screen_owner(screen) != PACKAGE: return
+    if module == "画布" and ("格子详情" in screen or root_module(screen) == "计时"):
+        errors.append("画布遍历遇到计时详情遮挡，拒绝跨模块探索")
+        return
     start_identity=body_signature(screen)
     sig=(module,start_identity)
     if sig in visited: return
@@ -507,7 +529,7 @@ def explore(module, depth, trace, budget=0):
         if n["label"] in trace[1:]:
             continue
         # The global floating timer belongs to 计时, not to Knowledge/Notes/Risk.
-        if module not in ("计时", "画布") and n["label"] in ("暂停计时","继续计时","格子详情","开始计时"):
+        if module != "计时" and any(word in n["label"] for word in ("暂停计时","继续计时","格子详情","开始计时")):
             continue
         current=get_xml()
         if not current or screen_owner(current)!=PACKAGE:
@@ -542,6 +564,10 @@ def explore(module, depth, trace, budget=0):
                 if not restore_trace(module, trace, prior):
                     break
             continue
+        if module == "画布" and ("格子详情" in after or root_module(after) == "计时"):
+            errors.append("画布操作被计时浮层遮挡，未截图：" + n["label"][:40])
+            back()
+            return
         changed=body_signature(after)!=prior
         actual_root = root_module(after)
         if module in MODULES and actual_root and actual_root != module:
@@ -763,7 +789,9 @@ def import_canvas_probe():
         if not png.is_file() or not xml_file.is_file(): continue
         data=png.read_bytes()
         xml=xml_file.read_text(encoding="utf-8")
-        if not real_frame(data) or "<hierarchy" not in xml:
+        if (not real_frame(data) or "<hierarchy" not in xml or
+                screen_owner(xml) != PACKAGE or "格子详情" in xml or
+                not any(word in xml for word in ("画布", "客户", "Client", "卡片", "推荐"))):
             errors.append("画布探针截图无效，拒绝导入："+stem)
             continue
         digest=hashlib.sha256(data).hexdigest()
@@ -787,6 +815,7 @@ def import_canvas_probe():
         (xdir/(name+".xml")).write_text(xml,encoding="utf-8")
         rows.append([num,module,action,str(Path("截图")/module/(name+".png")),
                      "Rust 画布专项探针真实 adb 截屏及 XML", "；".join(visible(xml)[:12])[:360]])
+        write_index()
         print("CAPTURE",num,module,action,flush=True)
 
 def main():
