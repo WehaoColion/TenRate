@@ -159,6 +159,60 @@ fn client_charges_preserve_history_and_reconcile_installments_without_bookkeepin
     assert_eq!(undone["canvas"], final_paid["canvas"]);
 }
 
+
+#[test]
+fn importing_existing_client_money_preserves_totals_dates_and_undo() {
+    let mut fixture = Fixture::new();
+    let original = apply(&fixture.open("import-existing-client"), json!({
+        "op":"addClient","name":"旧客户","details":"河北，石家庄",
+        "paidYuan":"560.00","pendingYuan":"660.00"
+    }));
+    let client_id = id(&original,0).to_owned();
+    let import = json!({
+        "op":"importClientHistory","id":client_id,"chargeId":"history-charge",
+        "receiptId":"history-receipt","title":"论文写作服务费",
+        "serviceLocation":"河北石家庄","dueOn":"","note":"原历史金额整理",
+        "receivedOn":"","location":"线上","channel":"微信","receiptNote":"日期未知"
+    });
+    let converted = apply(&original, import.clone());
+    let serialized = &converted["canvas"]["nodes"][0];
+    assert!(serialized.get("paidCents").is_none());
+    assert!(serialized.get("pendingCents").is_none());
+    assert_eq!(serialized["charges"][0]["totalCents"],122000);
+    assert_eq!(serialized["charges"][0]["receipts"][0]["amountCents"],56000);
+    assert_eq!(serialized["charges"][0]["receipts"][0]["receivedOn"],"");
+    assert_eq!(serialized["charges"][0]["receipts"][0]["historical"],true);
+    assert_eq!(serialized["charges"][0]["receipts"][0]["location"],"线上");
+    let node: Node = serde_json::from_value(serialized.clone()).unwrap();
+    assert_eq!(money::totals(&node),(56000,66000));
+    assert_eq!(converted["canvas"],fixture.open("import-existing-client")["canvas"]);
+    let retry = apply(&converted,import.clone());
+    assert_eq!(retry["revision"],converted["revision"]);
+    let finish = apply(&retry,json!({
+        "op":"addClientReceipt","id":client_id,"chargeId":"history-charge",
+        "receiptId":"later-paid","amountYuan":"660.00",
+        "receivedOn":"2026-11-13","location":"湖南常德","channel":"支付宝","note":"尾款"
+    }));
+    let node: Node=serde_json::from_value(finish["canvas"]["nodes"][0].clone()).unwrap();
+    assert_eq!(money::totals(&node),(122000,0));
+    let undone = apply(&finish,json!({"op":"undo"}));
+    assert_eq!(undone["canvas"],converted["canvas"]);
+    let snapshot=scoped_path(&fixture.root,"import-existing-client").unwrap();
+    let bytes=fs::read(&snapshot).unwrap();
+    for request in [
+        json!({"op":"importClientHistory","id":client_id,"chargeId":"other",
+            "receiptId":"other-receipt","title":"重复整理",
+            "serviceLocation":"","dueOn":"","note":"",
+            "receivedOn":"","location":"","channel":"","receiptNote":""}),
+        json!({"op":"updateClientReceipt","id":client_id,"chargeId":"history-charge",
+            "receiptId":"history-receipt","amountYuan":"560.00",
+            "receivedOn":"2026-02-30","location":"","channel":"","note":""})
+    ] {
+        assert!(command(undone["token"].as_str().unwrap(),&request.to_string()).is_err());
+        assert_eq!(fs::read(&snapshot).unwrap(),bytes);
+    }
+}
+
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]

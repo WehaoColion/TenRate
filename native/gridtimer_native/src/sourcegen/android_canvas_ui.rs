@@ -371,7 +371,7 @@ private object DeviceCanvasBackend : CanvasBackend {
     override fun close(token: String) = KnowledgeCanvasNative.close(token)
 }
 
-@Serializable internal data class CanvasReceipt(val id: String, val amountCents: Long, val receivedOn: String, val location: String, val channel: String, val note: String)
+@Serializable internal data class CanvasReceipt(val id: String, val amountCents: Long, val receivedOn: String, val location: String, val channel: String, val note: String, val historical: Boolean = false)
 @Serializable internal data class CanvasCharge(val id: String, val title: String, val totalCents: Long, val serviceLocation: String, val dueOn: String, val note: String, val receipts: List<CanvasReceipt> = emptyList())
 @Serializable internal data class CanvasNode(val id: String, val kind: String, val pageId: String, val text: String, val x: Float, val y: Float, val width: Float, val height: Float, val color: String, val paidCents: Long? = null, val pendingCents: Long? = null, val charges: List<CanvasCharge> = emptyList())
 @Serializable internal data class CanvasEdge(val id: String, val from: String, val to: String, val relation: String? = null)
@@ -675,6 +675,7 @@ private fun ClientMoneySheet(
     var selectedChargeId by remember(node.id) { mutableStateOf("") }
     var selectedReceiptId by remember(node.id) { mutableStateOf("") }
     var createId by remember(node.id) { mutableStateOf("") }
+    var legacyReceiptId by remember(node.id) { mutableStateOf("") }
     var title by remember(node.id) { mutableStateOf("") }
     var amount by remember(node.id) { mutableStateOf("") }
     var serviceLocation by remember(node.id) { mutableStateOf("") }
@@ -698,6 +699,13 @@ private fun ClientMoneySheet(
         serviceLocation = charge?.serviceLocation.orEmpty()
         dueOn = charge?.dueOn.orEmpty(); note = charge?.note.orEmpty()
     }
+    fun startHistoryImport() {
+        mode = "legacy"; selectedChargeId = ""; selectedReceiptId = ""
+        createId = java.util.UUID.randomUUID().toString()
+        legacyReceiptId = java.util.UUID.randomUUID().toString()
+        title = ""; serviceLocation = ""; dueOn = ""; note = ""
+        receivedOn = ""; receivedLocation = ""; channel = ""
+    }
     fun startReceipt(charge: CanvasCharge, receipt: CanvasReceipt?) {
         selectedChargeId = charge.id; selectedReceiptId = receipt?.id.orEmpty()
         createId = receipt?.id ?: java.util.UUID.randomUUID().toString()
@@ -708,21 +716,30 @@ private fun ClientMoneySheet(
         channel = receipt?.channel ?: "微信"; note = receipt?.note.orEmpty()
         mode = "receipt"; expandedCharge = charge.id
     }
+    val legacyPaid = node.paidCents ?: 0L
+    val legacyDue = node.pendingCents ?: 0L
+    val legacyTotal = legacyPaid + legacyDue
     val charge = node.charges.firstOrNull { it.id == selectedChargeId }
+    val editingReceipt = charge?.receipts?.firstOrNull { it.id == selectedReceiptId }
     val paidOnCharge = charge?.receipts?.sumOf { it.amountCents } ?: 0L
     val entered = canvasEnteredCents(amount)
     val canSubmit = enabled && !busy && !pendingSubmit && when(mode) {
+        "legacy" -> legacyTotal > 0L && title.isNotBlank() && title.length <= 80 &&
+            serviceLocation.length <= 100 && dueOn.length <= 10 && note.length <= 500 &&
+            receivedOn.length <= 10 && receivedLocation.length <= 100 && channel.length <= 40
         "charge" -> title.isNotBlank() && title.length <= 80 && entered != null && entered > 0L &&
             (selectedChargeId.isEmpty() || entered >= paidOnCharge) &&
             serviceLocation.length <= 100 && dueOn.length <= 10 && note.length <= 500
         "receipt" -> charge != null && entered != null && entered > 0L &&
             entered <= charge.totalCents - paidOnCharge + (charge.receipts.find { it.id == selectedReceiptId }?.amountCents ?: 0L) &&
-            receivedOn.length == 10 && receivedLocation.length <= 100 && channel.length <= 40 && note.length <= 500
+            (receivedOn.length == 10 || (editingReceipt?.historical == true && receivedOn.isBlank())) &&
+            receivedLocation.length <= 100 && channel.length <= 40 && note.length <= 500
         "deleteCharge", "deleteReceipt" -> true
         else -> false
     }
     fun send() {
         val operation = when(mode) {
+            "legacy" -> "importClientHistory"
             "charge" -> if (selectedChargeId.isEmpty()) "addClientCharge" else "updateClientCharge"
             "receipt" -> if (selectedReceiptId.isEmpty()) "addClientReceipt" else "updateClientReceipt"
             "deleteCharge" -> "removeClientCharge"
@@ -731,8 +748,16 @@ private fun ClientMoneySheet(
         }
         val request = canvasRequest(operation) {
             put("id", node.id)
-            put("chargeId", if (mode == "charge" && selectedChargeId.isEmpty()) createId else selectedChargeId)
+            put("chargeId", if (mode in listOf("legacy", "charge") && selectedChargeId.isEmpty()) createId else selectedChargeId)
             when (mode) {
+                "legacy" -> {
+                    put("title", title.trim())
+                    put("serviceLocation", serviceLocation.trim()); put("dueOn", dueOn.trim())
+                    put("note", note.trim())
+                    put("receiptId", legacyReceiptId)
+                    put("receivedOn", receivedOn.trim()); put("location", receivedLocation.trim())
+                    put("channel", channel.trim()); put("receiptNote", "")
+                }
                 "charge" -> {
                     put("title", title.trim()); put("totalYuan", amount)
                     put("serviceLocation", serviceLocation.trim())
@@ -762,6 +787,7 @@ private fun ClientMoneySheet(
                 Column(Modifier.weight(1f)) {
                     Text(when(mode) {
                         "list" -> "收付款明细"
+                        "legacy" -> "整理历史金额"
                         "charge" -> if (selectedChargeId.isEmpty()) "新增款项" else "编辑款项"
                         "receipt" -> if (selectedReceiptId.isEmpty()) "记录一笔收款" else "修改收款记录"
                         else -> "确认移除"
@@ -800,9 +826,15 @@ private fun ClientMoneySheet(
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("已付 ${canvasYuan(node.paidCents ?: 0L)}    待付 ${canvasYuan(node.pendingCents ?: 0L)}",
                                     style=MaterialTheme.typography.bodySmall)
-                                Text("历史金额不会自动生成虚构款项。需要修改时可在编辑客户中调整。",
+                                Text("整理为详细项目时，总额不会增加，未知的历史收款日期保持空白。",
                                     style=MaterialTheme.typography.labelSmall,
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (legacyTotal > 0L) {
+                                    OutlinedButton(onClick = { startHistoryImport() }, enabled=enabled,
+                                        modifier=Modifier.fillMaxWidth()) {
+                                        Text("整理历史金额 · 补充款项和收款地点")
+                                    }
+                                }
                             }
                         }
                     }
@@ -861,7 +893,7 @@ private fun ClientMoneySheet(
                                                 Row {
                                                     Text(canvasYuan(receipt.amountCents), Modifier.weight(1f),
                                                         style=MaterialTheme.typography.titleSmall)
-                                                    Text(receipt.receivedOn, style=MaterialTheme.typography.labelSmall,
+                                                    Text(receipt.receivedOn.ifBlank { "日期未记录" }, style=MaterialTheme.typography.labelSmall,
                                                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                                                 }
                                                 Text(listOf(receipt.location,receipt.channel).filter{it.isNotBlank()}.joinToString(" · "),
@@ -894,6 +926,42 @@ private fun ClientMoneySheet(
                 Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
                     verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     when(mode) {
+                        "legacy" -> {
+                            Text("将原已付 " + canvasYuan(legacyPaid) + "、待付 " +
+                                canvasYuan(legacyDue) + " 整理成一项。只是归类，不重复增加金额。",
+                                style=MaterialTheme.typography.bodyMedium)
+                            OutlinedTextField(value=title,onValueChange={title=it.take(80)},
+                                label={Text("这是什么款项")},placeholder={Text("例如：文书写作费")},
+                                modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            OutlinedTextField(value=serviceLocation,onValueChange={serviceLocation=it.take(100)},
+                                label={Text("服务发生地点（可选）")},
+                                modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            if (legacyPaid > 0L) {
+                                Text("原已收 " + canvasYuan(legacyPaid) + " · 补充实际收款信息",
+                                    style=MaterialTheme.typography.titleSmall)
+                                OutlinedTextField(value=receivedLocation,
+                                    onValueChange={receivedLocation=it.take(100)},
+                                    label={Text("实际收款地点（可选）")},
+                                    modifier=Modifier.fillMaxWidth(),singleLine=true)
+                                OutlinedTextField(value=channel,onValueChange={channel=it.take(40)},
+                                    label={Text("收款方式（可选）")},
+                                    modifier=Modifier.fillMaxWidth(),singleLine=true)
+                                OutlinedTextField(value=receivedOn,onValueChange={receivedOn=it.take(10)},
+                                    label={Text("实际收款日期（未知可留空）")},
+                                    placeholder={Text("如：2026-11-13")},
+                                    modifier=Modifier.fillMaxWidth(),singleLine=true)
+                                Text("未记录的历史日期不会自动写成今天。",style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (legacyDue > 0L) {
+                                OutlinedTextField(value=dueOn,onValueChange={dueOn=it.take(10)},
+                                    label={Text("预计付尾款日期（可选）")},
+                                    modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            }
+                            OutlinedTextField(value=note,onValueChange={note=it.take(500)},
+                                label={Text("原款项说明（可选）")},
+                                modifier=Modifier.fillMaxWidth(),minLines=2)
+                        }
                         "charge" -> {
                             OutlinedTextField(value=title,onValueChange={title=it.take(80)},
                                 label={Text("款项名称")},placeholder={Text("例如：论文写作服务费")},
@@ -923,7 +991,8 @@ private fun ClientMoneySheet(
                                     keyboardType=androidx.compose.ui.text.input.KeyboardType.Decimal),
                                 isError=entered==null || entered<=0L,modifier=Modifier.fillMaxWidth(),singleLine=true)
                             OutlinedTextField(value=receivedOn,onValueChange={receivedOn=it.take(10)},
-                                label={Text("实际收款日期")},placeholder={Text("2026-11-13")},
+                                label={Text(if(editingReceipt?.historical == true) "实际收款日期（旧记录可留空）" else "实际收款日期")},
+                                placeholder={Text("2026-11-13")},
                                 modifier=Modifier.fillMaxWidth(),singleLine=true)
                             OutlinedTextField(value=receivedLocation,onValueChange={receivedLocation=it.take(100)},
                                 label={Text("实际收款地点（可选）")},placeholder={Text("例如：湖南常德、线上")},

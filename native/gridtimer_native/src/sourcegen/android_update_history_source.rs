@@ -108,6 +108,7 @@ internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
         sections = listOf(
             AndroidUpdateSection("收付款入口", listOf(
                 "在客户详情与编辑客户界面增加显眼的逐笔记录入口，可直接管理每个项目及实际收款地点、用途、日期和方式。",
+                "已有客户的已付和待付汇总可整理为详细款项，转换后金额保持不变，不会重新累计；旧收款日期未知时保持空白。",
                 "已支付、待支付历史金额输入在新建和编辑客户时继续提供，不再因为没有历史字段而隐藏。"
             )),
             AndroidUpdateSection("数据边界和验收", listOf(

@@ -1,3 +1,4 @@
+// v2.13.5.7 - 历史已付与待付可一次性原子整理为逐笔明细。
 // v2.13.5.6 - 客户逐笔收款与历史汇总并存，不接入风控账本。
 // v2.13.5.5 - 客户收付款以独立分字段存储，不接入风控账本。
 // v2.22.49.5 Android - Encode borrowed replies and send only viewport deltas for pan/zoom.
@@ -622,7 +623,7 @@ fn free_card_position(canvas: &Canvas, width: f32, height: f32) -> Result<(f32, 
 
 fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
     let operation = text(request, "op")?;
-    if matches!(operation, "addClientCharge" | "updateClientCharge" | "removeClientCharge"
+    if matches!(operation, "importClientHistory" | "addClientCharge" | "updateClientCharge" | "removeClientCharge"
         | "addClientReceipt" | "updateClientReceipt" | "removeClientReceipt") {
         return money::edit(canvas, request);
     }
