@@ -114,6 +114,10 @@ fn create_client(name:&str)->Result<(),String>{
         enter_client_money_for_first_customer()?;
     }
     enter_name(name)?;
+    // IME Done dismisses the keyboard without dismissing AlertDialog.
+    // The referral form is taller; its Create button otherwise lies behind Gboard.
+    run(&["shell","input","keyevent","KEYCODE_ENTER"])?;
+    thread::sleep(Duration::from_millis(700));
     if !tap_text(&["创建","Create"])?{return Err("Customer create button missing: inspect the post-input accessibility hierarchy".into());}
     thread::sleep(Duration::from_secs(1));
     Ok(())
