@@ -1,3 +1,4 @@
+// v2.13.5.6 - 独立款项项目与逐笔收款票据，历史汇总不丢失。
 // v2.13.5.5 - 客户卡片展示独立人民币收付款，旧卡片无损打开。
 // v2.23.4.12 Android - Stabilize canvas pan and card drag through save acknowledgement.
 // v2.22.49.7 Android - Reuse edge geometry and draw buffers; isolate gesture zoom recomposition.
@@ -108,6 +109,7 @@ class KnowledgeCanvasTest {
         val old = """{"id":"client","kind":"client","pageId":"","text":"旧客户\n备注","x":0,"y":0,"width":192,"height":132,"color":"blue"}"""
         val decoded = Json.decodeFromString<CanvasNode>(old)
         assertNull(decoded.paidCents); assertNull(decoded.pendingCents)
+        assertTrue(decoded.charges.isEmpty())
         val revised = decoded.copy(paidCents = 150025L, pendingCents = 50L)
         val restored = Json.decodeFromString<CanvasNode>(Json.encodeToString(CanvasNode.serializer(), revised))
         assertEquals(revised, restored)
@@ -118,6 +120,16 @@ class KnowledgeCanvasTest {
         assertTrue(canvasMoneyValid("999999999.99"))
         assertFalse(canvasMoneyValid("1.123"))
         assertFalse(canvasMoneyValid("-1"))
+    }
+    @Test fun clientInstallmentsDisplayAsTotalsAndKeepLegacySummary() {
+        val node = node("paid").copy(kind="client", paidCents=56000L, pendingCents=66000L,
+            charges=listOf(CanvasCharge("charge", "服务费", 122000L, "石家庄", "", "",
+                listOf(CanvasReceipt("first", 56000L, "2026-11-13", "线上", "微信", "")))))
+        assertEquals(112000L, canvasClientPaid(node))
+        assertEquals(132000L, canvasClientPending(node))
+        assertEquals("已支付 ¥1,120.00\\n待支付 ¥1,320.00", canvasClientPaymentSummary(node))
+        assertEquals(1L, canvasEnteredCents("0.01"))
+        assertNull(canvasEnteredCents(""))
     }
     private fun node(id: String, x: Float = 0f, y: Float = 0f) = CanvasNode(id,"note","","card",x,y,256f,168f,"blue")
     private fun boardReply(count: Int, active: Int, revision: Long) = Json.encodeToString(CanvasReply.serializer(), CanvasReply(ok=true, token="bound-account", revision=revision,
@@ -358,7 +370,9 @@ private object DeviceCanvasBackend : CanvasBackend {
     override fun close(token: String) = KnowledgeCanvasNative.close(token)
 }
 
-@Serializable internal data class CanvasNode(val id: String, val kind: String, val pageId: String, val text: String, val x: Float, val y: Float, val width: Float, val height: Float, val color: String, val paidCents: Long? = null, val pendingCents: Long? = null)
+@Serializable internal data class CanvasReceipt(val id: String, val amountCents: Long, val receivedOn: String, val location: String, val channel: String, val note: String)
+@Serializable internal data class CanvasCharge(val id: String, val title: String, val totalCents: Long, val serviceLocation: String, val dueOn: String, val note: String, val receipts: List<CanvasReceipt> = emptyList())
+@Serializable internal data class CanvasNode(val id: String, val kind: String, val pageId: String, val text: String, val x: Float, val y: Float, val width: Float, val height: Float, val color: String, val paidCents: Long? = null, val pendingCents: Long? = null, val charges: List<CanvasCharge> = emptyList())
 @Serializable internal data class CanvasEdge(val id: String, val from: String, val to: String, val relation: String? = null)
 @Serializable internal data class CanvasBoard(val id: String, val title: String, val centerX: Float, val centerY: Float, val zoom: Float, val nodes: List<CanvasNode>, val edges: List<CanvasEdge>, val template: String = "blank")
 @Serializable internal data class CanvasSummary(val id: String, val title: String, val template: String = "blank")
@@ -626,12 +640,325 @@ internal fun canvasMoneyDraft(cents: Long?): String =
     cents?.let { "${it / 100}.${(it % 100).toString().padStart(2, '0')}" } ?: ""
 internal fun canvasMoneyValid(text: String): Boolean =
     text.isEmpty() || Regex("""^(0|[1-9][0-9]{0,8})(\.[0-9]{0,2})?$""").matches(text)
+internal fun canvasClientPaid(node: CanvasNode): Long =
+    (node.paidCents ?: 0L) + node.charges.sumOf { it.receipts.sumOf { receipt -> receipt.amountCents } }
+internal fun canvasClientPending(node: CanvasNode): Long =
+    (node.pendingCents ?: 0L) + node.charges.sumOf { it.totalCents - it.receipts.sumOf { receipt -> receipt.amountCents } }
 internal fun canvasClientPaymentSummary(node: CanvasNode): String =
-    if (node.paidCents == null && node.pendingCents == null) "点击查看客户资料"
-    else "已支付 ${canvasYuan(node.paidCents)}\n待支付 ${canvasYuan(node.pendingCents)}"
+    if (node.paidCents == null && node.pendingCents == null && node.charges.isEmpty()) "点击查看客户资料"
+    else "已支付 ${canvasYuan(canvasClientPaid(node))}\n待支付 ${canvasYuan(canvasClientPending(node))}"
+private fun canvasEnteredCents(value: String): Long? {
+    if (!canvasMoneyValid(value) || value.isBlank() || value.endsWith(".")) return null
+    val parts = value.split(".", limit = 2)
+    return parts[0].toLongOrNull()?.times(100L)?.plus(parts.getOrElse(1) { "" }.padEnd(2, '0').toLongOrNull() ?: return null)
+}
 
 private fun canvasTint(name: String): Color = when (name) {
     "green" -> Color(0xFF2D806B); "amber" -> Color(0xFFA06A24); "pink" -> Color(0xFFAF5279); "purple" -> Color(0xFF7C61A8); else -> Color(0xFF457DA3)
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClientMoneySheet(
+    node: CanvasNode,
+    enabled: Boolean,
+    busy: Boolean,
+    error: String,
+    serial: Int,
+    succeeded: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (JsonObject) -> Boolean
+) {
+    var mode by remember(node.id) { mutableStateOf("list") }
+    var selectedChargeId by remember(node.id) { mutableStateOf("") }
+    var selectedReceiptId by remember(node.id) { mutableStateOf("") }
+    var createId by remember(node.id) { mutableStateOf("") }
+    var title by remember(node.id) { mutableStateOf("") }
+    var amount by remember(node.id) { mutableStateOf("") }
+    var serviceLocation by remember(node.id) { mutableStateOf("") }
+    var dueOn by remember(node.id) { mutableStateOf("") }
+    var note by remember(node.id) { mutableStateOf("") }
+    var receivedOn by remember(node.id) { mutableStateOf("") }
+    var receivedLocation by remember(node.id) { mutableStateOf("") }
+    var channel by remember(node.id) { mutableStateOf("微信") }
+    var pendingSubmit by remember(node.id) { mutableStateOf(false) }
+    var expandedCharge by remember(node.id) { mutableStateOf("") }
+    LaunchedEffect(serial) {
+        if (pendingSubmit) {
+            if (succeeded) mode = "list"
+            pendingSubmit = false
+        }
+    }
+    fun startCharge(charge: CanvasCharge?) {
+        mode = "charge"; selectedChargeId = charge?.id.orEmpty()
+        createId = charge?.id ?: java.util.UUID.randomUUID().toString()
+        title = charge?.title.orEmpty(); amount = canvasMoneyDraft(charge?.totalCents)
+        serviceLocation = charge?.serviceLocation.orEmpty()
+        dueOn = charge?.dueOn.orEmpty(); note = charge?.note.orEmpty()
+    }
+    fun startReceipt(charge: CanvasCharge, receipt: CanvasReceipt?) {
+        selectedChargeId = charge.id; selectedReceiptId = receipt?.id.orEmpty()
+        createId = receipt?.id ?: java.util.UUID.randomUUID().toString()
+        val remaining = charge.totalCents - charge.receipts.sumOf { it.amountCents }
+        amount = canvasMoneyDraft(receipt?.amountCents ?: remaining)
+        receivedOn = receipt?.receivedOn ?: java.time.LocalDate.now().toString()
+        receivedLocation = receipt?.location.orEmpty()
+        channel = receipt?.channel ?: "微信"; note = receipt?.note.orEmpty()
+        mode = "receipt"; expandedCharge = charge.id
+    }
+    val charge = node.charges.firstOrNull { it.id == selectedChargeId }
+    val paidOnCharge = charge?.receipts?.sumOf { it.amountCents } ?: 0L
+    val entered = canvasEnteredCents(amount)
+    val canSubmit = enabled && !busy && !pendingSubmit && when(mode) {
+        "charge" -> title.isNotBlank() && title.length <= 80 && entered != null && entered > 0L &&
+            (selectedChargeId.isEmpty() || entered >= paidOnCharge) &&
+            serviceLocation.length <= 100 && dueOn.length <= 10 && note.length <= 500
+        "receipt" -> charge != null && entered != null && entered > 0L &&
+            entered <= charge.totalCents - paidOnCharge + (charge.receipts.find { it.id == selectedReceiptId }?.amountCents ?: 0L) &&
+            receivedOn.length == 10 && receivedLocation.length <= 100 && channel.length <= 40 && note.length <= 500
+        "deleteCharge", "deleteReceipt" -> true
+        else -> false
+    }
+    fun send() {
+        val operation = when(mode) {
+            "charge" -> if (selectedChargeId.isEmpty()) "addClientCharge" else "updateClientCharge"
+            "receipt" -> if (selectedReceiptId.isEmpty()) "addClientReceipt" else "updateClientReceipt"
+            "deleteCharge" -> "removeClientCharge"
+            "deleteReceipt" -> "removeClientReceipt"
+            else -> return
+        }
+        val request = canvasRequest(operation) {
+            put("id", node.id)
+            put("chargeId", if (mode == "charge" && selectedChargeId.isEmpty()) createId else selectedChargeId)
+            when (mode) {
+                "charge" -> {
+                    put("title", title.trim()); put("totalYuan", amount)
+                    put("serviceLocation", serviceLocation.trim())
+                    put("dueOn", dueOn.trim()); put("note", note.trim())
+                }
+                "receipt" -> {
+                    put("receiptId", if (selectedReceiptId.isEmpty()) createId else selectedReceiptId)
+                    put("amountYuan", amount); put("receivedOn", receivedOn.trim())
+                    put("location", receivedLocation.trim()); put("channel", channel.trim())
+                    put("note", note.trim())
+                }
+                "deleteReceipt" -> put("receiptId", selectedReceiptId)
+            }
+        }
+        if (onSubmit(request)) pendingSubmit = true
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (mode != "list") TextButton(onClick = { mode = "list" }, enabled = !busy) { Text("返回") }
+                Column(Modifier.weight(1f)) {
+                    Text(when(mode) {
+                        "list" -> "收付款明细"
+                        "charge" -> if (selectedChargeId.isEmpty()) "新增款项" else "编辑款项"
+                        "receipt" -> if (selectedReceiptId.isEmpty()) "记录一笔收款" else "修改收款记录"
+                        else -> "确认移除"
+                    }, style = MaterialTheme.typography.titleLarge)
+                    Text(node.text.substringBefore("\n") + " · 人民币",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (mode == "list") TextButton(onClick = onDismiss) { Text("完成") }
+            }
+            if (mode == "list") {
+                Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Surface(Modifier.weight(1f), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.5f),
+                            shape=RoundedCornerShape(16.dp)) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("累计已付", style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(canvasYuan(canvasClientPaid(node)), style=MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                        Surface(Modifier.weight(1f), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.5f),
+                            shape=RoundedCornerShape(16.dp)) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("尚待支付", style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(canvasYuan(canvasClientPending(node)), style=MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                    }
+                    if (node.paidCents != null || node.pendingCents != null) {
+                        Surface(color=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.35f),
+                            shape=RoundedCornerShape(12.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                                Text("历史汇总 · 尚未归入逐笔记录", style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("已付 ${canvasYuan(node.paidCents ?: 0L)}    待付 ${canvasYuan(node.pendingCents ?: 0L)}",
+                                    style=MaterialTheme.typography.bodySmall)
+                                Text("历史金额不会自动生成虚构款项。需要修改时可在编辑客户中调整。",
+                                    style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    Button(onClick = { startCharge(null) }, enabled=enabled,
+                        modifier=Modifier.fillMaxWidth(), shape=RoundedCornerShape(14.dp)) {
+                        Text("＋ 新增款项项目")
+                    }
+                    if (node.charges.isEmpty()) {
+                        Text("还没有逐笔款项。先新增一项服务费用，再记录实际收到的每一笔款。",
+                            style=MaterialTheme.typography.bodyMedium,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    for (item in node.charges.asReversed()) {
+                        val paid = item.receipts.sumOf { it.amountCents }
+                        val pending = item.totalCents - paid
+                        val status = when {
+                            paid == item.totalCents -> "已结清"
+                            paid > 0 -> "部分支付"
+                            else -> "待支付"
+                        }
+                        Surface(shape=RoundedCornerShape(16.dp), color=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.24f)) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment=Alignment.CenterVertically) {
+                                    Text(item.title, Modifier.weight(1f), style=MaterialTheme.typography.titleSmall)
+                                    Text(status, style=MaterialTheme.typography.labelMedium,
+                                        color=MaterialTheme.colorScheme.primary)
+                                }
+                                Text(canvasYuan(item.totalCents), style=MaterialTheme.typography.titleLarge)
+                                Text("已收 ${canvasYuan(paid)}    待收 ${canvasYuan(pending)}",
+                                    style=MaterialTheme.typography.bodyMedium)
+                                if (item.serviceLocation.isNotBlank())
+                                    Text("服务地点 · ${item.serviceLocation}", style=MaterialTheme.typography.bodySmall)
+                                if (item.dueOn.isNotBlank())
+                                    Text("预计付款 · ${item.dueOn}", style=MaterialTheme.typography.bodySmall)
+                                if (item.note.isNotBlank())
+                                    Text(item.note, style=MaterialTheme.typography.bodySmall)
+                                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                    if (pending > 0L) {
+                                        Button(onClick={ startReceipt(item, null) }, enabled=enabled,
+                                            modifier=Modifier.weight(1f)) { Text("＋ 收款") }
+                                    }
+                                    OutlinedButton(onClick={ expandedCharge = if(expandedCharge==item.id) "" else item.id },
+                                        modifier=Modifier.weight(1f)) {
+                                        Text(if(expandedCharge==item.id) "收起" else "记录 ${item.receipts.size} 笔")
+                                    }
+                                }
+                                if (expandedCharge == item.id) {
+                                    if (item.receipts.isEmpty()) Text("暂无实际收款",
+                                        style=MaterialTheme.typography.bodySmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    for (receipt in item.receipts.asReversed()) {
+                                        Surface(onClick={ startReceipt(item,receipt) }, enabled=enabled,
+                                            color=MaterialTheme.colorScheme.surface,
+                                            shape=RoundedCornerShape(12.dp)) {
+                                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                                                Row {
+                                                    Text(canvasYuan(receipt.amountCents), Modifier.weight(1f),
+                                                        style=MaterialTheme.typography.titleSmall)
+                                                    Text(receipt.receivedOn, style=MaterialTheme.typography.labelSmall,
+                                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                                Text(listOf(receipt.location,receipt.channel).filter{it.isNotBlank()}.joinToString(" · "),
+                                                    style=MaterialTheme.typography.bodySmall)
+                                                if(receipt.note.isNotBlank()) Text(receipt.note,
+                                                    style=MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                    }
+                                    Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                                        TextButton(onClick={ startCharge(item) }, enabled=enabled) { Text("编辑项目") }
+                                        if (item.receipts.isEmpty())
+                                            TextButton(onClick={ selectedChargeId=item.id; mode="deleteCharge" }, enabled=enabled) {
+                                                Text("移除项目",color=MaterialTheme.colorScheme.error)
+                                            }
+                                    }
+                                    if (item.receipts.isNotEmpty()) Text(
+                                        "点击任一收款记录可编辑或移除",
+                                        style=MaterialTheme.typography.labelSmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                    Text("仅保存在客户画布，不计入风控账本。",
+                        style=MaterialTheme.typography.labelSmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                Column(Modifier.fillMaxWidth().heightIn(max=450.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    when(mode) {
+                        "charge" -> {
+                            OutlinedTextField(value=title,onValueChange={title=it.take(80)},
+                                label={Text("款项名称")},placeholder={Text("例如：论文写作服务费")},
+                                modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            OutlinedTextField(value=amount,onValueChange={amount=it.take(12)},
+                                label={Text("应付总额（人民币）")},placeholder={Text("0.00")},
+                                keyboardOptions=androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType=androidx.compose.ui.text.input.KeyboardType.Decimal),
+                                isError=entered==null || entered<=0L || (selectedChargeId.isNotEmpty() && entered<paidOnCharge),
+                                modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            OutlinedTextField(value=serviceLocation,onValueChange={serviceLocation=it.take(100)},
+                                label={Text("服务发生地点（可选）")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                            OutlinedTextField(value=dueOn,onValueChange={dueOn=it.take(10)},
+                                label={Text("预计收款日期（可选）")},placeholder={Text("2026-12-01")},
+                                singleLine=true,modifier=Modifier.fillMaxWidth())
+                            OutlinedTextField(value=note,onValueChange={note=it.take(500)},
+                                label={Text("项目说明（可选）")},minLines=2,modifier=Modifier.fillMaxWidth())
+                            Text("款项项目用于说明应收原因。实际收钱时再添加收款记录。",
+                                style=MaterialTheme.typography.labelSmall,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        "receipt" -> {
+                            Text(charge?.title.orEmpty(),style=MaterialTheme.typography.titleMedium)
+                            OutlinedTextField(value=amount,onValueChange={amount=it.take(12)},
+                                label={Text("本次实际收款（人民币）")},placeholder={Text("0.00")},
+                                keyboardOptions=androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType=androidx.compose.ui.text.input.KeyboardType.Decimal),
+                                isError=entered==null || entered<=0L,modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            OutlinedTextField(value=receivedOn,onValueChange={receivedOn=it.take(10)},
+                                label={Text("实际收款日期")},placeholder={Text("2026-11-13")},
+                                modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            OutlinedTextField(value=receivedLocation,onValueChange={receivedLocation=it.take(100)},
+                                label={Text("实际收款地点（可选）")},placeholder={Text("例如：湖南常德、线上")},
+                                modifier=Modifier.fillMaxWidth(),singleLine=true)
+                            OutlinedTextField(value=channel,onValueChange={channel=it.take(40)},
+                                label={Text("收款方式（可选）")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                            Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                                for (choice in listOf("微信","支付宝","银行转账")) {
+                                    SuggestionChip(onClick={channel=choice},label={Text(choice)})
+                                }
+                            }
+                            OutlinedTextField(value=note,onValueChange={note=it.take(500)},
+                                label={Text("本笔备注（可选）")},minLines=2,modifier=Modifier.fillMaxWidth())
+                            if(selectedReceiptId.isNotEmpty()) {
+                                TextButton(onClick={mode="deleteReceipt"},enabled=enabled) {
+                                    Text("移除此笔记录",color=MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                        "deleteCharge" -> Text("确定移除这项尚无收款的项目？操作后可通过画布撤销恢复。",
+                            style=MaterialTheme.typography.bodyMedium)
+                        "deleteReceipt" -> Text("确定移除此笔收款记录？项目已收与待收金额将重新计算，可通过画布撤销恢复。",
+                            style=MaterialTheme.typography.bodyMedium)
+                    }
+                    if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error,
+                        style=MaterialTheme.typography.bodySmall)
+                }
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick={mode=if(mode=="deleteReceipt") "receipt" else "list"},
+                        enabled=!busy,modifier=Modifier.weight(1f)) {Text("取消")}
+                    Button(onClick={send()},enabled=canSubmit,modifier=Modifier.weight(1f),
+                        shape=RoundedCornerShape(14.dp)) {
+                        Text(if(mode.startsWith("delete")) "确认移除" else "保存")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -643,6 +970,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     val modelState by model.state.collectAsState()
     DisposableEffect(model) { onDispose { model.close() } }
     var selected by remember(workspace) { mutableStateOf<String?>(null) }
+    var paymentClientId by remember(workspace) { mutableStateOf<String?>(null) }
     var connectFrom by remember(workspace) { mutableStateOf<String?>(null) }
     var connectRelation by remember(workspace) { mutableStateOf("link") }
     var showLibrary by remember(workspace) { mutableStateOf(true) }
@@ -664,6 +992,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     val canvas = modelState.reply?.canvas
     val pages = remember(appData.notes) { appData.notes.filter { it.kind == NoteEntryKind.DOCUMENT && !it.isDeleted() }.associateBy { it.id } }
     val selectedNode = canvas?.nodes?.find { it.id == selected }
+    val paymentClient = canvas?.nodes?.find { it.id == paymentClientId && it.kind == "client" }
     val cardTitle: (CanvasNode) -> String = { node ->
         if (node.kind == "page") canvasPageLabel(pages[node.pageId]).first
         else node.text.substringBefore("\n").ifBlank { if (node.kind == "client") "未命名客户" else "空白便签" }
@@ -684,11 +1013,12 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
         pendingTemplate = template
         editorText = title; panel = ""; dialog = "new"
     }
-    val back = { if (!showBusy) { if (connectFrom != null) connectFrom = null else if (!showLibrary) { showLibrary = true; selected = null; panel = "" } else onBack() } }
+    val back = { if (!showBusy) { if (paymentClientId != null) paymentClientId = null else if (connectFrom != null) connectFrom = null else if (!showLibrary) { showLibrary = true; selected = null; panel = "" } else onBack() } }
     BackHandler { back() }
-    LaunchedEffect(canvas?.id) { selected = null; connectFrom = null; panel = ""; dialog = "" }
+    LaunchedEffect(canvas?.id) { selected = null; paymentClientId = null; connectFrom = null; panel = ""; dialog = "" }
     LaunchedEffect(model.serial) {
         if (canvas?.nodes?.any { it.id == selected } != true) selected = null
+        if (canvas?.nodes?.any { it.id == paymentClientId } != true) paymentClientId = null
         if (dialogRequestPending) {
             if (model.lastSucceeded) { dialog = "" }
             dialogRequestPending = false
@@ -787,6 +1117,11 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     }
     }
 
+    if (!showLibrary && paymentClient != null) {
+        ClientMoneySheet(node = paymentClient, enabled = ready, busy = showBusy,
+            error = model.error, serial = model.serial, succeeded = model.lastSucceeded,
+            onDismiss = { paymentClientId = null }, onSubmit = { model.submit(it) })
+    }
     if (!showLibrary && selectedNode != null) {
         ModalBottomSheet(onDismissRequest = { selected = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), dragHandle = { BottomSheetDefaults.DragHandle() }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -798,16 +1133,18 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 Text(if (selectedNode.kind == "client") "客户 · 直接推荐 ${children} 人" else kindLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 if (parentNode != null) Text("推荐人：${cardTitle(parentNode)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 if (selectedNode.kind == "client") {
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), shape = RoundedCornerShape(14.dp)) {
+                    Surface(onClick = { paymentClientId = selectedNode.id; selected = null },
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(14.dp)) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("收付款信息 · 人民币", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("收付款信息 · 人民币       查看明细 ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("已支付", style = MaterialTheme.typography.bodyMedium)
-                                Text(canvasYuan(selectedNode.paidCents), style = MaterialTheme.typography.bodyMedium)
+                                Text(canvasYuan(canvasClientPaid(selectedNode)), style = MaterialTheme.typography.bodyMedium)
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("待支付", style = MaterialTheme.typography.bodyMedium)
-                                Text(canvasYuan(selectedNode.pendingCents), style = MaterialTheme.typography.bodyMedium)
+                                Text(canvasYuan(canvasClientPending(selectedNode)), style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }
@@ -975,7 +1312,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 Column(Modifier.heightIn(max = if (clientDialog) 300.dp else 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (clientDialog) {
                         OutlinedTextField(value = clientName, onValueChange = { clientName = it.take(80) }, label = { Text("客户姓名") }, placeholder = { Text("例如：张先生") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        Text("收付款信息 · 人民币", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (dialog == "clientEdit" && (clientPaidInput.isNotBlank() || clientPendingInput.isNotBlank())) {
+                        Text("历史汇总金额 · 不包含新的逐笔记录", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = clientPaidInput, onValueChange = { clientPaidInput = it.take(12) },
                             label = { Text("已支付（元）") }, placeholder = { Text("0.00") },
                             isError = !canvasMoneyValid(clientPaidInput), singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -987,6 +1325,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         Text(if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) "金额最多九位整数和两位小数" else "仅保存在客户画布，不记入风控账本",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         if (dialog == "clientAdd" && clientParentId != null) Text("会自动连接到所选推荐人", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         OutlinedTextField(value = clientDetails, onValueChange = { clientDetails = it.take(4000) }, label = { Text("客户资料与跟进记录") }, minLines = 3, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp))
                     } else if (noteDialog) {
