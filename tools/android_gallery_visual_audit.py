@@ -8,7 +8,7 @@ import json
 import re
 import sys
 import xml.etree.ElementTree as ET
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from PIL import Image, ImageStat
@@ -27,6 +27,19 @@ def dhash(image):
     return bits
 
 
+def normalize_dynamic_label(label, timer_screen):
+    # Numeric changes in a running timer do not demonstrate another feature.
+    label = re.sub(r"(?<![0-9A-Za-z])\d{1,2}:\d{2}(?::\d{2})?(?!\d)", "<时间>", label)
+    label = re.sub(r"(?<![0-9A-Za-z])\d+(?:\.\d+)?\s*(?:小时|分钟|分|秒)(?![0-9A-Za-z])", "<时长>", label)
+    if timer_screen:
+        label = re.sub(r"记录\s*\d+(?!\d)", "记录 <次数>", label)
+        label = re.sub(r"(?<!\d)\d+\s*次记录", "<次数>次记录", label)
+        label = re.sub(r"(?<!\d)\d+\s*个格子正在计时", "<数量>个格子正在计时", label)
+        label = re.sub(r"(?<!\d)\d+(?:\.\d+)?%", "<百分比>", label)
+    label = re.sub(r"^\d+\s*张$", "<列表数量>张", label)
+    return label
+
+
 def semantic_text(xml_file):
     root = ET.parse(xml_file).getroot()
     first = next(root.iter("node"), None)
@@ -34,6 +47,8 @@ def semantic_text(xml_file):
     if owner != "com.ofairyo.gridtimer":
         raise ValueError("前台并非 TenRate 应用：" + (owner or "未知") +
                          "；系统权限弹窗和 DocumentsUI 不属于功能截图")
+    raw = ET.tostring(root, encoding="unicode")
+    timer_screen = ("格子详情" in raw or ("建议动作" in raw and "任务" in raw))
     labels = []
     for node in root.iter("node"):
         a = node.attrib
@@ -42,15 +57,10 @@ def semantic_text(xml_file):
         label = (a.get("text") or a.get("content-desc") or "").strip()
         if not label or label in MODULES or len(label) > 120:
             continue
-        label = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", "<时间>", label)
-        if "格子详情" in ET.tostring(root, encoding="unicode") or "建议动作" in ET.tostring(root, encoding="unicode"):
-            label = re.sub(r"\b记录\s*\d+\b", "记录 <次数>", label)
-            label = re.sub(r"\b\d+\s*次记录\b", "<次数>次记录", label)
-            label = re.sub(r"\b\d+\s*(?:分|秒|小时)\b", "<时长>", label)
+        label = normalize_dynamic_label(label, timer_screen)
         if label not in labels:
             labels.append(label)
     return hashlib.sha256("\u241e".join(labels).encode()).hexdigest()[:20]
-
 
 def audit(root):
     index = root / "操作说明与截图索引.csv"
@@ -61,6 +71,7 @@ def audit(root):
     seen_paths, seen_pixels = set(), {}
     signatures, issues = [], []
     semantic_keys = set()  # XML candidate states, not independently proven business functions.
+    module_semantics = defaultdict(set)
     counts = Counter()
     for record in records:
         module = record["功能模块"]
@@ -114,6 +125,7 @@ def audit(root):
                     seen_pixels[digest] = rel
                 signatures.append((rel, module, semantic, dhash(app)))
                 semantic_keys.add((module, semantic))
+                module_semantics[module].add(semantic)
                 counts[module] += 1
         except Exception as ex:
             issues.append("图片/XML 解码失败：" + rel + "：" + str(ex))
@@ -131,6 +143,7 @@ def audit(root):
                              "视觉距离": distance, "正文签名相同": semantic == other_semantic})
     return {"索引总数": len(records), "App内容唯一数": len(seen_pixels),
             "XML语义候选唯一数": len(semantic_keys),
+            "各模块XML语义候选唯一数": {k: len(v) for k, v in module_semantics.items()},
             "各模块张数": dict(counts), "阻断问题": issues,
             "高度相似待人工复核": near, "高度相似对数": len(near)}
 

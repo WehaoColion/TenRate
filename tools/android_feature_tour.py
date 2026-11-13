@@ -202,8 +202,11 @@ def capture(module, action, xml=None, detail="", force=False):
     # The canvas is nested under Knowledge. A floating timer sheet may cover
     # it while the XML still reports the TenRate package; never label that
     # timer sheet as a canvas feature.
-    if module == "画布" and ("格子详情" in xml or root_module(xml) == "计时"):
-        errors.append("画布误标拒绝：实际为计时详情 / " + action)
+    if module != "计时" and "格子详情" in xml:
+        errors.append("跨模块计时详情误标拒绝：" + module + " / " + action)
+        return False
+    if module == "画布" and root_module(xml) == "计时":
+        errors.append("画布误标拒绝：实际为计时模块 / " + action)
         return False
     # A nested click must not silently move into another bottom-navigation module.
     if module in MODULES:
@@ -214,7 +217,7 @@ def capture(module, action, xml=None, detail="", force=False):
     key=body_signature(xml)
     if not force and key in seen: return False
     data=image_bytes()
-    if not data: return False
+    if not data: return None  # Black pixels are not a traversable child.
     png_hash=hashlib.sha256(data).hexdigest()
     if png_hash in seen_png:
         errors.append("PNG 字节重复，跳过："+module+" / "+action)
@@ -310,6 +313,20 @@ def require_zh(xml):
     if any(x in xml for x in ("Quick notes", "Risk Control", "Start anew", "Suggested action")):
         raise RuntimeError("检测到英文界面，禁止采集并归类为中文截图")
 
+def normalize_dynamic_label(label, timer_screen):
+    """Ignore elapsed time and count-only changes, not business controls."""
+    value=re.sub(r"(?<![0-9A-Za-z])\d{1,2}:\d{2}(?::\d{2})?(?!\d)", "<时间>", label)
+    # A running timer also appears in other modules' shared chrome.
+    value=re.sub(r"(?<![0-9A-Za-z])\d+(?:\.\d+)?\s*(?:小时|分钟|分|秒)(?![0-9A-Za-z])", "<时长>", value)
+    if timer_screen:
+        value=re.sub(r"记录\s*\d+(?!\d)", "记录 <次数>", value)
+        value=re.sub(r"(?<!\d)\d+\s*次记录", "<次数>次记录", value)
+        value=re.sub(r"(?<!\d)\d+\s*个格子正在计时", "<数量>个格子正在计时", value)
+        value=re.sub(r"(?<!\d)\d+(?:\.\d+)?%", "<百分比>", value)
+    value=re.sub(r"^\d+\s*张$", "<列表数量>张", value)
+    return value
+
+
 def body_signature(xml):
     height=screen_height()
     main=[n["label"] for n in nodes(xml)
@@ -319,21 +336,7 @@ def body_signature(xml):
     timer_screen = ("格子详情" in xml or ("建议动作" in xml and "任务" in xml))
     stable=[]
     for label in main:
-        value=re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b","<时间>",label)
-        value=re.sub(r"\b\d+\s*(?:分|秒|小时|m|h)\b","<时长>",value)
-        value=re.sub(r"\d+(?:\.\d+)?%","<百分比>",value)
-        # A running timer changes its clock, accumulated duration and record
-        # count without exposing a new feature. Keep Start/Pause/Continue
-        # labels distinct, but never count elapsed seconds as coverage.
-        if timer_screen:
-            value=re.sub(r"\b记录\s*\d+\b", "记录 <次数>", value)
-            value=re.sub(r"\b\d+\s*次记录\b", "<次数>次记录", value)
-            value=re.sub(r"\b(?:完成|已记录)\s*\d+\s*次\b", "<次数>", value)
-            value=re.sub(r"\b\d+\s*个格子正在计时\b", "<数量>个格子正在计时", value)
-        # A list badge changing from 6 张 to 7 张 without a newly visible
-        # item is not a new demonstrable feature state. Keep canvas card and
-        # relationship counts intact: those do prove distinct business states.
-        value=re.sub(r"^\d+\s*张$","<列表数量>张",value)
+        value=normalize_dynamic_label(label,timer_screen)
         if value not in stable: stable.append(value)
     return hashlib.sha256("\u241e".join(stable[:100]).encode("utf-8")).hexdigest()
 
@@ -508,8 +511,12 @@ def explore(module, depth, trace, budget=0):
         return
     screen=get_xml()
     if not screen or screen_owner(screen) != PACKAGE: return
-    if module == "画布" and ("格子详情" in screen or root_module(screen) == "计时"):
-        errors.append("画布遍历遇到计时详情遮挡，拒绝跨模块探索")
+    if module != "计时" and "格子详情" in screen:
+        errors.append("跨模块计时详情遮挡，拒绝继续遍历：" + module)
+        back()
+        return
+    if module == "画布" and root_module(screen) == "计时":
+        errors.append("画布遍历误入计时模块")
         return
     start_identity=body_signature(screen)
     sig=(module,start_identity)
@@ -546,6 +553,10 @@ def explore(module, depth, trace, budget=0):
             current=get_xml()
         if not current or body_signature(current)!=start_identity:
             break
+        if module != "计时" and "格子详情" in current:
+            errors.append("点击前发现计时详情遮挡：" + module)
+            back()
+            return
         current_nodes=nodes(current)
         found=next((x for x in current_nodes if x["label"]==n["label"] and
                     abs(x["y"]-n["y"])<170),None)
@@ -564,8 +575,17 @@ def explore(module, depth, trace, budget=0):
                 if not restore_trace(module, trace, prior):
                     break
             continue
-        if module == "画布" and ("格子详情" in after or root_module(after) == "计时"):
-            errors.append("画布操作被计时浮层遮挡，未截图：" + n["label"][:40])
+        if module != "计时" and "格子详情" in after:
+            errors.append("点击后进入计时详情浮层，未截图：" + module + " / " + n["label"][:40])
+            back()
+            restored_xml=get_xml()
+            if (not restored_xml or screen_owner(restored_xml)!=PACKAGE or
+                    body_signature(restored_xml)!=prior):
+                if not restore_trace(module,trace,prior):
+                    return
+            continue
+        if module == "画布" and root_module(after) == "计时":
+            errors.append("画布操作误入计时模块，未截图：" + n["label"][:40])
             back()
             return
         changed=body_signature(after)!=prior
@@ -579,8 +599,19 @@ def explore(module, depth, trace, budget=0):
             # Doing so exited the entire application in the prior run.
             continue
         label=n["label"].replace("\n"," ")[:32]
-        capture(module,"→".join(trace[-2:]+[label]),after,
-                "实际点击："+n["label"][:100])
+        captured=capture(module,"→".join(trace[-2:]+[label]),after,
+                         "实际点击："+n["label"][:100])
+        if captured is None:
+            # XML can be present while emulator pixels are black. Do not
+            # recursively explore an invisible dialog or exhaust the module.
+            errors.append("黑帧子页面停止探索并返回：" + module + " / " + label)
+            back()
+            restored_xml=get_xml()
+            if (not restored_xml or screen_owner(restored_xml)!=PACKAGE or
+                    body_signature(restored_xml)!=prior):
+                if not restore_trace(module,trace,prior):
+                    return
+            continue
         if depth<MAX_DEPTH and (module,body_signature(after)) not in visited:
             explore(module,depth+1,trace+[label])
         # A child can already have returned to the bottom-navigation root.
