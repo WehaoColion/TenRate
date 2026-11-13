@@ -29,6 +29,11 @@ def dhash(image):
 
 def semantic_text(xml_file):
     root = ET.parse(xml_file).getroot()
+    first = next(root.iter("node"), None)
+    owner = first.attrib.get("package", "") if first is not None else ""
+    if owner != "com.ofairyo.gridtimer":
+        raise ValueError("前台并非 TenRate 应用：" + (owner or "未知") +
+                         "；系统权限弹窗和 DocumentsUI 不属于功能截图")
     labels = []
     for node in root.iter("node"):
         a = node.attrib

@@ -88,6 +88,38 @@ def nodes(xml):
         errors.append("UI XML parse: " + str(ex))
         return []
 
+def screen_owner(xml):
+    """Owner of the top-level Android window, not a guessed filename or label."""
+    try:
+        first = next(ET.fromstring(xml).iter("node"), None)
+        return first.attrib.get("package", "") if first is not None else ""
+    except (ET.ParseError, TypeError):
+        return ""
+
+
+def notification_permission(xml):
+    """Recognize only the app's Android notification permission prompt."""
+    lower = xml.lower()
+    return ("permissioncontroller" in lower and
+            ("发送通知" in xml or "notifications" in lower) and
+            ("tenfold" in lower or "tenrate" in lower))
+
+
+def dismiss_notification_permission(xml=None):
+    xml = xml if xml is not None else get_xml()
+    if not notification_permission(xml):
+        return xml
+    allow = next((n for n in nodes(xml) if n["label"] in ("允许", "Allow")), None)
+    if allow is None:
+        errors.append("系统通知权限弹窗缺少允许按钮，未作为功能截图")
+        return xml
+    tap_node(allow)
+    updated = get_xml()
+    if screen_owner(updated) != PACKAGE:
+        errors.append("通知权限处理后未回到应用，拒绝作为功能截图")
+    return updated
+
+
 def visible(xml):
     values=[]
     for n in nodes(xml):
@@ -153,6 +185,10 @@ def capture(module, action, xml=None, detail="", force=False):
     if not force and module_counts.get(module,0)>=MAX_PER_MODULE: return False
     xml=xml if xml is not None else get_xml()
     if not xml: return False
+    owner = screen_owner(xml)
+    if owner != PACKAGE:
+        errors.append("非应用界面拒绝入库：" + module + " / " + action + "；前台包名=" + owner)
+        return False
     # A nested click must not silently move into another bottom-navigation module.
     if module in MODULES:
         actual_root = root_module(xml)
@@ -290,6 +326,11 @@ def at_module(module):
         if not xml:
             open_app()
             continue
+        if notification_permission(xml):
+            xml = dismiss_notification_permission(xml)
+        if screen_owner(xml) != PACKAGE:
+            back()
+            continue
         if root_module(xml)==module and all(bottom_nav(xml).get(x) for x in MODULES):
             return xml
         tabs=bottom_nav(xml)
@@ -368,11 +409,20 @@ def action_candidates(xml,module):
         target=(label,round(n["x"]/80),round(n["y"]/80))
         if target in seen_targets:continue
         seen_targets.add(target);found.append(n)
-    priority=("更多","新建","新增","添加","搜索","设置","筛选","分类","目录","页面",
-              "统计","画布","列表","查看","详情","编辑","历史","预算")
+    # Prefer distinct, evidenced feature routes over repeated cosmetic menus.
+    # The previous generic top-16 sorted by position starved Risk tabs.
+    preferred = {
+        "计时": ("开始", "详情", "展开概览", "新开始", "任务", "时钟", "未分类"),
+        "便签": ("新建", "搜索", "文件夹", "回收站", "筛选", "闪念", "待办", "会议", "复盘", "更多"),
+        "知识": ("新建页面", "新建子页面", "新建子文件夹", "画布", "目录", "页面", "更多", "编辑原文", "公式预览"),
+        "风控": ("记支出", "记收入", "日账", "月快照", "季度", "年度",
+                 "查看当日统计与预算", "风险分析", "新增收入", "新增支出", "更多"),
+    }
+    priority = preferred.get(module, ("新建", "添加", "画布", "客户", "更多", "设置", "查看"))
     def score(n):
-        label=n["label"]
-        return (0 if any(w in label for w in priority) else 1, n["y"],n["x"])
+        label = n["label"]
+        rank = next((i for i, word in enumerate(priority) if word in label), len(priority))
+        return (rank, n["y"], n["x"])
     return sorted(found,key=score)[:16]
 
 def restore_trace(module, trace, expected_signature):
@@ -389,8 +439,8 @@ def restore_trace(module, trace, expected_signature):
                     scroll_screen("down")
                     if not tap_text([label], exact=True):
                         raise RuntimeError("找不到路径操作：" + label)
-                current = get_xml()
-                if not current or not foreground_ok():
+                current = dismiss_notification_permission(get_xml())
+                if not current or screen_owner(current) != PACKAGE or not foreground_ok():
                     raise RuntimeError("路径回放时丢失 App 界面")
             if body_signature(current) == expected_signature:
                 return True
@@ -404,7 +454,7 @@ def explore(module, depth, trace, budget=0):
             depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE):
         return
     screen=get_xml()
-    if not screen: return
+    if not screen or screen_owner(screen) != PACKAGE: return
     start_identity=body_signature(screen)
     sig=(module,start_identity)
     if sig in visited: return
@@ -451,8 +501,18 @@ def explore(module, depth, trace, budget=0):
         if not found:continue
         prior=body_signature(current)
         tap_node(found)
-        after=get_xml()
+        after=dismiss_notification_permission(get_xml())
         if not after: continue
+        owner = screen_owner(after)
+        if owner != PACKAGE:
+            # Android DocumentsUI and system dialogs are not app feature states.
+            errors.append("外部页面拒绝截图：" + module + " / " + n["label"][:35] + "；包名=" + owner)
+            back()
+            restored_xml = get_xml()
+            if screen_owner(restored_xml) != PACKAGE or body_signature(restored_xml) != prior:
+                if not restore_trace(module, trace, prior):
+                    break
+            continue
         changed=body_signature(after)!=prior
         actual_root = root_module(after)
         if module in MODULES and actual_root and actual_root != module:
@@ -548,7 +608,12 @@ def seed_editor(module):
         "风控":["记支出"],
     }.get(module,[])
     if not words or not click(words): return
-    capture(module,"创建或录入入口",get_xml(),"本地空白编辑器或录入表单")
+    entry = dismiss_notification_permission(get_xml())
+    if screen_owner(entry) != PACKAGE:
+        errors.append("本地创建入口进入外部界面，未尝试填写：" + module)
+        back()
+        return
+    capture(module,"创建或录入入口",entry,"本地空白编辑器或录入表单")
     use_latin_ime()
     edits=[n for n in nodes(get_xml()) if n["class_"].endswith("EditText")]
     if not edits:
