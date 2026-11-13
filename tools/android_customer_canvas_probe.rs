@@ -1,3 +1,4 @@
+// v2.13.5.5 - GitHub API 35 模拟器验收客户已支付和待支付金额。
 // Android emulator acceptance for the Rust-backed customer network canvas.
 // Uses only adb and the accessibility hierarchy; screenshot evidence is retained.
 use std::{env,fs,path::{Path,PathBuf},process::{Command,Output},thread,time::Duration};
@@ -95,8 +96,28 @@ fn enter_name(name:&str)->Result<(),String>{
     thread::sleep(Duration::from_millis(400));
     Ok(())
 }
+fn enter_client_money_for_first_customer() -> Result<(),String> {
+    // Fresh card editor: name, paid amount and pending amount EditTexts.
+    for (index, amount) in [(1_usize,"1500.25"), (2_usize,"500.70")] {
+        let inputs: Vec<Target> = elements(&xml()?).into_iter()
+            .filter(|n| n.class.ends_with("EditText") && n.bounds[2]-n.bounds[0]>50)
+            .collect();
+        if inputs.len()<3 { return Err(format!("Amount inputs missing: found {}",inputs.len())); }
+        tap(&inputs[index])?;
+        run(&["shell","input","text",amount])?;
+        thread::sleep(Duration::from_millis(350));
+    }
+    Ok(())
+}
 fn create_client(name:&str)->Result<(),String>{
+    if env::var_os("CLIENT_MONEY_PROBE").is_some() && name=="ClientA" {
+        enter_client_money_for_first_customer()?;
+    }
     enter_name(name)?;
+    // IME Done dismisses the keyboard without dismissing AlertDialog.
+    // The referral form is taller; its Create button otherwise lies behind Gboard.
+    run(&["shell","input","keyevent","KEYCODE_ENTER"])?;
+    thread::sleep(Duration::from_millis(700));
     if !tap_text(&["创建","Create"])?{return Err("Customer create button missing: inspect the post-input accessibility hierarchy".into());}
     thread::sleep(Duration::from_secs(1));
     Ok(())
@@ -144,10 +165,28 @@ fn main(){
         open_center_card()?;
         if seek(&["ClientA"])?.is_none(){return Err("Tapping a customer did not show its name in detail sheet".into());}
         screenshot(&out,"05_customer_detail");
+        if env::var_os("CLIENT_MONEY_PROBE").is_some() {
+            let tree=xml()?;
+            if !tree.contains("1,500.25") || !tree.contains("500.70") {
+                return Err("Customer payment amounts do not have exact two-decimal UI display".into());
+            }
+            report.push_str("PASS: customer card shows paid RMB 1,500.25 and pending RMB 500.70.\n\n");
+        }
         report.push_str("PASS: tapping a canvas card shows the customer detail sheet without leaving the canvas.\n\n");
         if !tap_text(&["添加此客户推荐的人"])?{return Err("Direct referral add action missing".into());}
+        screenshot(&out,"06_referral_form");
         create_client("ClientB")?;
-        count("2 张卡片")?;count("1 条关系")?;screenshot(&out,"06_referral_saved");
+        screenshot(&out,"07_after_referral_submit");
+        if let Err(err) = count("2 张卡片") {
+            screenshot(&out,"08_referral_failure");
+            let tree = xml().unwrap_or_default();
+            let labels = elements(&tree).into_iter()
+                .filter(|n| !n.text.is_empty() || !n.description.is_empty())
+                .map(|n| format!("{} [{}]",n.text,n.description))
+                .collect::<Vec<_>>().join(" | ");
+            return Err(format!("{err}; visible elements: {}", labels.chars().take(2000).collect::<String>()));
+        }
+        count("1 条关系")?;screenshot(&out,"09_referral_saved");
         report.push_str("PASS: adding a referred customer creates exactly two cards and one directed relationship.\n\n");
         // The layout actions live in the top-right overflow menu, not in
         // a standalone "布局" toolbar button.

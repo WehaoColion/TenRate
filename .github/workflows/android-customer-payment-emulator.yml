@@ -1,0 +1,108 @@
+name: Android customer RMB payments emulator verification
+
+on:
+  push:
+    branches: [feat/android-customer-payment-v2.13.5.5]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: customer-payment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    name: Verify signed Android app and exact customer money on API 35
+    runs-on: ubuntu-22.04
+    timeout-minutes: 145
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Rust customer payment UI probe
+        shell: bash
+        run: |
+          rustc --edition=2021 -D warnings -O tools/android_customer_canvas_probe.rs -o android_customer_canvas_probe
+      - name: Wait for this commit's formally signed APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # If only this Rust emulator probe or its workflow changed since
+          # the successfully signed candidate, use exactly those checked bytes.
+          # Never reuse an APK after app, Rust library, or UI source changes.
+          baseline=972dcee9eb649f66de89a6ae677bd6a594289484
+          original_run=43325966925
+          if gh api "repos/$GITHUB_REPOSITORY/compare/$baseline...$GITHUB_SHA" |
+             jq -e '(.files | length) > 0 and (.files | all(.filename == "tools/android_customer_canvas_probe.rs" or .filename == ".github/workflows/android-customer-payment-emulator.yml"))' >/dev/null; then
+            echo "$original_run" > signed_build_run_id.txt
+            echo "Reusing immutable signed 2.13.5.5 APK from verified build $original_run; application sources unchanged."
+          fi
+          found=0
+          if test -s signed_build_run_id.txt; then found=1; fi
+          for attempt in $(seq 1 200); do
+            if test "$found" -eq 1; then break; fi
+            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-customer-payment-v2.13.5.5&per_page=30")"
+            result="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
+            if test -n "$result"; then
+              read -r run_id status conclusion <<< "$result"
+              if test "$status" = completed; then
+                if test "$conclusion" != success; then
+                  echo "Signed APK build $run_id failed: $conclusion" >&2
+                  exit 1
+                fi
+                echo "$run_id" > signed_build_run_id.txt
+                found=1
+                break
+              fi
+            fi
+            sleep 30
+          done
+          test "$found" -eq 1
+          mkdir -p signed_apk
+          gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
+          cd signed_apk
+          test -f tenfold_v2.13.5.5.apk
+          tr -d '\r' < tenfold_v2.13.5.5.apk.sha256 | sha256sum -c -
+      - name: Enable accelerated Android emulator
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Install APK, enter RMB cents, inspect customer and restart
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v2.13.5.5.apk
+            CLIENT_MONEY_PROBE=1 ./android_customer_canvas_probe customer_payment_evidence
+      - name: Summarize actual UI acceptance result
+        if: always()
+        shell: bash
+        run: |
+          if test -f customer_payment_evidence/report.md; then
+            cat customer_payment_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Emulator acceptance did not reach the report step" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Publish screenshot and accessibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-payment-v2.13.5.5-api35-evidence
+          path: |
+            customer_payment_evidence/
+            signed_build_run_id.txt
+          if-no-files-found: warn
+          retention-days: 21

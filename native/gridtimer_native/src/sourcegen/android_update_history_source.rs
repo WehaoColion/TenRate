@@ -1,3 +1,4 @@
+// v2.13.5.5 - Record exact RMB client payments independently of the finance ledger.
 // v2.13.5.3 - Describe today's time accurately before the first recorded session.
 // v2.13.5.2 - Paper-like knowledge rows, folder glyphs and quieter hierarchy chrome.
 // v2.13.5.1 - Compact referral forest layout and orthogonal connections.
@@ -68,7 +69,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.3";
+pub const LATEST_VERSION: &str = "2.13.5.5";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -98,6 +99,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.5",
+        updatedAt = "2026-11-13 07:06",
+        summary = "客户网络可以独立记录已支付和待支付的人民币金额",
+        sections = listOf(
+            AndroidUpdateSection("客户收付款", listOf(
+                "客户卡片增加已支付、待支付字段，精确显示到分，未填写和零元区分，点击客户可查看完整金额。",
+                "可在创建客户或编辑客户时独立调整金额，非法格式及超过两位小数的输入会被阻止。"
+            )),
+            AndroidUpdateSection("数据边界", listOf(
+                "收付款仅属于知识画布中的客户卡片，与风控账本、收入支出和余额完全隔离。",
+                "旧客户数据无金额字段时仍可打开；修改备注、撤销、重做和恢复画布不应破坏金额。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.3",
         updatedAt = "2026-11-13 02:36",
