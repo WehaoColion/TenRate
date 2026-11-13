@@ -970,7 +970,9 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             shape = RoundedCornerShape(24.dp),
             title = { Text(when(dialog) { "clientAdd" -> "新建客户"; "clientEdit" -> "编辑客户"; "noteAdd" -> "新建便签"; "noteEdit" -> "编辑便签"; "new" -> "新建画布"; "rename" -> "重命名画布"; "pageAdd" -> "新建知识页面"; "deleteNode" -> "移除这张卡片？"; else -> "删除整张画布？" }) },
             text = {
-                Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Client forms have two monetary inputs; keep Create/Save above Gboard.
+                // The remaining customer fields scroll within the dialog.
+                Column(Modifier.heightIn(max = if (clientDialog) 300.dp else 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (clientDialog) {
                         OutlinedTextField(value = clientName, onValueChange = { clientName = it.take(80) }, label = { Text("客户姓名") }, placeholder = { Text("例如：张先生") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         Text("收付款信息 · 人民币", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
