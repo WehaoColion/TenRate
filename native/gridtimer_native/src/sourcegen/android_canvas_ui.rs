@@ -127,7 +127,7 @@ class KnowledgeCanvasTest {
                 listOf(CanvasReceipt("first", 56000L, "2026-11-13", "线上", "微信", "")))))
         assertEquals(112000L, canvasClientPaid(node))
         assertEquals(132000L, canvasClientPending(node))
-        assertEquals("已支付 ¥1,120.00\\n待支付 ¥1,320.00", canvasClientPaymentSummary(node))
+        assertEquals("已支付 ¥1,120.00\n待支付 ¥1,320.00", canvasClientPaymentSummary(node))
         assertEquals(1L, canvasEnteredCents("0.01"))
         assertNull(canvasEnteredCents(""))
     }
@@ -982,6 +982,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     var clientName by remember(workspace) { mutableStateOf("") }
     var clientDetails by remember(workspace) { mutableStateOf("") }
     var clientPaidInput by remember(workspace) { mutableStateOf("") }
+    var clientHasLegacyMoney by remember(workspace) { mutableStateOf(false) }
     var clientPendingInput by remember(workspace) { mutableStateOf("") }
     var clientParentId by remember(workspace) { mutableStateOf<String?>(null) }
     var editTargetId by remember(workspace) { mutableStateOf<String?>(null) }
@@ -1166,6 +1167,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             editTargetId = selectedNode.id
                             if (selectedNode.kind == "client") {
                                 clientName = cardTitle(selectedNode); clientDetails = cardBody(selectedNode)
+                                clientHasLegacyMoney = selectedNode.paidCents != null || selectedNode.pendingCents != null
                                 clientPaidInput = canvasMoneyDraft(selectedNode.paidCents)
                                 clientPendingInput = canvasMoneyDraft(selectedNode.pendingCents)
                                 dialog = "clientEdit"
@@ -1312,7 +1314,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 Column(Modifier.heightIn(max = if (clientDialog) 300.dp else 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (clientDialog) {
                         OutlinedTextField(value = clientName, onValueChange = { clientName = it.take(80) }, label = { Text("客户姓名") }, placeholder = { Text("例如：张先生") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        if (dialog == "clientEdit" && (clientPaidInput.isNotBlank() || clientPendingInput.isNotBlank())) {
+                        if (dialog == "clientEdit" && clientHasLegacyMoney) {
                         Text("历史汇总金额 · 不包含新的逐笔记录", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = clientPaidInput, onValueChange = { clientPaidInput = it.take(12) },
                             label = { Text("已支付（元）") }, placeholder = { Text("0.00") },
