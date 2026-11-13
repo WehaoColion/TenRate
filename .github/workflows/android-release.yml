@@ -197,13 +197,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3'
+        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6'
       - uses: actions/download-artifact@v4
         with:
           name: tenrate-signed-apk
           path: package
       - name: Verify checksum and push immutable GitHub Release assets
-        if: github.ref != 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' && github.ref != 'refs/heads/fix/android-home-today-badge-v2.13.5.3'
+        if: github.ref != 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' && github.ref != 'refs/heads/fix/android-home-today-badge-v2.13.5.3' && github.ref != 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -247,7 +247,7 @@ jobs:
           print(f'Published {apk.name} SHA256 {digest}')
           PY
       - name: Publish immutable commit-scoped candidate with Rust
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3'
+        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
