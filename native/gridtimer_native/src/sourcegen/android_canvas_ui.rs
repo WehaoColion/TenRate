@@ -1,3 +1,4 @@
+// v2.13.5.7 - 恢复客户原始金额输入，在编辑客户中直接进入逐笔收款记录。
 // v2.13.5.6 - 独立款项项目与逐笔收款票据，历史汇总不丢失。
 // v2.13.5.5 - 客户卡片展示独立人民币收付款，旧卡片无损打开。
 // v2.23.4.12 Android - Stabilize canvas pan and card drag through save acknowledgement.
@@ -984,7 +985,6 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     var clientName by remember(workspace) { mutableStateOf("") }
     var clientDetails by remember(workspace) { mutableStateOf("") }
     var clientPaidInput by remember(workspace) { mutableStateOf("") }
-    var clientHasLegacyMoney by remember(workspace) { mutableStateOf(false) }
     var clientPendingInput by remember(workspace) { mutableStateOf("") }
     var clientParentId by remember(workspace) { mutableStateOf<String?>(null) }
     var editTargetId by remember(workspace) { mutableStateOf<String?>(null) }
@@ -1177,7 +1177,6 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             editTargetId = selectedNode.id
                             if (selectedNode.kind == "client") {
                                 clientName = cardTitle(selectedNode); clientDetails = cardBody(selectedNode)
-                                clientHasLegacyMoney = selectedNode.paidCents != null || selectedNode.pendingCents != null
                                 clientPaidInput = canvasMoneyDraft(selectedNode.paidCents)
                                 clientPendingInput = canvasMoneyDraft(selectedNode.pendingCents)
                                 dialog = "clientEdit"
@@ -1342,7 +1341,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                                 }
                             }
                         }
-                        if (dialog == "clientAdd" || clientHasLegacyMoney) {
+                        if (clientDialog) {
                             Text(if (dialog == "clientAdd") "初始历史汇总（可不填，建议今后逐笔记录）"
                                  else "历史汇总金额 · 不包含新的逐笔记录",
                                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
