@@ -1140,7 +1140,10 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                         shape = RoundedCornerShape(14.dp)) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("收付款信息 · 人民币       查看明细 ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("收付款信息 · 人民币", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("查看逐笔记录 ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("已支付", style = MaterialTheme.typography.bodyMedium)
                                 Text(canvasYuan(canvasClientPaid(selectedNode)), style = MaterialTheme.typography.bodyMedium)
@@ -1151,6 +1154,11 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             }
                         }
                     }
+                }
+                if (selectedNode.kind == "client") {
+                    OutlinedButton(onClick = { paymentClientId = selectedNode.id; selected = null },
+                        enabled = ready, modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)) { Text("收付款明细 · 记录款项与实际收款") }
                 }
                 val body = cardBody(selectedNode)
                 if (body.isNotBlank()) Text(body, style = MaterialTheme.typography.bodyMedium, maxLines = 8, overflow = TextOverflow.Ellipsis)
@@ -1316,8 +1324,28 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 Column(Modifier.heightIn(max = if (clientDialog) 300.dp else 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (clientDialog) {
                         OutlinedTextField(value = clientName, onValueChange = { clientName = it.take(80) }, label = { Text("客户姓名") }, placeholder = { Text("例如：张先生") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        if (dialog == "clientEdit" && clientHasLegacyMoney) {
-                        Text("历史汇总金额 · 不包含新的逐笔记录", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (dialog == "clientEdit") {
+                            Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                                shape = RoundedCornerShape(14.dp)) {
+                                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("收付款 · 已付 " + canvasYuan(
+                                        canvas?.nodes?.firstOrNull { it.id == editTargetId }?.let(::canvasClientPaid) ?: 0L
+                                    ) + " · 待付 " + canvasYuan(
+                                        canvas?.nodes?.firstOrNull { it.id == editTargetId }?.let(::canvasClientPending) ?: 0L
+                                    ), style = MaterialTheme.typography.labelMedium)
+                                    Button(onClick = {
+                                        paymentClientId = editTargetId
+                                        editTargetId = null
+                                        dialog = ""
+                                    }, enabled = ready && canvas?.nodes?.any { it.id == editTargetId && it.kind == "client" } == true,
+                                        modifier = Modifier.fillMaxWidth()) { Text("＋ 详细记录每笔款项和收款") }
+                                }
+                            }
+                        }
+                        if (dialog == "clientAdd" || clientHasLegacyMoney) {
+                            Text(if (dialog == "clientAdd") "初始历史汇总（可不填，建议今后逐笔记录）"
+                                 else "历史汇总金额 · 不包含新的逐笔记录",
+                                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = clientPaidInput, onValueChange = { clientPaidInput = it.take(12) },
                             label = { Text("已支付（元）") }, placeholder = { Text("0.00") },
                             isError = !canvasMoneyValid(clientPaidInput), singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -1326,7 +1354,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             label = { Text("待支付（元）") }, placeholder = { Text("0.00") },
                             isError = !canvasMoneyValid(clientPendingInput), singleLine = true, modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
-                        Text(if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) "金额最多九位整数和两位小数" else "仅保存在客户画布，不记入风控账本",
+                        Text(if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) "金额最多九位整数和两位小数" else "历史汇总独立保存，不与逐笔明细重复登记，不进入风控账本",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
