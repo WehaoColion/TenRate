@@ -72,6 +72,16 @@ fn required(labels: &[&str]) -> Result<(), String> {
     }
     Err(format!("Required button not visible: {labels:?}"))
 }
+fn click_exact(label: &str) -> Result<(), String> {
+    for _ in 0..4 {
+        if let Some(found) = elements(&tree()?).into_iter().find(|n| n.text == label) {
+            tap(&found)?;
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    Err(format!("Exact board title was not visible: {label}"))
+}
 fn edit(index: usize, value: &str) -> Result<(), String> {
     let fields: Vec<_> = elements(&tree()?).into_iter()
         .filter(|node| node.class.ends_with("EditText") && node.bounds[2] - node.bounds[0] > 50)
@@ -145,6 +155,14 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     }
     open_canvas(folder)?;
     snapshot(folder, "02_画布");
+    if tree()?.contains("我的画布") {
+        // A clean account opens the universal canvas library, not a customer board.
+        // Create a customer-network template without changing the generic canvas.
+        required(&["客户网络模板"])?;
+        required(&["创建", "Create"])?;
+        verify("0 张卡片")?;
+        snapshot(folder, "02a_客户网络画布已创建");
+    }
     required(&["＋ 添加第一个客户", "＋ 添加"])?;
     if elements(&tree()?).iter().all(|n| !n.class.ends_with("EditText")) {
         required(&["＋ 新建客户", "＋ 更多卡片：客户"])?;
@@ -181,6 +199,10 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     run(&["shell", "am", "start", "-W", "-n", "com.ofairyo.gridtimer/.MainActivity"])?;
     thread::sleep(Duration::from_secs(5));
     open_canvas(folder)?;
+    if tree()?.contains("我的画布") {
+        click_exact("客户网络")?;
+        verify("1 张卡片")?;
+    }
     open_first_card()?;
     required(&["收付款信息", "查看明细"])?;
     verify("1,220.00")?;
