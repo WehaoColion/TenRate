@@ -258,15 +258,20 @@ def foreground_ok():
     return match is None or PACKAGE in match.group(0) or "com.google.android.inputmethod" in match.group(0)
 
 def open_app():
-    safe_adb("shell","am","start","-W","-n",ACTIVITY,timeout=40)
-    time.sleep(2.2)
-    for _ in range(4):
-        x=get_xml()
-        if any(p in x for p in ("Allow tenfold", "Allow notifications", "发送通知")):
-            if not click(["Allow","允许","允许通知"]): break
-        elif any(p in x for p in ("Pixel Launcher isn't responding","Pixel Launcher isn")):
-            if not click(["Close app","关闭应用"]): break
-        else: break
+    """Relaunch explicitly and verify the actual foreground XML, not pidof alone."""
+    for attempt in range(3):
+        result = safe_adb("shell","am","start","-W","-n",ACTIVITY,timeout=40)
+        time.sleep(1.5)
+        xml = get_xml()
+        if notification_permission(xml):
+            xml = dismiss_notification_permission(xml)
+        if screen_owner(xml) == PACKAGE:
+            return True
+        errors.append("重新启动 App 后仍不是本应用：第"+str(attempt+1)+
+                      "次；前台包名="+screen_owner(xml)+"；启动输出="+result[:120])
+        if attempt == 1:
+            safe_adb("shell","am","force-stop",PACKAGE)
+    return False
 
 @lru_cache(maxsize=1)
 def screen_height():
@@ -317,44 +322,56 @@ def root_module(xml):
     return None
 
 def at_module(module):
+    """Recover from editor, external activity or launcher without Back on Home."""
     if module not in MODULES:
         raise RuntimeError("未知模块："+module)
-    if not app_alive() or not foreground_ok():
+    if not app_alive():
         open_app()
-    for attempt in range(12):
+    for attempt in range(16):
         xml=get_xml()
-        if not xml:
-            open_app()
-            continue
         if notification_permission(xml):
-            xml = dismiss_notification_permission(xml)
-        if screen_owner(xml) != PACKAGE:
-            back()
+            xml=dismiss_notification_permission(xml)
+        owner=screen_owner(xml)
+        if owner != PACKAGE:
+            # Back on Pixel Launcher cannot restore TenRate. Launch the Activity.
+            if "documentsui" in owner.lower() or "permissioncontroller" in owner.lower():
+                back()
+                xml=get_xml()
+            if screen_owner(xml) != PACKAGE:
+                open_app()
             continue
-        if root_module(xml)==module and all(bottom_nav(xml).get(x) for x in MODULES):
-            return xml
         tabs=bottom_nav(xml)
+        if root_module(xml)==module and all(tabs.get(x) for x in MODULES):
+            return xml
         if tabs.get(module):
             tap_node(tabs[module])
             time.sleep(0.7)
             after=get_xml()
-            if root_module(after)==module:
+            if screen_owner(after)==PACKAGE and root_module(after)==module:
                 return after
-            # Compose may preserve scroll position after reselecting a tab.
+            if screen_owner(after)!=PACKAGE:
+                open_app()
+                continue
             for _ in range(2):
                 scroll_screen("up")
                 after=get_xml()
-                if root_module(after)==module:
+                if screen_owner(after)==PACKAGE and root_module(after)==module:
                     return after
-        if attempt < 4:
-            back()
-        elif attempt in (4,8):
-            # A blank editor, keyboard or modal may leave the root navigation inaccessible.
-            safe_adb("shell","am","force-stop",PACKAGE)
-            open_app()
+        if any(tabs.values()):
+            # A bottom-navigation root is not a back-stack child: Back exits App.
+            if attempt % 3 == 2:
+                safe_adb("shell","am","force-stop",PACKAGE)
+                open_app()
+            else:
+                scroll_screen("up")
         else:
-            scroll_screen("up")
+            # A real editor/modal may have a parent page to return to.
+            back()
+            if attempt in (4,9):
+                safe_adb("shell","am","force-stop",PACKAGE)
+                open_app()
     raise RuntimeError("无法返回中文模块首页："+module+
+                       "；当前前台="+screen_owner(get_xml())+
                        "；当前可见："+ "；".join(visible(get_xml())[:25]))
 
 @lru_cache(maxsize=1)
@@ -440,7 +457,7 @@ def restore_trace(module, trace, expected_signature):
                     if not tap_text([label], exact=True):
                         raise RuntimeError("找不到路径操作：" + label)
                 current = dismiss_notification_permission(get_xml())
-                if not current or screen_owner(current) != PACKAGE or not foreground_ok():
+                if not current or screen_owner(current) != PACKAGE:
                     raise RuntimeError("路径回放时丢失 App 界面")
             if body_signature(current) == expected_signature:
                 return True
@@ -482,12 +499,14 @@ def explore(module, depth, trace, budget=0):
         # The global floating timer belongs to 计时, not to Knowledge/Notes/Risk.
         if module not in ("计时", "画布") and n["label"] in ("暂停计时","继续计时","格子详情","开始计时"):
             continue
-        if not foreground_ok():
-            safe_adb("shell","am","force-stop",PACKAGE)
-            open_app()
-            break
         current=get_xml()
-        if not current: break
+        if not current or screen_owner(current)!=PACKAGE:
+            errors.append("遍历中离开应用，重新启动并回放："+module+" / "+"→".join(trace[-3:]))
+            open_app()
+            if not restore_trace(module,trace,start_identity):
+                break
+            current=get_xml()
+        if not current or screen_owner(current)!=PACKAGE: break
         if body_signature(current)!=start_identity:
             if not restore_trace(module, trace, start_identity):
                 errors.append("当前分支无法恢复，放弃而非误标："+module+" / "+"→".join(trace[-3:]))
@@ -528,12 +547,18 @@ def explore(module, depth, trace, budget=0):
                 "实际点击："+n["label"][:100])
         if depth<MAX_DEPTH and (module,body_signature(after)) not in visited:
             explore(module,depth+1,trace+[label])
-        # Back is valid only after a proven navigation to a distinct page.
+        # A child can already have returned to the bottom-navigation root.
+        # Back from that root exits the App, so replay the path instead.
         restored=False
         for _ in range(2):
             now=get_xml()
-            if now and body_signature(now)==prior:
+            if now and screen_owner(now)==PACKAGE and body_signature(now)==prior:
                 restored=True
+                break
+            if not now or screen_owner(now)!=PACKAGE:
+                open_app()
+                break
+            if any(bottom_nav(now).values()):
                 break
             back()
         if not restored:
@@ -666,7 +691,16 @@ def seed_editor(module):
         if body_signature(after)!=before:
             capture(module,"本地演示记录提交后",after,
                     "点击本地保存后确实发生页面状态变化，最终保存结果仍需复核")
-    back()
+    # Saving may already have returned to a module root. Back here used to
+    # exit TenRate into Pixel Launcher and starve every subsequent module.
+    now=get_xml()
+    if screen_owner(now)!=PACKAGE:
+        errors.append("本地编辑后离开应用，恢复真实首页："+module)
+        open_app()
+    elif not any(bottom_nav(now).values()):
+        back()
+        if screen_owner(get_xml())!=PACKAGE:
+            open_app()
 
 def import_canvas_probe():
     # Rust canvas probe uses real adb screencap. Its functional checkpoints
