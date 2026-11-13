@@ -1,3 +1,4 @@
+// v2.13.5.6 - 客户逐笔收款与历史汇总并存，不接入风控账本。
 // v2.13.5.5 - 客户收付款以独立分字段存储，不接入风控账本。
 // v2.22.49.5 Android - Encode borrowed replies and send only viewport deltas for pan/zoom.
 // v2.22.49.4 Android - Account-scoped, transactional knowledge canvases.
@@ -12,6 +13,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 #[path = "android_referral_layout.rs"]
 mod referral_layout;
+#[path = "android_canvas_money.rs"]
+mod money;
+use money::ClientCharge;
 
 // Inactive boards and unchanged graph data are shared between transactions and
 // undo entries. Panning a large board does not clone all its cards or strings.
@@ -71,6 +75,8 @@ pub struct Node {
     pub paid_cents: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_cents: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub charges: Vec<ClientCharge>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -163,6 +169,7 @@ impl Canvas {
             {
                 return Err("卡片数据无效".into());
             }
+            money::validate(node)?;
         }
         let client_ids: HashSet<&str> = self.nodes.iter()
             .filter(|n| n.kind == "client").map(|n| n.id.as_str()).collect();
@@ -614,7 +621,12 @@ fn free_card_position(canvas: &Canvas, width: f32, height: f32) -> Result<(f32, 
 }
 
 fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
-    match text(request, "op")? {
+    let operation = text(request, "op")?;
+    if matches!(operation, "addClientCharge" | "updateClientCharge" | "removeClientCharge"
+        | "addClientReceipt" | "updateClientReceipt" | "removeClientReceipt") {
+        return money::edit(canvas, request);
+    }
+    match operation {
         "rename" => canvas.title = text(request, "title")?.trim().into(),
         "addNote" | "addPage" | "addClient" => {
             if canvas.nodes.len() >= MAX_NODES {
@@ -668,6 +680,7 @@ fn edit(canvas: &mut Canvas, request: &Value) -> Result<(), String> {
                 color: "blue".into(),
                 paid_cents,
                 pending_cents,
+                charges: Vec::new(),
             });
             if !parent.is_empty() {
                 let to = canvas.nodes.last().expect("new client").id.clone();
