@@ -568,7 +568,9 @@ def seed_editor(module):
             capture(module,"金额12已写入真实输入框",get_xml(),
                     "支出项目和金额均已填写，尚未提交")
         else:
-            errors.append("风控金额未能写入真实 EditText")
+            errors.append("风控金额未能写入真实 EditText，禁止尝试保存或声称记录已提交")
+            back()
+            return
         # Only save an explicit local record, never an external transaction.
         scroll_screen("down")
         capture(module,"支出表单底部与保存入口",get_xml(),"真实滚动后的本地录入表单")
