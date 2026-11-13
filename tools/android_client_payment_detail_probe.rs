@@ -181,6 +181,8 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     verify("已支付（元）")?;
     verify("待支付（元）")?;
     snapshot(folder, "03a_原金额输入栏已保留");
+    edit(1, "560.00")?;
+    edit(2, "660.00")?;
     edit(0, "ClientDetail")?;
     run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
     required(&["创建", "Create"])?;
@@ -189,6 +191,8 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     open_first_card()?;
     snapshot(folder, "04_客户详情");
     verify("收付款明细 · 记录款项与实际收款")?;
+    verify("560.00")?;
+    verify("660.00")?;
     required(&["编辑客户"])?;
     verify("编辑客户")?;
     verify("已支付（元）")?;
@@ -197,15 +201,19 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     snapshot(folder, "04a_编辑客户明确显示收款入口");
     required(&["详细记录每笔款项和收款"])?;
     verify("收付款明细")?;
-    snapshot(folder, "05_收付款空态");
-    required(&["新增款项项目"])?;
+    snapshot(folder, "05_历史收付款");
+    required(&["整理历史金额"])?;
+    verify("整理历史金额")?;
+    verify("560.00")?;
+    verify("660.00")?;
     edit(0, "PaperService")?;
-    edit(1, "1220.00")?;
     run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
-    snapshot(folder, "06_新建款项表单");
+    snapshot(folder, "06_历史金额整理表单");
     required(&["保存", "Save"])?;
     verify("PaperService")?;
-    snapshot(folder, "07_款项已保存");
+    verify("560.00")?;
+    verify("660.00")?;
+    snapshot(folder, "07_历史整理后金额未重复");
     required(&["＋ 收款"])?;
     edit(2, "Online")?; // Amount and receipt date are prefilled.
     run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
@@ -214,7 +222,7 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     verify("已结清")?;
     verify("1,220.00")?;
     snapshot(folder, "09_收款已结清");
-    report.push_str("PASS: Restored original customer amount inputs, opened charge details from Edit Customer, and created a charge and receipt on actual Android.\n\n");
+    report.push_str("PASS: Old customer money (560/660) was reclassified as a detailed charge without increasing totals, and a subsequent 660 receipt settled it on Android.\n\n");
     required(&["完成", "Done"])?;
     run(&["shell", "am", "force-stop", APP])?;
     run(&["shell", "am", "start", "-W", "-n", "com.ofairyo.gridtimer/.MainActivity"])?;
@@ -231,7 +239,7 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     verify("1,220.00")?;
     verify("已结清")?;
     snapshot(folder, "10_重启仍保留收款");
-    report.push_str("PASS: Force-stop and reopen via Edit Customer preserved customer charge, receipt and exact amounts.\n\n");
+    report.push_str("PASS: Reopened through Edit Customer and verified the converted historical charge and receipts after forced restart.\n\n");
     Ok(())
 }
 fn main() {
