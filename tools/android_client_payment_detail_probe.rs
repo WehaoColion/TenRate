@@ -70,7 +70,9 @@ fn required(labels: &[&str]) -> Result<(), String> {
         if click(labels)? { return Ok(()); }
         thread::sleep(Duration::from_millis(450));
     }
-    Err(format!("Required button not visible: {labels:?}"))
+    let visible = elements(&tree()?).into_iter().map(|node| node.text)
+        .filter(|label| !label.is_empty()).take(35).collect::<Vec<_>>().join(" | ");
+    Err(format!("Required button not visible: {labels:?}; actual UI: {visible}"))
 }
 fn click_exact(label: &str) -> Result<(), String> {
     for _ in 0..4 {
@@ -119,14 +121,17 @@ fn open_canvas(folder: &Path) -> Result<(), String> {
         if target(&["＋ 添加第一个客户", "知识画布，", "我的画布", "＋ 添加"])?.is_some() {
             return Ok(());
         }
-        let _ = click(&["画布", "卡片与连线"])?;
+        let _ = click(&["Canvas", "Cards and links", "画布", "卡片与连线"])?;
         if target(&["＋ 添加第一个客户", "知识画布，", "我的画布", "＋ 添加"])?.is_some() {
             return Ok(());
         }
-        let _ = click(&["知识库", "知识", "Knowledge", "笔记"])?;
+        let _ = click(&["Knowledge", "知识库", "知识", "笔记"])?;
         snapshot(folder, "navigation");
     }
-    Err("Unable to reach the canvas".into())
+    let visible = elements(&tree()?).into_iter()
+        .map(|node| if !node.text.is_empty() { node.text } else { node.description })
+        .filter(|label| !label.is_empty()).take(45).collect::<Vec<_>>().join(" | ");
+    Err(format!("Unable to reach the canvas; current visible content: {visible}"))
 }
 fn open_first_card() -> Result<(), String> {
     let surface = elements(&tree()?).into_iter()
