@@ -752,7 +752,9 @@ private fun ClientMoneySheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+        // Reserve an IME-aware, bounded sheet so the primary action remains above the keyboard.
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.88f).imePadding()
+            .padding(horizontal = 20.dp).padding(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (mode != "list") TextButton(onClick = { mode = "list" }, enabled = !busy) { Text("返回") }
@@ -769,7 +771,7 @@ private fun ClientMoneySheet(
                 if (mode == "list") TextButton(onClick = onDismiss) { Text("完成") }
             }
             if (mode == "list") {
-                Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Surface(Modifier.weight(1f), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.5f),
@@ -888,7 +890,7 @@ private fun ClientMoneySheet(
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                Column(Modifier.fillMaxWidth().heightIn(max=450.dp).verticalScroll(rememberScrollState()),
+                Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
                     verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     when(mode) {
                         "charge" -> {
