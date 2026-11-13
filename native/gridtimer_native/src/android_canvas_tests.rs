@@ -1,3 +1,4 @@
+// v2.13.5.6 - 客户收款明细验证、分次支付、防重复与异常原子回滚。
 // v2.13.5.5 - 客户金额分精度、旧卡片兼容与失败回滚。
 // v2.22.49.6 - Verify independent boards reopen correctly and failed creation preserves saved state.
 // v2.22.49.5 - Verify compact replies preserve durable state and graph edits.
@@ -22,6 +23,7 @@ fn view_transactions_share_card_text_and_inactive_boards() {
             color: "blue".into(),
             paid_cents: None,
             pending_cents: None,
+            charges: Vec::new(),
         });
     }
     store.canvases.push(canvas.into());
@@ -90,6 +92,71 @@ fn customer_money_survives_legacy_reopen_comment_edit_and_failed_transaction() {
     assert_eq!(cleared["canvas"]["nodes"][0]["paidCents"], 150025);
     let note = apply(&cleared, json!({"op":"addNote","text":"普通便签"}));
     assert!(note["canvas"]["nodes"][1].get("paidCents").is_none());
+}
+
+
+#[test]
+fn client_charges_preserve_history_and_reconcile_installments_without_bookkeeping() {
+    let mut f = Fixture::new();
+    let current = f.open("client-detail-test");
+    let added = apply(&current, json!({
+        "op":"addClient","name":"于佳诺","details":"河北，石家庄",
+        "paidYuan":"560.00","pendingYuan":"660.00"
+    }));
+    let client_id = id(&added, 0).to_owned();
+    let charged = apply(&added, json!({
+        "op":"addClientCharge","id":client_id,"chargeId":"service-1",
+        "title":"数据分析服务费","totalYuan":"1220.00",
+        "serviceLocation":"石家庄","dueOn":"2026-12-01","note":"分期结算"
+    }));
+    let n = &charged["canvas"]["nodes"][0];
+    assert_eq!(n["paidCents"], 56000);
+    assert_eq!(n["pendingCents"], 66000);
+    assert_eq!(n["charges"][0]["totalCents"], 122000);
+    assert!(n["charges"][0].get("receipts").is_none());
+
+    let first = json!({"op":"addClientReceipt","id":client_id,"chargeId":"service-1",
+        "receiptId":"payment-1","amountYuan":"560.00","receivedOn":"2026-11-13",
+        "location":"湖南常德","channel":"微信","note":"第一笔"});
+    let paid = apply(&charged, first.clone());
+    let restored = f.open("client-detail-test");
+    assert_eq!(restored["canvas"]["nodes"][0]["charges"][0]["receipts"][0]["amountCents"], 56000);
+    let replay = apply(&paid, first);
+    assert_eq!(paid["revision"], replay["revision"]);
+    assert_eq!(paid["canvas"], replay["canvas"]);
+
+    let final_paid = apply(&replay, json!({"op":"addClientReceipt","id":client_id,
+        "chargeId":"service-1","receiptId":"payment-2","amountYuan":"660.00",
+        "receivedOn":"2026-11-14","location":"线上","channel":"支付宝","note":"尾款"}));
+    let record = &final_paid["canvas"]["nodes"][0];
+    assert_eq!(record["charges"][0]["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(record["paidCents"], 56000);
+    assert_eq!(record["pendingCents"], 66000);
+    let parsed: Node = serde_json::from_value(record.clone()).unwrap();
+    assert_eq!(money::totals(&parsed), (178000, 66000));
+
+    let path = scoped_path(&f.root, "client-detail-test").unwrap();
+    let prior = fs::read(&path).unwrap();
+    for bad in [
+        json!({"op":"addClientReceipt","id":client_id,"chargeId":"service-1",
+            "receiptId":"payment-3","amountYuan":"0.01","receivedOn":"2026-11-15",
+            "location":"","channel":"微信","note":""}),
+        json!({"op":"updateClientCharge","id":client_id,"chargeId":"service-1",
+            "title":"服务","totalYuan":"200.00","serviceLocation":"","dueOn":"","note":""}),
+        json!({"op":"updateClientReceipt","id":client_id,"chargeId":"service-1",
+            "receiptId":"payment-2","amountYuan":"660.001","receivedOn":"2026-11-14",
+            "location":"","channel":"","note":""}),
+        json!({"op":"removeClientCharge","id":client_id,"chargeId":"service-1"})
+    ] {
+        assert!(command(final_paid["token"].as_str().unwrap(), &bad.to_string()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), prior);
+    }
+    let removed = apply(&final_paid, json!({"op":"removeClientReceipt","id":client_id,
+        "chargeId":"service-1","receiptId":"payment-2"}));
+    let record: Node = serde_json::from_value(removed["canvas"]["nodes"][0].clone()).unwrap();
+    assert_eq!(money::totals(&record), (112000, 132000));
+    let undone = apply(&removed, json!({"op":"undo"}));
+    assert_eq!(undone["canvas"], final_paid["canvas"]);
 }
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
