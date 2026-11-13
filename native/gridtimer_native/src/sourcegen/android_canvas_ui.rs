@@ -1414,14 +1414,18 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                             Text(if (dialog == "clientAdd") "初始历史汇总（可不填，建议今后逐笔记录）"
                                  else "历史汇总金额 · 不包含新的逐笔记录",
                                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedTextField(value = clientPaidInput, onValueChange = { clientPaidInput = it.take(12) },
-                            label = { Text("已支付（元）") }, placeholder = { Text("0.00") },
-                            isError = !canvasMoneyValid(clientPaidInput), singleLine = true, modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
-                        OutlinedTextField(value = clientPendingInput, onValueChange = { clientPendingInput = it.take(12) },
-                            label = { Text("待支付（元）") }, placeholder = { Text("0.00") },
-                            isError = !canvasMoneyValid(clientPendingInput), singleLine = true, modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(value = clientPaidInput, onValueChange = { clientPaidInput = it.take(12) },
+                                label = { Text("已支付（元）") }, placeholder = { Text("0.00") },
+                                isError = !canvasMoneyValid(clientPaidInput), singleLine = true, modifier = Modifier.weight(1f),
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
+                            OutlinedTextField(value = clientPendingInput, onValueChange = { clientPendingInput = it.take(12) },
+                                label = { Text("待支付（元）") }, placeholder = { Text("0.00") },
+                                isError = !canvasMoneyValid(clientPendingInput), singleLine = true, modifier = Modifier.weight(1f),
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
+                        }
                         Text(if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) "金额最多九位整数和两位小数" else "历史汇总独立保存，不与逐笔明细重复登记，不进入风控账本",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (!canvasMoneyValid(clientPaidInput) || !canvasMoneyValid(clientPendingInput)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
