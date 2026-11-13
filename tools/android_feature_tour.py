@@ -305,6 +305,10 @@ def body_signature(xml):
         value=re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b","<时间>",label)
         value=re.sub(r"\b\d+\s*(?:分|秒|小时|m|h)\b","<时长>",value)
         value=re.sub(r"\d+(?:\.\d+)?%","<百分比>",value)
+        # A list badge changing from 6 张 to 7 张 without a newly visible
+        # item is not a new demonstrable feature state. Keep canvas card and
+        # relationship counts intact: those do prove distinct business states.
+        value=re.sub(r"^\d+\s*张$","<列表数量>张",value)
         if value not in stable: stable.append(value)
     return hashlib.sha256("\u241e".join(stable[:100]).encode("utf-8")).hexdigest()
 
@@ -452,7 +456,10 @@ def restore_trace(module, trace, expected_signature):
             if body_signature(current) == expected_signature:
                 return True
             for label in trace[1:]:
-                if not tap_text([label], exact=True):
+                if label == "下滑浏览":
+                    # A scroll is a real navigational step, not a tappable label.
+                    scroll_screen("down")
+                elif not tap_text([label], exact=True):
                     scroll_screen("down")
                     if not tap_text([label], exact=True):
                         raise RuntimeError("找不到路径操作：" + label)
@@ -478,16 +485,9 @@ def explore(module, depth, trace, budget=0):
     visited.add(sig)
     candidates=action_candidates(screen,module)
 
-    if depth<3:
-        scroll_screen("down")
-        scrolled=get_xml()
-        capture(module,"下滑查看"+(trace[-1] if trace else "列表"),scrolled,"滚动后真实视图")
-        if body_signature(scrolled)!=start_identity:
-            scroll_screen("up")
-            screen=get_xml()
-        else:
-            scroll_screen("up")
-
+    # Explore the original screen first. Previously an eager scroll followed
+    # by an imperfect reverse swipe changed the root signature and prevented
+    # all Timer actions from being tried (only one Timer screenshot survived).
     for n in candidates:
         if (time.monotonic() >= module_deadline.get(module, float('inf')) or
                 num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE):
@@ -567,6 +567,26 @@ def explore(module, depth, trace, budget=0):
                 errors.append("页面返回和路径回放均失败："+module+" / "+label)
                 # Do not tag unknown screens as this module.
                 break
+
+    # Scrolled content is a separate, genuinely reachable state. Traverse it
+    # only after the unscrolled actions, so a failed reverse swipe cannot
+    # starve the root's Start/Details controls. Replay this exact swipe later.
+    if (depth < 2 and time.monotonic() < module_deadline.get(module, float('inf'))
+            and num < MAX_TOTAL and module_counts.get(module, 0) < MAX_PER_MODULE):
+        current = get_xml()
+        if screen_owner(current) == PACKAGE and body_signature(current) != start_identity:
+            if not restore_trace(module, trace, start_identity):
+                return
+            current = get_xml()
+        if screen_owner(current) == PACKAGE and body_signature(current) == start_identity:
+            scroll_screen("down")
+            scrolled = get_xml()
+            if screen_owner(scrolled) == PACKAGE and body_signature(scrolled) != start_identity:
+                capture(module, "下滑查看" + (trace[-1] if trace else "列表"),
+                        scrolled, "滚动后真实视图")
+                if (depth < MAX_DEPTH and
+                        (module, body_signature(scrolled)) not in visited):
+                    explore(module, depth + 1, trace + ["下滑浏览"])
 
 def at_canvas():
     # Canvas is a nested route under Knowledge, not a fifth bottom-navigation module.
