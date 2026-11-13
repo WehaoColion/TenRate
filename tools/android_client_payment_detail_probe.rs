@@ -187,14 +187,14 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     edit(1, "1220.00")?;
     run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
     snapshot(folder, "06_新建款项表单");
-    required(&["保存"])?;
+    required(&["保存", "Save"])?;
     verify("PaperService")?;
     snapshot(folder, "07_款项已保存");
     required(&["＋ 收款"])?;
     edit(2, "Online")?; // Amount and receipt date are prefilled.
     run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
     snapshot(folder, "08_收款表单");
-    required(&["保存"])?;
+    required(&["保存", "Save"])?;
     verify("已结清")?;
     verify("1,220.00")?;
     snapshot(folder, "09_收款已结清");
