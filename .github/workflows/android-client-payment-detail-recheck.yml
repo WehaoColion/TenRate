@@ -1,0 +1,78 @@
+name: Android client payment detail API35 signed APK recheck
+
+on:
+  push:
+    branches: [feat/android-client-payment-ledger-v2.13.5.6]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-client-payment-detail-recheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    name: Exercise actual customer payment UI in Android API35
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate unchanged app and retrieve immutable signed APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          signed_sha=3f10aa33bc8a74f2dfa905bc7130d04be98f0457
+          signed_run=43354765847
+          gh api "repos/$GITHUB_REPOSITORY/compare/$signed_sha...$GITHUB_SHA" \
+            | jq -e '.files | length > 0 and all(.[]; .filename == "tools/android_client_payment_detail_probe.rs" or .filename == ".github/workflows/android-client-payment-detail-recheck.yml")' >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$signed_run" \
+            | jq -e --arg sha "$signed_sha" '.head_sha == $sha and .status == "completed"' >/dev/null
+          mkdir -p signed
+          gh run download "$signed_run" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed
+          cd signed
+          tr -d '\r' < tenfold_v2.13.5.6.apk.sha256 | sha256sum -c -
+      - name: Compile Rust UI probe
+        shell: bash
+        run: rustc --edition=2021 -O -D warnings tools/android_client_payment_detail_probe.rs -o android_client_payment_detail_probe
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Install signed APK, record client payment, restart, verify
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed/tenfold_v2.13.5.6.apk
+            ./android_client_payment_detail_probe client_payment_detail_evidence
+      - name: Show report
+        if: always()
+        shell: bash
+        run: |
+          if test -f client_payment_detail_evidence/report.md; then
+            cat client_payment_detail_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No emulator report was produced" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: client-payment-detail-api35-recheck
+          path: client_payment_detail_evidence/
+          if-no-files-found: warn
+          retention-days: 21
