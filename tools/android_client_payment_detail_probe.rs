@@ -199,7 +199,7 @@ fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
     verify("1,220.00")?;
     snapshot(folder, "09_收款已结清");
     report.push_str("PASS: New client, charge project, received RMB amount and payment details were created on the actual emulator.\n\n");
-    required(&["完成"])?;
+    required(&["完成", "Done"])?;
     run(&["shell", "am", "force-stop", APP])?;
     run(&["shell", "am", "start", "-W", "-n", "com.ofairyo.gridtimer/.MainActivity"])?;
     thread::sleep(Duration::from_secs(5));
