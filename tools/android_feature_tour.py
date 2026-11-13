@@ -33,9 +33,13 @@ seen = set()
 seen_png = set()
 seen_app_pixels = set()
 module_counts = {}
-MAX_PER_MODULE = 235
+MAX_PER_MODULE = 210
 MAX_TOTAL = 850
-MAX_DEPTH = 7
+MAX_DEPTH = 4
+# Fair-share exploration: one deep module must never starve the other three.
+MODULE_BUDGET_SECONDS = 38 * 60
+CANVAS_BUDGET_SECONDS = 25 * 60
+module_deadline = {}
 DUMP = "/sdcard/feature_tour.xml"
 
 def adb(*args, timeout=22, binary=False):
@@ -134,6 +138,15 @@ def image_bytes():
     errors.append("真实截图画面为空白或全黑：连续5次重试后拒绝入库；UI XML 不等于实际像素")
     return b""
 
+def write_index():
+    """Durable checkpoint after each real capture, including a timed-out tour."""
+    index = ROOT / "操作说明与截图索引.csv"
+    with index.open("w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(["序号","功能模块","操作说明","截图相对路径","验证说明","屏幕可见文字摘录"])
+        writer.writerows(rows)
+
+
 def capture(module, action, xml=None, detail="", force=False):
     global num
     if num>=MAX_TOTAL: return False
@@ -173,6 +186,7 @@ def capture(module, action, xml=None, detail="", force=False):
     labels=visible(xml)
     rows.append([num,module,action,str(Path("截图")/clean(module)/(stem+".png")),
                  detail or "Android 35 实际界面截图", "；".join(labels[:12])[:360]])
+    write_index()
     print("CAPTURE",num,module,action,flush=True)
     return True
 
@@ -359,7 +373,7 @@ def action_candidates(xml,module):
     def score(n):
         label=n["label"]
         return (0 if any(w in label for w in priority) else 1, n["y"],n["x"])
-    return sorted(found,key=score)[:60]
+    return sorted(found,key=score)[:16]
 
 def restore_trace(module, trace, expected_signature):
     """Replay the proven path from the module root when Back cannot restore a page.
@@ -386,7 +400,8 @@ def restore_trace(module, trace, expected_signature):
 
 
 def explore(module, depth, trace, budget=0):
-    if depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE:
+    if (time.monotonic() >= module_deadline.get(module, float('inf')) or
+            depth>MAX_DEPTH or num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE):
         return
     screen=get_xml()
     if not screen: return
@@ -407,7 +422,13 @@ def explore(module, depth, trace, budget=0):
             scroll_screen("up")
 
     for n in candidates:
-        if num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE: break
+        if (time.monotonic() >= module_deadline.get(module, float('inf')) or
+                num>=MAX_TOTAL or module_counts.get(module,0)>=MAX_PER_MODULE):
+            break
+        # Repeating the same label in a nested path generated many cosmetic
+        # variants of the Notes editor while starving Knowledge and Risk.
+        if n["label"] in trace[1:]:
+            continue
         # The global floating timer belongs to 计时, not to Knowledge/Notes/Risk.
         if module not in ("计时", "画布") and n["label"] in ("暂停计时","继续计时","格子详情","开始计时"):
             continue
@@ -489,11 +510,16 @@ def use_latin_ime():
             return name
     return "当前输入法（将尝试提交候选）"
 
-def committed_edit_text(expected):
+def committed_edit_text(expected, index=None):
+    """Verify a committed value in the intended real EditText, not a Gboard candidate."""
     xml=get_xml()
-    return any(n["class_"].endswith("EditText") and
-               n["text"].replace(" ","").lower()==expected.lower()
-               for n in nodes(xml))
+    fields=[n for n in nodes(xml) if n["class_"].endswith("EditText")
+            and n["bounds"][2]-n["bounds"][0]>70]
+    if index is not None:
+        if index>=len(fields): return False
+        fields=[fields[index]]
+    return any(n["text"].strip().replace(" ","").lower()==expected.lower()
+               for n in fields)
 
 def fill_editor_field(index,value):
     xml=get_xml()
@@ -503,14 +529,14 @@ def fill_editor_field(index,value):
     tap_node(edits[index])
     safe_adb("shell","input","text",value)
     time.sleep(0.55)
-    if committed_edit_text(value): return True
+    if committed_edit_text(value,index): return True
     # Gboard composition can remain in the suggestion strip until committed.
     safe_adb("shell","input","keyevent","66")
     time.sleep(0.4)
-    if committed_edit_text(value): return True
+    if committed_edit_text(value,index): return True
     safe_adb("shell","input","keyevent","61")
     time.sleep(0.4)
-    return committed_edit_text(value)
+    return committed_edit_text(value,index)
 
 def seed_editor(module):
     # Seed only local, disposable records. Verify the actual EditText, never the
@@ -537,12 +563,35 @@ def seed_editor(module):
         return
     capture(module,"演示文本已写入真实输入框",get_xml(),
             "UI XML EditText.text 已核实 GalleryDemo，非键盘候选")
+    # The first field is a title in Notes/Knowledge. A title-only page is not
+    # evidence that the actual body editor or note content works.
+    if module in ("便签","知识"):
+        actual_fields=[n for n in nodes(get_xml()) if n["class_"].endswith("EditText")
+                       and n["bounds"][2]-n["bounds"][0]>70]
+        if len(actual_fields)<2:
+            errors.append("编辑器只有一个可见输入框，未伪造正文已输入状态："+module)
+            back()
+            return
+        body_ok=fill_editor_field(1,"GalleryBodyDemo")
+        title_ok=committed_edit_text("GalleryDemo",0)
+        body_verified=committed_edit_text("GalleryBodyDemo",1)
+        if not (body_ok and title_ok and body_verified):
+            errors.append("标题或正文未同时提交到各自真实 EditText："+module+
+                          "；标题="+str(title_ok)+"，正文="+str(body_verified))
+            # Never proceed to a save action or claim a completed note/page.
+            back()
+            return
+        capture(module,"标题与正文分别写入真实输入框",get_xml(),
+                "UI XML 逐字段核实：标题 GalleryDemo；正文 GalleryBodyDemo；"
+                "两个 EditText 均已提交，尚未证明持久化")
     if module=="风控":
         if fill_editor_field(1,"12"):
             capture(module,"金额12已写入真实输入框",get_xml(),
                     "支出项目和金额均已填写，尚未提交")
         else:
-            errors.append("风控金额未能写入真实 EditText")
+            errors.append("风控金额未能写入真实 EditText，禁止尝试保存或声称记录已提交")
+            back()
+            return
         # Only save an explicit local record, never an external transaction.
         scroll_screen("down")
         capture(module,"支出表单底部与保存入口",get_xml(),"真实滚动后的本地录入表单")
@@ -605,6 +654,7 @@ def main():
     visited=set()
     IMAGES.mkdir(parents=True,exist_ok=True)
     HIERARCHY.mkdir(parents=True,exist_ok=True)
+    write_index()  # The CSV exists even if the emulator tour times out.
     safe_adb("wait-for-device",timeout=90)
     pkg=safe_adb("shell","dumpsys","package",PACKAGE,timeout=25)
     version=re.search(r"versionName=([^\s]+)",pkg)
@@ -642,6 +692,8 @@ def main():
                     "说明":"已逐个进入并核对四个不同模块的真实正文界面"},ensure_ascii=False,indent=2),encoding="utf-8")
     # Only after the navigation gate has passed may deeper exploration begin.
     for module in MODULES:
+        module_deadline[module] = time.monotonic() + MODULE_BUDGET_SECONDS
+        print(f"MODULE START {module}; time budget {MODULE_BUDGET_SECONDS}s", flush=True)
         try:
             xml=at_module(module)
             if body_signature(xml)!=module_root_signatures[module]:
@@ -649,12 +701,15 @@ def main():
             seed_editor(module)
             xml=at_module(module)
             explore(module,0,[module])
+            print(f"MODULE END {module}; captured {module_counts.get(module,0)}; "
+                  f"deadline reached {time.monotonic() >= module_deadline[module]}", flush=True)
         except Exception as ex:
             errors.append("模块 "+module+" 探索异常："+str(ex))
             (ROOT/"模块导航问题.txt").write_text("\n".join(errors),encoding="utf-8")
             # Keep already captured valid modules as partial evidence. Do not forge coverage.
             continue
     # Canvas is a distinct nested route; capture its actual list and editing surface.
+    module_deadline["画布"] = time.monotonic() + CANVAS_BUDGET_SECONDS
     try:
         at_module("知识")
         if click(["画布","卡片与连线"]):
@@ -672,11 +727,7 @@ def main():
     except Exception as ex:
         errors.append("重启异常："+str(ex))
     import_canvas_probe()
-    (ROOT/"操作说明与截图索引.csv").write_text("",encoding="utf-8-sig")
-    with (ROOT/"操作说明与截图索引.csv").open("w",newline="",encoding="utf-8-sig") as f:
-        writer=csv.writer(f)
-        writer.writerow(["序号","功能模块","操作说明","截图相对路径","验证说明","屏幕可见文字摘录"])
-        writer.writerows(rows)
+    write_index()
     (ROOT/"未覆盖与异常记录.txt").write_text("\n".join(errors) or "无自动化执行错误",encoding="utf-8")
     README=("十倍 Android 2.13.5.1 模拟器交互截图\n"
             "===================================\n"
