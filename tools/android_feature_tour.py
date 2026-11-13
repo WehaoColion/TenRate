@@ -144,7 +144,11 @@ def real_frame(data):
         image=Image.open(io.BytesIO(data)).convert("RGB")
         w,h=image.size
         if w<300 or h<500: return False
-        center=image.crop((w//8,h//8,7*w//8,7*h//8)).resize((48,64))
+        # Match the independent audit's actual App-body crop. The older
+        # frame check included the top notification banner and accepted an
+        # expanded Android notification shade with an entirely black body.
+        app=image.crop((0,int(h*.075),w,int(h*.925)))
+        center=app.crop((w//8,h//8,7*w//8,int(h*.75))).resize((48,64))
         stats=ImageStat.Stat(center)
         return not (max(stats.mean)<8 and max(stats.stddev)<4)
     except Exception:
@@ -164,6 +168,12 @@ def image_bytes():
         try:
             data=adb("exec-out","screencap","-p",timeout=20,binary=True)
             if real_frame(data): return data
+            if attempt == 0:
+                # A real screenshot revealed the system notification shade
+                # over TenRate although uiautomator still reported the App
+                # package. Collapse only the system shade; never accept it as
+                # a feature state or change the App's data.
+                safe_adb("shell","cmd","statusbar","collapse",timeout=15)
         except Exception as ex:
             if attempt==4: errors.append(str(ex))
         time.sleep(0.85)
@@ -565,8 +575,19 @@ def explore(module, depth, trace, budget=0):
             restored=restore_trace(module,trace,prior)
             if not restored:
                 errors.append("页面返回和路径回放均失败："+module+" / "+label)
-                # Do not tag unknown screens as this module.
-                break
+                # Timer Start/Pause and locally saved records are persistent
+                # transitions: replaying '开始' from an already-running timer
+                # cannot recreate the former screen. Do not fake replay.
+                # Recover the actual module root and explore its *new* state
+                # instead of abandoning all remaining valid routes.
+                try:
+                    recovered=at_module(module)
+                    recovered_sig=body_signature(recovered)
+                    if (module,recovered_sig) not in visited:
+                        explore(module,0,[module])
+                except Exception as ex:
+                    errors.append("状态变更后无法恢复模块根页："+module+" / "+str(ex)[:120])
+                return
 
     # Scrolled content is a separate, genuinely reachable state. Traverse it
     # only after the unscrolled actions, so a failed reverse swipe cannot
