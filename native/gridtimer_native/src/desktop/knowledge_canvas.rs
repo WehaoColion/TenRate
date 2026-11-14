@@ -66,10 +66,10 @@ struct KnowledgeCanvasEdge {
     relation: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 fn windows_canvas_default_template() -> String { "blank".into() }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 struct KnowledgeCanvas {
     id: String,
     title: String,
