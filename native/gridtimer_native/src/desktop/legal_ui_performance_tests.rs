@@ -127,8 +127,7 @@ fn legal_preparation_drops_changed_cancelled_and_other_workspace_results() {
             cancellation: Arc::clone(&client.desktop_ui.legal_risk.cancel),
             digest: "test".into(),
             policy_digest: DesktopLegalKnowledgeExclusions::default().digest(),
-            policy_digest: DesktopLegalKnowledgeExclusions::default().digest(),
-        result: Ok(Arc::clone(&prepared)),
+            result: Ok(Arc::clone(&prepared)),
         })
         .unwrap();
         client.poll_legal_prepared();
