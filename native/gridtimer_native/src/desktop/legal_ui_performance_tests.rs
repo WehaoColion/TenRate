@@ -126,7 +126,9 @@ fn legal_preparation_drops_changed_cancelled_and_other_workspace_results() {
             version: client.data_version + u64::from(case == 0),
             cancellation: Arc::clone(&client.desktop_ui.legal_risk.cancel),
             digest: "test".into(),
-            result: Ok(Arc::clone(&prepared)),
+            policy_digest: DesktopLegalKnowledgeExclusions::default().digest(),
+            policy_digest: DesktopLegalKnowledgeExclusions::default().digest(),
+        result: Ok(Arc::clone(&prepared)),
         })
         .unwrap();
         client.poll_legal_prepared();
@@ -305,6 +307,7 @@ fn legal_reopened_page_rejects_cancelled_store_and_preparation_payloads() {
         version: client.data_version,
         cancellation: preparation_cancel,
         digest: "same-version".into(),
+        policy_digest: DesktopLegalKnowledgeExclusions::default().digest(),
         result: Ok(prepared),
     })
     .unwrap();
