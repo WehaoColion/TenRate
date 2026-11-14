@@ -1394,10 +1394,43 @@ impl TimerWindowsClient {
             let edges = canvas.edges.iter().map(|e| (e.from.clone(),e.to.clone())).collect::<Vec<_>>();
             (bounds, viewport, canvas.id.clone(), positions, edges)
         };
-        let panel = egui::Rect::from_min_size(
-            board_rect.right_bottom() - egui::vec2(220.0, 150.0),
-            egui::vec2(206.0, 136.0),
-        );
+        // Prefer unobstructed corners. A fixed bottom-right overview can hide
+        // the very customer card the user is trying to locate.
+        let panel_size = egui::vec2(206.0, 136.0);
+        let candidates = [
+            egui::Rect::from_min_size(
+                board_rect.right_bottom() - egui::vec2(220.0, 150.0), panel_size,
+            ),
+            egui::Rect::from_min_size(
+                board_rect.left_bottom() + egui::vec2(14.0, -150.0), panel_size,
+            ),
+            egui::Rect::from_min_size(
+                board_rect.right_top() + egui::vec2(-220.0, 14.0), panel_size,
+            ),
+            egui::Rect::from_min_size(
+                board_rect.left_top() + egui::vec2(14.0, 14.0), panel_size,
+            ),
+        ];
+        let world_to_board = board_rect.width() / viewport.width();
+        let overlap = |candidate: egui::Rect| {
+            node_positions.iter().map(|(_, _, world)| {
+                let screen = egui::Rect::from_min_max(
+                    board_rect.center()
+                        + (world.min - viewport.center()) * world_to_board,
+                    board_rect.center()
+                        + (world.max - viewport.center()) * world_to_board,
+                ).expand(8.0);
+                let intersection = screen.intersect(candidate);
+                if intersection.is_positive() { intersection.area() } else { 0.0 }
+            }).sum::<f32>()
+        };
+        let panel = candidates.into_iter().enumerate()
+            .min_by(|(left_index, left), (right_index, right)| {
+                (overlap(*left) + *left_index as f32 * 3.0)
+                    .total_cmp(&(overlap(*right) + *right_index as f32 * 3.0))
+            })
+            .map(|(_, rect)| rect)
+            .expect("four overview placements");
         let content = egui::Rect::from_min_max(
             panel.left_top() + egui::vec2(10.0, 27.0),
             panel.right_bottom() - egui::vec2(10.0, 10.0),
