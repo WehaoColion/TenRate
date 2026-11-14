@@ -527,7 +527,7 @@ impl TimerWindowsClient {
                 canvas.center_x + (anchor.x - board_rect.center().x) / canvas.zoom,
                 canvas.center_y + (anchor.y - board_rect.center().y) / canvas.zoom,
             );
-            let next_zoom = (canvas.zoom * (scroll_y * 0.0015).exp()).clamp(0.35, 2.5);
+            let next_zoom = (canvas.zoom * (scroll_y * 0.0015).exp()).clamp(0.01, 2.5);
             if (next_zoom - canvas.zoom).abs() > f32::EPSILON {
                 canvas.zoom = next_zoom;
                 canvas.center_x = world_before.x - (anchor.x - board_rect.center().x) / next_zoom;
@@ -565,6 +565,7 @@ impl TimerWindowsClient {
         }
         self.draw_knowledge_canvas_edges(ui, board_rect, canvas_index);
         self.draw_knowledge_canvas_nodes(ui, board_rect, canvas_index);
+        self.ui_knowledge_canvas_customer_inspector(ui.ctx());
         if ui.is_enabled() {
             self.handle_knowledge_canvas_shortcuts(ui.ctx());
         }
@@ -797,6 +798,7 @@ impl TimerWindowsClient {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             self.ui_knowledge_canvas_add_page_menu(ui);
+            self.ui_knowledge_canvas_add_customer_menu(ui);
             if ui
                 .button("便签")
                 .on_hover_text("在画布上写下一个想法")
@@ -868,7 +870,33 @@ impl TimerWindowsClient {
             {
                 let state = &mut self.desktop_ui.knowledge_canvas;
                 state.connect_mode = !state.connect_mode;
+                state.referral_mode = false;
                 state.connect_from = None;
+            }
+            if ui.button(if self.desktop_ui.knowledge_canvas.referral_mode {
+                "推荐连接中"
+            } else {
+                "推荐连接"
+            }).on_hover_text("先点推荐人，再点被推荐客户；只允许唯一上级且不能成环").clicked() {
+                let state = &mut self.desktop_ui.knowledge_canvas;
+                state.referral_mode = !state.referral_mode;
+                state.connect_mode = state.referral_mode;
+                state.connect_from = None;
+            }
+            if ui.button("推荐层级排布").clicked() {
+                self.knowledge_canvas_arrange_referrals();
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(egui::Id::new("knowledge_canvas_fit_requested"), true)
+                });
+            }
+            if ui.button("新客户画布").clicked() {
+                if self.desktop_ui.knowledge_canvas.store.new_canvas("客户网络") {
+                    if let Some(canvas) = self.desktop_ui.knowledge_canvas.store.active_mut() {
+                        canvas.template = "customer_network".into();
+                    }
+                    self.reset_knowledge_canvas_interaction();
+                    self.mark_knowledge_canvas_dirty();
+                }
             }
             if ui
                 .button("自动排布")
@@ -957,6 +985,7 @@ impl TimerWindowsClient {
         state.selected_edge = None;
         state.connect_from = None;
         state.connect_mode = false;
+        state.referral_mode = false;
         state.title_canvas_id.clear();
     }
 
@@ -1340,6 +1369,9 @@ impl TimerWindowsClient {
                         width: node.width,
                         height: node.height,
                         color: node.color.clone(),
+                        paid_cents: node.paid_cents,
+                        pending_cents: node.pending_cents,
+                        charges: Vec::new(),
                     };
                     (display, rect)
                 })
@@ -1495,6 +1527,24 @@ impl TimerWindowsClient {
                         );
                     }
                 }
+                KnowledgeCanvasNodeKind::Client => {
+                    let original = &self.desktop_ui.knowledge_canvas.store.canvases[canvas_index].nodes[index];
+                    let title = original.text.lines().next().unwrap_or("客户");
+                    painter.text(rect.min + egui::vec2(13.0, header_height + 12.0),
+                        egui::Align2::LEFT_TOP,
+                        knowledge_canvas_ellipsis(title, 18),
+                        egui::FontId::proportional((15.0 * zoom).clamp(11.0, 16.0)), p.text);
+                    if zoom >= 0.35 {
+                        if let Ok((paid, pending)) = gridtimer_native::android_canvas::checked_client_totals(
+                            &knowledge_canvas_customer_to_core(original)
+                        ) {
+                            painter.text(rect.min + egui::vec2(13.0, header_height + 40.0),
+                                egui::Align2::LEFT_TOP,
+                                format!("已付 {}  待付 {}", customer_money_label(paid), customer_money_label(pending)),
+                                egui::FontId::proportional(10.5), p.muted);
+                        }
+                    }
+                }
                 KnowledgeCanvasNodeKind::Note => {
                     let body_rect = egui::Rect::from_min_max(
                         rect.min + egui::vec2(13.0, header_height + 4.0),
@@ -1579,8 +1629,18 @@ impl TimerWindowsClient {
                                     id: random_desktop_identifier("knowledge-canvas-edge"),
                                     from: source,
                                     to: id.clone(),
+                                    relation: Some(if self.desktop_ui.knowledge_canvas.referral_mode {
+                                        "referral".into()
+                                    } else {
+                                        "link".into()
+                                    }),
                                 });
-                            changed = true;
+                            if let Err(error) = self.desktop_ui.knowledge_canvas.store.validate() {
+                                self.desktop_ui.knowledge_canvas.store.canvases[canvas_index].edges.pop();
+                                self.status = error;
+                            } else {
+                                changed = true;
+                            }
                         }
                     }
                 } else {
@@ -1722,7 +1782,7 @@ impl TimerWindowsClient {
 
     fn knowledge_canvas_zoom_by(&mut self, factor: f32) {
         if let Some(canvas) = self.desktop_ui.knowledge_canvas.store.active_mut() {
-            canvas.zoom = (canvas.zoom * factor).clamp(0.35, 2.5);
+            canvas.zoom = (canvas.zoom * factor).clamp(0.01, 2.5);
             self.mark_knowledge_canvas_dirty();
         }
     }
@@ -1743,11 +1803,13 @@ impl TimerWindowsClient {
                     .map(|(index, _)| index),
             );
             order.extend(
-                canvas
-                    .nodes
-                    .iter()
-                    .enumerate()
+                canvas.nodes.iter().enumerate()
                     .filter(|(_, node)| node.kind == KnowledgeCanvasNodeKind::Note)
+                    .map(|(index, _)| index),
+            );
+            order.extend(
+                canvas.nodes.iter().enumerate()
+                    .filter(|(_, node)| node.kind == KnowledgeCanvasNodeKind::Client)
                     .map(|(index, _)| index),
             );
             let columns = (count as f32).sqrt().ceil() as usize;
@@ -1812,7 +1874,7 @@ impl TimerWindowsClient {
             canvas.center_y = (top + bottom) * 0.5;
             canvas.zoom = ((rect.width() - 100.0) / width)
                 .min((rect.height() - 100.0) / height)
-                .clamp(0.35, 1.7);
+                .clamp(0.01, 1.7);
         }
         self.mark_knowledge_canvas_dirty();
     }
@@ -1824,6 +1886,7 @@ impl TimerWindowsClient {
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             let state = &mut self.desktop_ui.knowledge_canvas;
             state.connect_mode = false;
+            state.referral_mode = false;
             state.connect_from = None;
         } else if ctx.input(|input| {
             input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace)
