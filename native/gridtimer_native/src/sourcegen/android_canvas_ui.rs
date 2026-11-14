@@ -1103,8 +1103,8 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                 Text("我的画布", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 Text("${boards.size} 张", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             }
-            Text("为想法建立联系", style = MaterialTheme.typography.titleMedium)
-            Text("自由创建画布，或从模板开始。模板不会限制卡片与连线。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("新建画布", style = MaterialTheme.typography.titleMedium)
+            Text("从空白画布开始，或选择客户网络模板。普通卡片与连线始终可用。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(onClick = { createCanvas("blank") }, enabled = model.canCreateBoard, modifier = Modifier.weight(1f).height(124.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
@@ -1263,17 +1263,18 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                     if (selectedNode.kind == "client") OutlinedButton(onClick = { connectRelation = "referral"; connectFrom = selectedNode.id; selected = null }, enabled = ready && (canvas?.nodes?.count { it.kind == "client" } ?: 0) > 1, modifier = Modifier.weight(1f)) { Text("绑定推荐") }
                     OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "edges"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("管理连线") }
                     }
+                    Text("更多设置", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
+                    TextButton(onClick = {
                         val isLarge = selectedNode.width >= 350f
                         val targetWidth = if (isLarge) { if (selectedNode.kind == "client") 192f else 256f } else 384f
                         val targetHeight = if (isLarge) { if (selectedNode.kind == "client") 132f else 168f } else 252f
                         if (model.submit(canvasRequest("resize") { put("id",selectedNode.id); put("width",targetWidth); put("height",targetHeight) })) selected = null
                     }, enabled = ready, modifier = Modifier.weight(1f)) { Text(if (selectedNode.width >= 350f) "缩小卡片" else "放大卡片") }
-                    OutlinedButton(onClick = { editTargetId = selectedNode.id; panel = "colors"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("颜色") }
+                    TextButton(onClick = { editTargetId = selectedNode.id; panel = "colors"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("颜色") }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { editTargetId = selectedNode.id; dialog = "deleteNode"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("移除卡片") }
+                    TextButton(onClick = { editTargetId = selectedNode.id; dialog = "deleteNode"; selected = null }, enabled = ready, modifier = Modifier.weight(1f)) { Text("移除卡片", color = MaterialTheme.colorScheme.error) }
                     }
                 }
                 Text("卡片位置、大小和连线可以自由编辑。移除卡片不会删除原知识页面。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)

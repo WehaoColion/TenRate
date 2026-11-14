@@ -186,7 +186,7 @@ private fun NoteSummaryCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     KnowledgeObjectGlyph(isFolder = trashMode, modifier = Modifier.size(34.dp))
                     Text(
-                        text = if (trashMode) "回收站" else "文档",
+                        text = if (trashMode) "回收站" else "知识",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
                     )
                 }
@@ -201,11 +201,15 @@ private fun NoteSummaryCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                FlowusIconAction(
-                    "新建页面", Icons.Rounded.Add, accent,
+                androidx.compose.material3.Button(
+                    onClick = onCreateNote,
                     modifier = Modifier.heightIn(min = 48.dp).testTag("knowledge_header_create"),
-                    onClick = onCreateNote
-                )
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+                ) {
+                    androidx.compose.material3.Icon(Icons.Rounded.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("新建页面")
+                }
                 FlowusIconAction(
                     if (trashMode) "回到文档" else "回收站 $trashCount",
                     if (trashMode) Icons.Rounded.FolderOpen else Icons.Rounded.RestoreFromTrash,
@@ -220,19 +224,18 @@ private fun NoteSummaryCard(
                     onClick = onManageFolders
                 )
             }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                FlowusPropertyBadge(label = "置顶 $pinnedCount", accent = accentFor("amber"))
-                FlowusPropertyBadge(label = "任务块 $pendingChecklistCount", accent = accentFor("green"))
-                FlowusPropertyBadge(label = "图片 $imageNoteCount", accent = accentFor("teal"))
-            }
+            Text(
+                text = "置顶 $pinnedCount   ·   任务块 $pendingChecklistCount   ·   图片 $imageNoteCount",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             // Keep the useful recent-page preview, but never let it expand the header.
             // Reuse the original privacy-aware preview accessor, not raw note content.
             latestNote?.let { note ->
                 Text(
-                    text = "最近编辑 · ${noteUpdatedLabel(note, now)} · ${note.previewBody()}",
+                    text = "最近编辑：${noteUpdatedLabel(note, now)} · ${note.previewBody()}",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall.copy(
