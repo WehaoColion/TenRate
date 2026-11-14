@@ -67,6 +67,7 @@ fn windows_canvas_duplicate_rekeys_nodes_and_edges_without_losing_content() {
         id: "edge-a".into(),
         from: "source-a".into(),
         to: "source-b".into(),
+        relation: None,
     }];
 
     assert!(store.duplicate_active());
