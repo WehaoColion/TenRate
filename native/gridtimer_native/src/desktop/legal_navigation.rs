@@ -110,7 +110,11 @@ fn desktop_legal_current_scan_note(note: &DesktopNote) -> Result<Value, String> 
     Ok(current)
 }
 
-fn desktop_legal_current_scan_snapshot(raw: &str, data: &DesktopAppData) -> Result<String, String> {
+fn desktop_legal_current_scan_snapshot(
+    raw: &str,
+    data: &DesktopAppData,
+    excluded_note_ids: &HashSet<String>,
+) -> Result<String, String> {
     let mut snapshot: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
     if let Some(notes) = snapshot.get_mut("notes").and_then(Value::as_array_mut) {
         if notes.len() != data.notes.len() {
@@ -122,6 +126,9 @@ fn desktop_legal_current_scan_snapshot(raw: &str, data: &DesktopAppData) -> Resu
             }
             *value = desktop_legal_current_scan_note(note)?;
         }
+        notes.retain(|value| !value.get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| excluded_note_ids.contains(id)));
     }
     serde_json::to_string(&snapshot).map_err(|error| error.to_string())
 }
