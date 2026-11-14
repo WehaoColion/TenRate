@@ -350,6 +350,8 @@ struct DesktopKnowledgeDirectory {
     preferences: KnowledgeDirectoryPreferences,
     order_error: String,
     request: Option<KnowledgeDirectoryRequest>,
+    exclusion_target: Option<Option<String>>,
+    exclusion_error: String,
     cache: Option<(u64, Arc<KnowledgeDirectoryIndex>)>,
 }
 impl TimerWindowsClient {
@@ -580,7 +582,18 @@ impl TimerWindowsClient {
                     }
                 });
             });
+            if parent.is_none() {
+                if ui.add_enabled(enabled, egui::Button::new("法律扫描排除设置…")).clicked() {
+                    self.desktop_ui.knowledge.directory.exclusion_target = Some(None);
+                    self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                }
+            }
             if let Some(node) = parent.and_then(|id| index.nodes.get(id)) {
+                if ui.add_enabled(enabled && !node.encrypted,
+                    egui::Button::new("法律扫描排除设置…")).clicked() {
+                    self.desktop_ui.knowledge.directory.exclusion_target = Some(Some(node.id.clone()));
+                    self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                }
                 ui.add_enabled_ui(enabled && node.writable, |ui| {
                     ui.menu_button("管理", |ui| {
                         for (label, action) in [
@@ -918,6 +931,26 @@ impl TimerWindowsClient {
                                         });
                                     }
                                     ui.menu_button("⋯", |ui| {
+                                        if ui.add_enabled(!node.encrypted && node.issue.is_none(),
+                                            egui::Button::new("法律扫描排除设置…")).clicked()
+                                        {
+                                            self.desktop_ui.knowledge.directory.exclusion_target =
+                                                Some(Some(node.id.clone()));
+                                            self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                                            ui.close_menu();
+                                        }
+                                        if !node.folder && node.has_note && node.writable
+                                            && !node.encrypted && node.issue.is_none()
+                                            && ui.button("创建同级页面副本…").clicked()
+                                        {
+                                            self.request_knowledge_directory_action(
+                                                "duplicate_page",
+                                                &random_hex_identifier(),
+                                                Some(node.id.clone()),
+                                                "",
+                                            );
+                                            ui.close_menu();
+                                        }
                                         if ui
                                             .add_enabled(
                                                 node.issue
@@ -981,7 +1014,106 @@ impl TimerWindowsClient {
             self.close_knowledge_directory();
         }
         self.ui_knowledge_directory_request(ctx, &index);
+        self.ui_knowledge_legal_exclusion_dialog(ctx, &index);
     }
+
+    fn ui_knowledge_legal_exclusion_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        index: &KnowledgeDirectoryIndex,
+    ) {
+        let Some(target) = self.desktop_ui.knowledge.directory.exclusion_target.clone() else {
+            return;
+        };
+        let path = self.desktop_legal_exclusion_path();
+        let policy = desktop_legal_read_exclusions(&path);
+        let mut cancel = false;
+        let mut confirm = false;
+        let mut open = true;
+        egui::Window::new("法律风险分析排除范围")
+            .id(egui::Id::new("knowledge_directory_legal_exclusions"))
+            .collapsible(false).resizable(false)
+            .default_width(430.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(if let Some(id) = &target {
+                    index.nodes.get(id).map_or("所选知识目录", |node| node.title.as_str())
+                } else {
+                    "整个知识模块"
+                });
+                match &policy {
+                    Ok(policy) => {
+                        let direct = match target.as_deref() {
+                            Some(id) => policy.node_ids.iter().any(|saved| saved == id),
+                            None => policy.root_excluded,
+                        };
+                        let inherited = if let Some(id) = target.as_deref() {
+                            let mut cursor = index.nodes.get(id).and_then(|node| node.parent.as_deref());
+                            let mut visited = HashSet::new();
+                            let mut inherited = policy.root_excluded;
+                            while let Some(parent) = cursor {
+                                if !visited.insert(parent) {
+                                    inherited = true;
+                                    break;
+                                }
+                                if policy.node_ids.iter().any(|saved| saved == parent) {
+                                    inherited = true;
+                                    break;
+                                }
+                                cursor = index.nodes.get(parent).and_then(|node| node.parent.as_deref());
+                            }
+                            inherited
+                        } else {
+                            false
+                        };
+                        if inherited {
+                            ui.colored_label(palette().muted, "当前范围继承上级排除，请从上级修改。");
+                        } else if direct {
+                            ui.label("此范围及下级知识资料已从未来的法律 AI 扫描中排除。");
+                            ui.label("恢复后，下次扫描将重新纳入；仍受其他上级规则约束。");
+                        } else {
+                            ui.label("确认后，此范围及其所有下级知识页与附件不再上传到法律 AI。");
+                            ui.label("设置保存在本机当前工作区，不会自动同步到 Android。");
+                        }
+                        ui.add_space(8.0);
+                        if ui.add_enabled(!inherited && self.workspace_persistence_ready
+                                && !self.workspace_edit_locked(),
+                            egui::Button::new(if direct { "确认恢复参与扫描" }
+                                else { "确认排除法律扫描" })).clicked()
+                        {
+                            confirm = true;
+                        }
+                    }
+                    Err(error) => {
+                        ui.colored_label(palette().danger, error);
+                        ui.label("无法读取排除规则时不允许修改，也不会允许发送法律资料。");
+                    }
+                }
+                if !self.desktop_ui.knowledge.directory.exclusion_error.is_empty() {
+                    ui.colored_label(palette().danger,
+                        &self.desktop_ui.knowledge.directory.exclusion_error);
+                }
+                if ui.button("关闭").clicked() { cancel = true; }
+            });
+        if confirm {
+            match self.desktop_legal_update_exclusion(target.as_deref()) {
+                Ok(excluded) => {
+                    self.status = if excluded {
+                        "法律扫描排除规则已保存，此范围将不再发送给 AI"
+                    } else {
+                        "法律扫描排除规则已更新，此范围重新允许参与扫描"
+                    }.into();
+                    self.desktop_ui.knowledge.directory.exclusion_target = None;
+                    self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                }
+                Err(error) => self.desktop_ui.knowledge.directory.exclusion_error = error,
+            }
+        } else if cancel || !open {
+            self.desktop_ui.knowledge.directory.exclusion_target = None;
+            self.desktop_ui.knowledge.directory.exclusion_error.clear();
+        }
+    }
+
     fn ui_knowledge_directory_request(
         &mut self,
         ctx: &egui::Context,
