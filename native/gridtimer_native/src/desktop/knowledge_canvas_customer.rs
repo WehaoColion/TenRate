@@ -286,9 +286,11 @@ impl TimerWindowsClient {
                         });
                     }
                     ui.small("以下客户款项只保存在知识画布，不进入风控账本。");
-                    ui.collapsing(
+                    egui::CollapsingHeader::new(
                         if d.charge_edit_id.is_empty() { "新增款项项目" } else { "正在修改款项项目" },
-                        |ui| {
+                    )
+                    .default_open(!d.charge_edit_id.is_empty())
+                    .show(ui, |ui| {
                             ui.label("款项名称");
                             ui.text_edit_singleline(&mut d.charge_title);
                             ui.horizontal(|ui| {
@@ -338,8 +340,7 @@ impl TimerWindowsClient {
                                     }
                                 });
                             }
-                        },
-                    );
+                        });
                     if !node.charges.is_empty() {
                         ui.separator();
                         ui.strong("款项与实际收款记录");
@@ -445,7 +446,11 @@ impl TimerWindowsClient {
                             ui.label("金额（元）");
                             ui.add(egui::TextEdit::singleline(&mut d.receipt_amount).desired_width(112.0));
                         });
-                        ui.label("实际日期（YYYY-MM-DD；历史金额整理前未知的日期可以留空）");
+                        ui.label(if d.receipt_edit_id.is_empty() {
+                            "实际收款日期（必填：YYYY-MM-DD）"
+                        } else {
+                            "实际收款日期（YYYY-MM-DD；历史日期原本未知时可留空）"
+                        });
                         ui.text_edit_singleline(&mut d.receipt_date);
                         ui.label("实际收款地点");
                         ui.text_edit_singleline(&mut d.receipt_location);
