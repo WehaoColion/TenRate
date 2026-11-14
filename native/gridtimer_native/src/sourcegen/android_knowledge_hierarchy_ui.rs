@@ -279,10 +279,10 @@ private fun DocumentPropertyStrip(
                     selectedContainerColor = accent.copy(alpha = 0.12f), selectedLabelColor = accent),
                 label = { Text("公式预览", maxLines = 1, softWrap = false) })
         }
-        if (pinned) androidx.compose.material3.TextButton(enabled = enabled, onClick = onOpenProperties,
-            modifier = Modifier.heightIn(min = 48.dp)) { Text("已置顶", maxLines = 1, softWrap = false) }
-        if (encrypted) androidx.compose.material3.TextButton(enabled = enabled, onClick = onOpenProperties,
-            modifier = Modifier.heightIn(min = 48.dp)) { Text("已加密", maxLines = 1, softWrap = false) }
+        if (pinned) Text("已置顶", modifier = Modifier.padding(horizontal = 6.dp),
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (encrypted) Text("已加密", modifier = Modifier.padding(horizontal = 6.dp),
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -702,7 +702,7 @@ private fun KnowledgeHierarchyInlineRow(
     Row(
         modifier = Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(11.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.20f))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f))
             .heightIn(min = 52.dp)
             .clickable(enabled = enabled && issue != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen)
             .padding(horizontal = 12.dp, vertical = 6.dp),

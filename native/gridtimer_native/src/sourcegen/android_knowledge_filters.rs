@@ -315,60 +315,66 @@ const CONTROLS: &str = r####"private fun NoteCollectionControls(
     val selectedSort = noteSortOptions().first { it.mode == sortMode }
     val hasFilters = query.isNotBlank() || quickFilter != NoteQuickFilter.ALL || selectedFolderId != null
     FlowusPanel(accent = notesAccentColor) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("显示 $resultCount / $totalCount 页", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (hasFilters) androidx.compose.material3.TextButton(onClick = onShowAll) { Text("显示全部") }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(if (hasFilters) "筛选结果 · $resultCount / $totalCount 页" else "全部文档 · $totalCount 页",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (hasFilters) androidx.compose.material3.TextButton(onClick = onShowAll) { Text("清除筛选") }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("文档库", Modifier.width(62.dp), style = MaterialTheme.typography.bodySmall)
-                Box(Modifier.weight(1f)) {
-                    androidx.compose.material3.TextButton(onClick = { openSelector = "folder" }, modifier = Modifier.fillMaxWidth()) {
-                        Text(selectedFolder?.name ?: "全部文档", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("▾")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Box {
+                    androidx.compose.material3.TextButton(onClick = { openSelector = "folder" },
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("位置 · " + (selectedFolder?.name ?: "全部"), maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        Text(" ▾")
                     }
-                    androidx.compose.material3.DropdownMenu(expanded = openSelector == "folder", onDismissRequest = { openSelector = null }) {
-                        androidx.compose.material3.DropdownMenuItem(text = { Text("全部文档 ${folderCounts[""] ?: totalCount}") }, onClick = { openSelector = null; onSelectFolder(null) })
+                    androidx.compose.material3.DropdownMenu(expanded = openSelector == "folder",
+                        onDismissRequest = { openSelector = null }) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("全部文档 ${folderCounts[""] ?: totalCount}") },
+                            onClick = { openSelector = null; onSelectFolder(null) })
                         folders.forEach { folder ->
                             val count = folderCounts[folder.id] ?: 0
                             androidx.compose.material3.DropdownMenuItem(
                                 text = { Text("${folder.name} $count") },
                                 enabled = folder.id == selectedFolderId || count > 0,
-                                onClick = { openSelector = null; onSelectFolder(folder.id) }
-                            )
+                                onClick = { openSelector = null; onSelectFolder(folder.id) })
                         }
                     }
                 }
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("类型", Modifier.width(62.dp), style = MaterialTheme.typography.bodySmall)
-                Box(Modifier.weight(1f)) {
-                    androidx.compose.material3.TextButton(onClick = { openSelector = "type" }, modifier = Modifier.fillMaxWidth()) {
-                        Text(selectedType.label, Modifier.weight(1f))
-                        Text("▾")
+                Box {
+                    androidx.compose.material3.TextButton(onClick = { openSelector = "type" },
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("类型 · ${selectedType.label}"); Text(" ▾")
                     }
-                    androidx.compose.material3.DropdownMenu(expanded = openSelector == "type", onDismissRequest = { openSelector = null }) {
+                    androidx.compose.material3.DropdownMenu(expanded = openSelector == "type",
+                        onDismissRequest = { openSelector = null }) {
                         noteQuickFilterOptions().forEach { option ->
                             val count = quickFilterCounts[option.filter] ?: 0
                             androidx.compose.material3.DropdownMenuItem(
                                 text = { Text("${option.label} $count") },
                                 enabled = option.filter == NoteQuickFilter.ALL || option.filter == quickFilter || count > 0,
-                                onClick = { openSelector = null; onSelectQuickFilter(option.filter) }
-                            )
+                                onClick = { openSelector = null; onSelectQuickFilter(option.filter) })
                         }
                     }
                 }
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("排序", Modifier.width(62.dp), style = MaterialTheme.typography.bodySmall)
-                Box(Modifier.weight(1f)) {
-                    androidx.compose.material3.TextButton(onClick = { openSelector = "sort" }, modifier = Modifier.fillMaxWidth()) {
-                        Text(selectedSort.label, Modifier.weight(1f))
-                        Text("▾")
+                Box {
+                    androidx.compose.material3.TextButton(onClick = { openSelector = "sort" },
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("排序 · ${selectedSort.label}"); Text(" ▾")
                     }
-                    androidx.compose.material3.DropdownMenu(expanded = openSelector == "sort", onDismissRequest = { openSelector = null }) {
+                    androidx.compose.material3.DropdownMenu(expanded = openSelector == "sort",
+                        onDismissRequest = { openSelector = null }) {
                         noteSortOptions().forEach { option ->
-                            androidx.compose.material3.DropdownMenuItem(text = { Text(option.label) }, onClick = { openSelector = null; onSelectSortMode(option.mode) })
+                            androidx.compose.material3.DropdownMenuItem(text = { Text(option.label) },
+                                onClick = { openSelector = null; onSelectSortMode(option.mode) })
                         }
                     }
                 }
@@ -379,7 +385,9 @@ const CONTROLS: &str = r####"private fun NoteCollectionControls(
                     if (quickFilter != NoteQuickFilter.ALL) add(selectedType.label)
                     if (query.isNotBlank()) add("搜索：$query")
                 }.joinToString(" · ")
-                Text(summary, Modifier.padding(bottom = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (summary.isNotBlank()) Text(summary, maxLines = 2,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
