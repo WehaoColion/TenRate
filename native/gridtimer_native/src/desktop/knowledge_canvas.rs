@@ -345,6 +345,7 @@ struct KnowledgeCanvasWorkspaceState {
     undo: std::collections::VecDeque<KnowledgeCanvasStore>,
     redo: std::collections::VecDeque<KnowledgeCanvasStore>,
     suppress_history_for_next_save: bool,
+    restore_checkpoint: Option<KnowledgeCanvasStore>,
 }
 
 /// A bounded-memory streaming digest; a missing file has a distinct fingerprint
@@ -432,6 +433,18 @@ fn knowledge_canvas_load(path: &Path) -> PersistenceLoad<KnowledgeCanvasStore> {
 impl TimerWindowsClient {
     fn mark_knowledge_canvas_dirty(&mut self) {
         let state = &mut self.desktop_ui.knowledge_canvas;
+        // A new user mutation after an undo invalidates redo even when it
+        // arrives before the undo has had time to persist.
+        if state.suppress_history_for_next_save {
+            if let Some(checkpoint) = state.restore_checkpoint.as_ref() {
+                if knowledge_canvas_business_changed(checkpoint, &state.store) {
+                    state.saved_store = Some(checkpoint.clone());
+                    state.restore_checkpoint = None;
+                    state.suppress_history_for_next_save = false;
+                    state.redo.clear();
+                }
+            }
+        }
         state.dirty = true;
         state.store.revision = state.store.revision.saturating_add(1);
         state.save_due_epoch_millis =
@@ -456,6 +469,7 @@ impl TimerWindowsClient {
         if state.redo.len() > 32 { state.redo.pop_front(); }
         previous.revision = current.revision.saturating_add(1);
         state.store = previous;
+        state.restore_checkpoint = Some(state.store.clone());
         state.suppress_history_for_next_save = true;
         state.selected_nodes.clear();
         state.selected_edge = None;
@@ -471,6 +485,7 @@ impl TimerWindowsClient {
         if state.undo.len() > 32 { state.undo.pop_front(); }
         next.revision = current.revision.saturating_add(1);
         state.store = next;
+        state.restore_checkpoint = Some(state.store.clone());
         state.suppress_history_for_next_save = true;
         state.selected_nodes.clear();
         state.selected_edge = None;
@@ -522,6 +537,7 @@ impl TimerWindowsClient {
                 state.saved_store = Some(state.store.clone());
                 state.disk_fingerprint = fingerprint;
                 state.suppress_history_for_next_save = false;
+                state.restore_checkpoint = None;
                 state.dirty = false;
                 state.save_error = None;
                 Ok(())
@@ -561,6 +577,7 @@ impl TimerWindowsClient {
         state.undo.clear();
         state.redo.clear();
         state.suppress_history_for_next_save = false;
+        state.restore_checkpoint = None;
         state.scope_path = Some(path);
         state.selected_nodes.clear();
         state.selected_edge = None;
@@ -589,6 +606,11 @@ impl TimerWindowsClient {
     }
 
     fn flush_due_knowledge_canvas(&mut self) {
+        if self.desktop_ui.knowledge_canvas.external_conflict {
+            // The rejected write remains in memory. Do not hammer the
+            // filesystem or silently clear a previously reported conflict.
+            return;
+        }
         if self.desktop_ui.knowledge_canvas.dirty
             && now_millis() >= self.desktop_ui.knowledge_canvas.save_due_epoch_millis
         {
