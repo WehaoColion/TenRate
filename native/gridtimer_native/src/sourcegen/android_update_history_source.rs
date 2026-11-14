@@ -1,3 +1,5 @@
+// v2.13.5.7 - Direct customer payment details from edit and retain legacy amount controls.
+// v2.13.5.6 - Display client charge and receipt details in the Android update history.
 // v2.13.5.5 - Record exact RMB client payments independently of the finance ledger.
 // v2.13.5.3 - Describe today's time accurately before the first recorded session.
 // v2.13.5.2 - Paper-like knowledge rows, folder glyphs and quieter hierarchy chrome.
@@ -69,7 +71,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.5";
+pub const LATEST_VERSION: &str = "2.13.5.7";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -99,6 +101,38 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.7",
+        updatedAt = "2026-11-13 17:59",
+        summary = "客户编辑页可直接进入逐笔收款，恢复原有金额输入",
+        sections = listOf(
+            AndroidUpdateSection("收付款入口", listOf(
+                "在客户详情与编辑客户界面增加显眼的逐笔记录入口，可直接管理每个项目及实际收款地点、用途、日期和方式。",
+                "已有客户的已付和待付汇总可整理为详细款项，转换后金额保持不变，不会重新累计；旧收款日期未知时保持空白。",
+                "已支付、待支付历史金额输入在新建和编辑客户时继续提供，不再因为没有历史字段而隐藏。"
+            )),
+            AndroidUpdateSection("数据边界和验收", listOf(
+                "历史汇总独立保留，新款项独立累计，避免重复录入；不会写入风控账本。",
+                "安装包版本号、实际编辑客户入口和应用重启后的明细读取均需通过 Android 模拟器核验。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "2.13.5.6",
+        updatedAt = "2026-11-13 10:36",
+        summary = "客户网络新增独立款项项目和逐笔收款明细",
+        sections = listOf(
+            AndroidUpdateSection("逐笔收付款", listOf(
+                "点击客户详情中的收付款信息即可查看明细。款项项目可填写名称、总额、服务地点、预计日期与说明。",
+                "每次实际收款可独立填写金额、实际收款地点、日期、方式和备注；支持分次支付、编辑和移除记录。",
+                "已付和待付根据逐笔记录自动累计，严禁超额收款或重复记账。"
+            )),
+            AndroidUpdateSection("旧数据与隐私", listOf(
+                "既有客户的已付、待付数字继续保留为历史汇总，不虚构历史款项的用途和时间。",
+                "所有客户收付款只存于知识画布，不进入风控账本，也不改变客户推荐关系。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.5",
         updatedAt = "2026-11-13 07:06",

@@ -1,3 +1,5 @@
+// v2.13.5.7 - 恢复编辑客户金额输入并让逐笔收款入口直接可见。
+// v2.13.5.6 - 客户款项与收款明细独立可追溯。
 // v2.13.5.5 - 客户画布独立收付款字段，不参与风控账本。
 // v2.13.5.1 - Compact customer referral forests and straighten relation connectors.
 // v2.23.4.18 - Drag and reorder knowledge document blocks using the grip.
@@ -185,8 +187,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22355
-        versionName '2.13.5.5'
+        versionCode 22357
+        versionName '2.13.5.7'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

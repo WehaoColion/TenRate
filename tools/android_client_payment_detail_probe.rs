@@ -1,0 +1,260 @@
+// v2.13.5.7 - 真实模拟器从编辑客户进入逐笔收付款，验证旧金额入口和重启持久化。
+// v2.13.5.6 - 在 GitHub API35 模拟器真实启动客户收付款逐笔记录 UI。
+use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread, time::Duration};
+
+const APP: &str = "com.ofairyo.gridtimer";
+
+#[derive(Clone)]
+struct Element { text: String, description: String, class: String, bounds: [i32; 4] }
+
+fn adb(args: &[&str]) -> Result<Output, String> {
+    Command::new("adb").args(args).output().map_err(|e| e.to_string())
+}
+fn run(args: &[&str]) -> Result<String, String> {
+    let out = adb(args)?;
+    if !out.status.success() {
+        return Err(format!("adb {:?}: {}", args, String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+fn attr(source: &str, key: &str) -> String {
+    let prefix = format!("{key}=\"");
+    source.find(&prefix).and_then(|start| {
+        let tail = &source[start + prefix.len()..];
+        tail.find('"').map(|end| tail[..end].to_owned())
+    }).unwrap_or_default()
+}
+fn elements(source: &str) -> Vec<Element> {
+    source.split("<node ").skip(1).filter_map(|section| {
+        let tag = section.split('>').next()?;
+        let coords: Vec<i32> = attr(tag, "bounds")
+            .split(|ch: char| !ch.is_ascii_digit() && ch != '-')
+            .filter(|p| !p.is_empty()).filter_map(|p| p.parse().ok()).collect();
+        if coords.len() != 4 { return None; }
+        Some(Element {
+            text: attr(tag, "text"),
+            description: attr(tag, "content-desc"),
+            class: attr(tag, "class"),
+            bounds: [coords[0], coords[1], coords[2], coords[3]],
+        })
+    }).collect()
+}
+fn tree() -> Result<String, String> {
+    for _ in 0..5 {
+        let _ = run(&["shell", "uiautomator", "dump", "/sdcard/client_payment_detail.xml"]);
+        if let Ok(xml) = run(&["exec-out", "cat", "/sdcard/client_payment_detail.xml"]) {
+            if xml.contains("<hierarchy") { return Ok(xml); }
+        }
+        thread::sleep(Duration::from_millis(400));
+    }
+    Err("Accessibility tree unavailable".into())
+}
+fn target(labels: &[&str]) -> Result<Option<Element>, String> {
+    let xml = tree()?;
+    let options = elements(&xml);
+    Ok(labels.iter().find_map(|label| options.iter().find(|item|
+        item.bounds[2] > item.bounds[0] && item.bounds[3] > item.bounds[1] &&
+        (item.text.contains(label) || item.description.contains(label))).cloned()))
+}
+fn tap(element: &Element) -> Result<(), String> {
+    run(&["shell", "input", "tap",
+        &((element.bounds[0] + element.bounds[2]) / 2).to_string(),
+        &((element.bounds[1] + element.bounds[3]) / 2).to_string()])?;
+    thread::sleep(Duration::from_millis(750));
+    Ok(())
+}
+fn click(labels: &[&str]) -> Result<bool, String> {
+    if let Some(found) = target(labels)? { tap(&found)?; Ok(true) } else { Ok(false) }
+}
+fn required(labels: &[&str]) -> Result<(), String> {
+    for _ in 0..4 {
+        if click(labels)? { return Ok(()); }
+        thread::sleep(Duration::from_millis(450));
+    }
+    let visible = elements(&tree()?).into_iter().map(|node| node.text)
+        .filter(|label| !label.is_empty()).take(35).collect::<Vec<_>>().join(" | ");
+    Err(format!("Required button not visible: {labels:?}; actual UI: {visible}"))
+}
+fn click_exact(label: &str) -> Result<(), String> {
+    for _ in 0..4 {
+        if let Some(found) = elements(&tree()?).into_iter().find(|n| n.text == label) {
+            tap(&found)?;
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    Err(format!("Exact board title was not visible: {label}"))
+}
+fn edit(index: usize, value: &str) -> Result<(), String> {
+    let fields: Vec<_> = elements(&tree()?).into_iter()
+        .filter(|node| node.class.ends_with("EditText") && node.bounds[2] - node.bounds[0] > 50)
+        .collect();
+    let field = fields.get(index).ok_or_else(|| format!("Editable field {index} missing; count {}", fields.len()))?;
+    tap(field)?;
+    run(&["shell", "input", "text", value])?;
+    thread::sleep(Duration::from_millis(350));
+    Ok(())
+}
+fn snapshot(folder: &Path, title: &str) {
+    if let Ok(png) = adb(&["exec-out", "screencap", "-p"]) {
+        if png.status.success() && png.stdout.starts_with(b"\x89PNG") {
+            let _ = fs::write(folder.join(format!("{title}.png")), png.stdout);
+        }
+    }
+    if let Ok(xml) = tree() {
+        let _ = fs::write(folder.join(format!("{title}.xml")), xml);
+    }
+}
+fn dismiss_system_dialogs() -> Result<(), String> {
+    for _ in 0..5 {
+        let xml = tree()?;
+        if xml.contains("Pixel Launcher isn't responding") || xml.contains("Pixel Launcher isn&#39;t responding") {
+            required(&["Close app"])?;
+        } else if xml.contains("Allow tenfold to send you notifications?") {
+            required(&["Allow"])?;
+        } else { return Ok(()); }
+    }
+    Ok(())
+}
+fn open_canvas(folder: &Path) -> Result<(), String> {
+    for _ in 0..5 {
+        dismiss_system_dialogs()?;
+        if target(&["＋ 添加第一个客户", "知识画布，", "我的画布", "＋ 添加"])?.is_some() {
+            return Ok(());
+        }
+        let _ = click(&["Canvas", "Cards and links", "画布", "卡片与连线"])?;
+        if target(&["＋ 添加第一个客户", "知识画布，", "我的画布", "＋ 添加"])?.is_some() {
+            return Ok(());
+        }
+        let _ = click(&["Knowledge", "知识库", "知识", "笔记"])?;
+        snapshot(folder, "navigation");
+    }
+    let visible = elements(&tree()?).into_iter()
+        .map(|node| if !node.text.is_empty() { node.text } else { node.description })
+        .filter(|label| !label.is_empty()).take(45).collect::<Vec<_>>().join(" | ");
+    Err(format!("Unable to reach the canvas; current visible content: {visible}"))
+}
+fn open_first_card() -> Result<(), String> {
+    let surface = elements(&tree()?).into_iter()
+        .find(|n| n.description.contains("知识画布，") && n.description.contains("张卡片"))
+        .ok_or("Canvas card surface not found")?;
+    run(&["shell", "input", "tap",
+        &((surface.bounds[0] + surface.bounds[2]) / 2).to_string(),
+        &((surface.bounds[1] + surface.bounds[3]) / 2).to_string()])?;
+    thread::sleep(Duration::from_millis(800));
+    Ok(())
+}
+fn verify(label: &str) -> Result<(), String> {
+    for _ in 0..5 {
+        if tree()?.contains(label) { return Ok(()); }
+        thread::sleep(Duration::from_millis(500));
+    }
+    Err(format!("Expected UI text absent: {label}"))
+}
+fn scenario(folder: &Path, report: &mut String) -> Result<(), String> {
+    run(&["shell", "am", "start", "-W", "-n", "com.ofairyo.gridtimer/.MainActivity"])?;
+    thread::sleep(Duration::from_secs(6));
+    dismiss_system_dialogs()?;
+    snapshot(folder, "01_启动");
+    if run(&["shell", "pidof", APP])?.trim().is_empty() {
+        return Err("Process did not start".into());
+    }
+    let package = run(&["shell", "dumpsys", "package", APP])?;
+    if !package.contains("versionName=2.13.5.7") {
+        return Err("Installed APK is not Android 2.13.5.7".into());
+    }
+    open_canvas(folder)?;
+    snapshot(folder, "02_画布");
+    if tree()?.contains("我的画布") {
+        // A clean account opens the universal canvas library, not a customer board.
+        // Create a customer-network template without changing the generic canvas.
+        required(&["客户网络模板"])?;
+        required(&["创建", "Create"])?;
+        verify("0 张卡片")?;
+        snapshot(folder, "02a_客户网络画布已创建");
+    }
+    required(&["＋ 添加第一个客户", "＋ 添加"])?;
+    if elements(&tree()?).iter().all(|n| !n.class.ends_with("EditText")) {
+        required(&["＋ 新建客户", "＋ 更多卡片：客户"])?;
+    }
+    // Validate the original existing-money controls in the user-facing create form.
+    verify("已支付（元）")?;
+    verify("待支付（元）")?;
+    snapshot(folder, "03a_原金额输入栏已保留");
+    edit(1, "560.00")?;
+    edit(2, "660.00")?;
+    edit(0, "ClientDetail")?;
+    run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
+    required(&["创建", "Create"])?;
+    verify("1 张卡片")?;
+    snapshot(folder, "03_客户已建立");
+    open_first_card()?;
+    snapshot(folder, "04_客户详情");
+    verify("收付款明细 · 记录款项与实际收款")?;
+    verify("560.00")?;
+    verify("660.00")?;
+    required(&["编辑客户"])?;
+    verify("编辑客户")?;
+    verify("已支付（元）")?;
+    verify("待支付（元）")?;
+    verify("详细记录每笔款项和收款")?;
+    snapshot(folder, "04a_编辑客户明确显示收款入口");
+    required(&["详细记录每笔款项和收款"])?;
+    verify("收付款明细")?;
+    snapshot(folder, "05_历史收付款");
+    required(&["整理历史金额"])?;
+    verify("整理历史金额")?;
+    verify("560.00")?;
+    verify("660.00")?;
+    edit(0, "PaperService")?;
+    run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
+    snapshot(folder, "06_历史金额整理表单");
+    required(&["保存", "Save"])?;
+    verify("PaperService")?;
+    verify("560.00")?;
+    verify("660.00")?;
+    snapshot(folder, "07_历史整理后金额未重复");
+    required(&["＋ 收款"])?;
+    edit(2, "Online")?; // Amount and receipt date are prefilled.
+    run(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
+    snapshot(folder, "08_收款表单");
+    required(&["保存", "Save"])?;
+    verify("已结清")?;
+    verify("1,220.00")?;
+    snapshot(folder, "09_收款已结清");
+    report.push_str("PASS: Old customer money (560/660) was reclassified as a detailed charge without increasing totals, and a subsequent 660 receipt settled it on Android.\n\n");
+    required(&["完成", "Done"])?;
+    run(&["shell", "am", "force-stop", APP])?;
+    run(&["shell", "am", "start", "-W", "-n", "com.ofairyo.gridtimer/.MainActivity"])?;
+    thread::sleep(Duration::from_secs(5));
+    open_canvas(folder)?;
+    if tree()?.contains("我的画布") {
+        click_exact("客户网络")?;
+        verify("1 张卡片")?;
+    }
+    open_first_card()?;
+    required(&["编辑客户"])?;
+    verify("详细记录每笔款项和收款")?;
+    required(&["详细记录每笔款项和收款"])?;
+    verify("1,220.00")?;
+    verify("已结清")?;
+    snapshot(folder, "10_重启仍保留收款");
+    report.push_str("PASS: Reopened through Edit Customer and verified the converted historical charge and receipts after forced restart.\n\n");
+    Ok(())
+}
+fn main() {
+    let folder = env::args().nth(1).map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("client_payment_detail_evidence"));
+    fs::create_dir_all(&folder).expect("Evidence folder");
+    let mut report = String::from("# Android 2.13.5.7 customer payment details\n\n");
+    match scenario(&folder, &mut report) {
+        Ok(()) => report.push_str("Overall: PASS\n"),
+        Err(error) => {
+            snapshot(&folder, "失败现场");
+            report.push_str(&format!("Overall: FAILED / NOT VERIFIED\n\nReason: {error}\n"));
+        }
+    }
+    fs::write(folder.join("report.md"), &report).expect("Report");
+    println!("{report}");
+    if !report.contains("Overall: PASS") { std::process::exit(1); }
+}
