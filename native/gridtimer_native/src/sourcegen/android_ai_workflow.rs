@@ -1183,6 +1183,8 @@ private fun KnowledgeAiDialog(
                 turn = KnowledgeConversationTurn(record.question, record.answer),
                 sources = record.sourceIds.mapNotNull { id ->
                     val note = sourceNoteIndex[id] ?: return@mapNotNull null
+                    if (note.deletedAtEpochMillis != null || note.isEncryptionLocked())
+                        return@mapNotNull null
                     KnowledgeSourceCandidate(note,
                         note.folderId?.let { appData.findNoteFolder(it)?.name }.orEmpty(),
                         note.content.take(760))
