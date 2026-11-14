@@ -14,6 +14,7 @@ enum KnowledgeCanvasNodeKind {
     #[default]
     Page,
     Note,
+    Client,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -28,6 +29,12 @@ struct KnowledgeCanvasNode {
     width: f32,
     height: f32,
     color: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paid_cents: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_cents: Option<i64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    charges: Vec<gridtimer_native::android_canvas::ClientCharge>,
 }
 
 impl Default for KnowledgeCanvasNode {
@@ -42,6 +49,9 @@ impl Default for KnowledgeCanvasNode {
             width: 256.0,
             height: 168.0,
             color: "blue".into(),
+            paid_cents: None,
+            pending_cents: None,
+            charges: Vec::new(),
         }
     }
 }
@@ -52,13 +62,19 @@ struct KnowledgeCanvasEdge {
     id: String,
     from: String,
     to: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relation: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+fn windows_canvas_default_template() -> String { "blank".into() }
+
 struct KnowledgeCanvas {
     id: String,
     title: String,
+    #[serde(default = "windows_canvas_default_template")]
+    template: String,
     center_x: f32,
     center_y: f32,
     zoom: f32,
@@ -71,6 +87,7 @@ impl Default for KnowledgeCanvas {
         Self {
             id: String::new(),
             title: "知识画布".into(),
+            template: windows_canvas_default_template(),
             center_x: 0.0,
             center_y: 0.0,
             zoom: 1.0,
@@ -84,6 +101,8 @@ impl Default for KnowledgeCanvas {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 struct KnowledgeCanvasStore {
     version: u32,
+    #[serde(default)]
+    revision: u64,
     active_canvas_id: String,
     canvases: Vec<KnowledgeCanvas>,
 }
@@ -92,6 +111,7 @@ impl Default for KnowledgeCanvasStore {
     fn default() -> Self {
         Self {
             version: KNOWLEDGE_CANVAS_VERSION,
+            revision: 0,
             active_canvas_id: String::new(),
             canvases: Vec::new(),
         }
@@ -199,12 +219,13 @@ impl KnowledgeCanvasStore {
             active_exists |= canvas.id == self.active_canvas_id;
             if canvas.title.trim().is_empty()
                 || canvas.title.chars().count() > 80
+                || !matches!(canvas.template.as_str(), "blank" | "customer_network")
                 || !canvas.center_x.is_finite()
                 || !canvas.center_y.is_finite()
                 || canvas.center_x.abs() > 250_000.0
                 || canvas.center_y.abs() > 250_000.0
                 || !canvas.zoom.is_finite()
-                || !(0.35..=2.5).contains(&canvas.zoom)
+                || !(0.01..=2.5).contains(&canvas.zoom)
             {
                 return Err("画布视图数据无效".into());
             }
@@ -228,10 +249,28 @@ impl KnowledgeCanvasStore {
                     || node.text.chars().count() > 8_000
                     || (node.kind == KnowledgeCanvasNodeKind::Page
                         && !knowledge_canvas_valid_id(&node.page_id))
+                    || (node.kind == KnowledgeCanvasNodeKind::Client
+                        && (node.text.lines().next().unwrap_or("").trim().is_empty()
+                            || node.text.lines().next().unwrap_or("").chars().count() > 80))
                 {
                     return Err("画布卡片数据无效".into());
                 }
+                if node.kind != KnowledgeCanvasNodeKind::Client
+                    && (node.paid_cents.is_some() || node.pending_cents.is_some() || !node.charges.is_empty())
+                {
+                    return Err("普通卡片不能存储客户款项".into());
+                }
+                if node.kind == KnowledgeCanvasNodeKind::Client {
+                    gridtimer_native::android_canvas::checked_client_totals(
+                        &knowledge_canvas_customer_to_core(node),
+                    )?;
+                }
             }
+            let client_ids = canvas.nodes.iter()
+                .filter(|node| node.kind == KnowledgeCanvasNodeKind::Client)
+                .map(|node| node.id.as_str()).collect::<HashSet<_>>();
+            let mut parents = std::collections::HashMap::<&str, &str>::new();
+            let mut pairs = HashSet::new();
             let mut edge_ids = HashSet::new();
             for edge in &canvas.edges {
                 if !knowledge_canvas_valid_id(&edge.id)
@@ -239,8 +278,32 @@ impl KnowledgeCanvasStore {
                     || edge.from == edge.to
                     || !node_ids.contains(&edge.from)
                     || !node_ids.contains(&edge.to)
+                    || !matches!(edge.relation.as_deref(), None | Some("link") | Some("referral"))
                 {
                     return Err("画布关系数据无效".into());
+                }
+                let referral = edge.relation.as_deref() == Some("referral")
+                    || (edge.relation.is_none()
+                        && client_ids.contains(edge.from.as_str())
+                        && client_ids.contains(edge.to.as_str()));
+                if !pairs.insert((edge.from.as_str(), edge.to.as_str(), referral)) {
+                    return Err("画布关系重复".into());
+                }
+                if referral && (!client_ids.contains(edge.from.as_str())
+                    || !client_ids.contains(edge.to.as_str())
+                    || parents.insert(edge.to.as_str(), edge.from.as_str()).is_some())
+                {
+                    return Err("客户只能有一位直接推荐人".into());
+                }
+            }
+            for client in parents.keys() {
+                let mut visited = HashSet::new();
+                let mut cursor = *client;
+                while let Some(parent) = parents.get(cursor) {
+                    if !visited.insert(cursor) {
+                        return Err("客户推荐关系不能成环".into());
+                    }
+                    cursor = parent;
                 }
             }
         }
@@ -263,6 +326,9 @@ struct KnowledgeCanvasWorkspaceState {
     selected_edge: Option<String>,
     connect_from: Option<String>,
     connect_mode: bool,
+    referral_mode: bool,
+    new_customer_name: String,
+    customer_draft: KnowledgeCanvasCustomerDraft,
     add_page_search: String,
     title_draft: String,
     title_canvas_id: String,
@@ -377,6 +443,9 @@ impl TimerWindowsClient {
         state.selected_edge = None;
         state.connect_from = None;
         state.connect_mode = false;
+        state.referral_mode = false;
+        state.new_customer_name.clear();
+        state.customer_draft = KnowledgeCanvasCustomerDraft::default();
         state.add_page_search.clear();
         state.title_draft.clear();
         state.title_canvas_id.clear();
