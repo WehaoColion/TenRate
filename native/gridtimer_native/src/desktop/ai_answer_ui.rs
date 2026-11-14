@@ -38,12 +38,11 @@ struct DesktopAiImage {
 fn desktop_ai_thumbnail(bytes: &[u8]) -> Option<egui::ColorImage> {
     let mut reader = image::io::Reader::new(std::io::Cursor::new(bytes))
         .with_guessed_format().ok()?;
-    reader.limits(image::io::Limits {
-        max_image_width: Some(8_192),
-        max_image_height: Some(8_192),
-        max_alloc: Some(64 * 1024 * 1024),
-        ..Default::default()
-    });
+    let mut limits = image::io::Limits::default();
+    limits.max_image_width = Some(8_192);
+    limits.max_image_height = Some(8_192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
     let decoded = reader.decode().ok()?;
     let bitmap = decoded.thumbnail(144, 144).to_rgba8();
     Some(egui::ColorImage::from_rgba_unmultiplied(
