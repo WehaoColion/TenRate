@@ -296,3 +296,46 @@ $$\int_0^1 x^2\,dx = \frac{1}{3}$$
     )
     .unwrap();
 }
+
+
+#[test]
+fn desktop_ai_image_consent_does_not_reuse_stale_or_modified_bytes() {
+    let root = temp_test_dir("desktop_ai_image_binding");
+    let image_path = root.join("selected.png");
+    fs::write(&image_path, [0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0]).unwrap();
+    let mut client = desktop_ai_query_client(&root);
+    let images = desktop_ai_load_images(&[image_path]).unwrap();
+    assert_eq!(images.len(), 1);
+    client.desktop_ai.images = images;
+    client.launch_knowledge_ai();
+    let preview = client.desktop_ai.preview.as_ref().expect("preview must freeze selected image");
+    assert_eq!(preview.images.len(), 1);
+    let original_binding = preview.binding.payload.clone();
+    client.desktop_ai.images[0].digest = "different-image-content".into();
+    let changed = client.desktop_ai_current_binding(
+        client.desktop_ai.mode,
+        &client.knowledge_ai_question_draft,
+        &[],
+        &desktop_ai_history_json(&client.desktop_ai.turns),
+    );
+    assert_ne!(original_binding, changed.payload);
+    client.send_desktop_ai_query();
+    assert!(!client.knowledge_ai_pending, "new image may never reuse old consent");
+    assert!(client.knowledge_ai_result_rx.is_none());
+    assert_eq!(client.task_supervisor.active_count(), 0);
+    drop(client);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn desktop_ai_image_picker_rejects_invalid_formats_and_large_files() {
+    let root = temp_test_dir("desktop_ai_image_boundary");
+    let path = root.join("image.png");
+    fs::write(&path, b"pretend PNG").unwrap();
+    assert!(desktop_ai_load_images(&[path.clone()]).is_err());
+    let mut oversized = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10];
+    oversized.resize(6 * 1024 * 1024 + 1, 0);
+    fs::write(&path, oversized).unwrap();
+    assert!(desktop_ai_load_images(&[path]).is_err());
+    fs::remove_dir_all(root).unwrap();
+}

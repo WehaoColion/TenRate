@@ -571,6 +571,7 @@ impl TimerWindowsClient {
                 if ui.button("关闭").clicked() {
                     self.cancel_desktop_ai_query();
                     self.desktop_ai.turns.clear();
+                    self.desktop_ai.images.clear();
                     self.knowledge_ai_answer = None;
                     self.knowledge_ai_panel_open = false;
                 }
@@ -674,6 +675,7 @@ impl TimerWindowsClient {
                     // reappear as the first turn in the fresh conversation.
                     self.cancel_desktop_ai_query();
                     self.desktop_ai.turns.clear();
+                    self.desktop_ai.images.clear();
                     self.knowledge_ai_answer = None;
                     self.knowledge_ai_question_draft.clear();
                 }
@@ -692,6 +694,35 @@ impl TimerWindowsClient {
                 .changed();
             if changed {
                 self.desktop_ai.preview = None;
+            }
+            ui.horizontal_wrapped(|ui| {
+                let available = !self.knowledge_ai_pending
+                    && !self.desktop_ai.boundary.busy()
+                    && !self.workspace_edit_locked();
+                if ui.add_enabled(available, egui::Button::new("＋ 添加图片")).clicked() {
+                    match desktop_transfer_multiple_images_dialog() {
+                        Ok(Some(paths)) => match desktop_ai_load_images(&paths) {
+                            Ok(images) => {
+                                self.desktop_ai.images = images;
+                                self.desktop_ai.preview = None;
+                                self.desktop_ai.message = "图片只在确认发送后上传，不存入知识库".into();
+                            },
+                            Err(error) => self.desktop_ai.message = format!("图片未添加：{error}"),
+                        },
+                        Ok(None) => (),
+                        Err(error) => self.desktop_ai.message = format!("图片选择失败：{error}"),
+                    }
+                }
+                if !self.desktop_ai.images.is_empty() {
+                    ui.label(format!("已选择 {} 张，最多 5 张", self.desktop_ai.images.len()));
+                    if ui.add_enabled(available, egui::Button::new("移除图片")).clicked() {
+                        self.desktop_ai.images.clear();
+                        self.desktop_ai.preview = None;
+                    }
+                }
+            });
+            for image in &self.desktop_ai.images {
+                ui.small(format!("{} · {} KiB", image.name, image.bytes.len().div_ceil(1024)));
             }
             let valid_question = !self.knowledge_ai_question_draft.trim().is_empty()
                 && self.knowledge_ai_question_draft.chars().count() <= 1000;
