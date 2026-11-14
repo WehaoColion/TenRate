@@ -695,15 +695,16 @@ impl TimerWindowsClient {
             if changed {
                 self.desktop_ai.preview = None;
             }
+            let available = !self.knowledge_ai_pending
+                && !self.desktop_ai.boundary.busy()
+                && !self.workspace_edit_locked();
             ui.horizontal_wrapped(|ui| {
-                let available = !self.knowledge_ai_pending
-                    && !self.desktop_ai.boundary.busy()
-                    && !self.workspace_edit_locked();
                 if ui.add_enabled(available, egui::Button::new("＋ 添加图片")).clicked() {
                     match desktop_transfer_multiple_images_dialog() {
                         Ok(Some(paths)) => match desktop_ai_load_images(&paths) {
                             Ok(images) => {
                                 self.desktop_ai.images = images;
+                                self.desktop_ai.thumbnail_textures.clear();
                                 self.desktop_ai.preview = None;
                                 self.desktop_ai.message = "图片只在确认发送后上传，不存入知识库".into();
                             },
@@ -715,14 +716,48 @@ impl TimerWindowsClient {
                 }
                 if !self.desktop_ai.images.is_empty() {
                     ui.label(format!("已选择 {} 张，最多 5 张", self.desktop_ai.images.len()));
-                    if ui.add_enabled(available, egui::Button::new("移除图片")).clicked() {
+                    if ui.add_enabled(available, egui::Button::new("清空所选图片")).clicked() {
                         self.desktop_ai.images.clear();
+                        self.desktop_ai.thumbnail_textures.clear();
                         self.desktop_ai.preview = None;
                     }
                 }
             });
-            for image in &self.desktop_ai.images {
-                ui.small(format!("{} · {} KiB", image.name, image.bytes.len().div_ceil(1024)));
+            let mut remove_image = None;
+            for (index, image) in self.desktop_ai.images.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if let Some(thumbnail) = &image.thumbnail {
+                        let handle = self.desktop_ai.thumbnail_textures
+                            .entry(image.digest.clone())
+                            .or_insert_with(|| ui.ctx().load_texture(
+                                format!("windows-ai-image-{}", image.digest),
+                                thumbnail.clone(),
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        let width = thumbnail.size[0] as f32;
+                        let height = thumbnail.size[1] as f32;
+                        if width > 0.0 && height > 0.0 {
+                            let scale = (72.0 / width).min(72.0 / height);
+                            ui.add(egui::Image::new((
+                                handle.id(), egui::vec2(width * scale, height * scale)
+                            )));
+                        }
+                    } else {
+                        ui.label("图片预览不可用，原始文件已通过格式检查");
+                    }
+                    ui.vertical(|ui| {
+                        ui.small(format!("{} · {} KiB",
+                            image.name, image.bytes.len().div_ceil(1024)));
+                        if ui.add_enabled(available, egui::Button::new("移除此张")).clicked() {
+                            remove_image = Some(index);
+                        }
+                    });
+                });
+            }
+            if let Some(index) = remove_image {
+                let removed = self.desktop_ai.images.remove(index);
+                self.desktop_ai.thumbnail_textures.remove(&removed.digest);
+                self.desktop_ai.preview = None;
             }
             let valid_question = !self.knowledge_ai_question_draft.trim().is_empty()
                 && self.knowledge_ai_question_draft.chars().count() <= 1000;
