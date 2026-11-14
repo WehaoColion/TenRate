@@ -43,6 +43,7 @@ fn desktop_legal_attachment_inputs(
     data: &DesktopAppData,
     unlocked: &std::collections::HashMap<String, DesktopNote>,
     identity: &AiWorkspaceIdentity,
+    excluded_note_ids: &HashSet<String>,
     active: &impl Fn() -> bool,
 ) -> Vec<Value> {
     let mut result = Vec::new();
@@ -55,6 +56,7 @@ fn desktop_legal_attachment_inputs(
             break;
         }
         if stored.deleted_at_epoch_millis.is_some()
+            || excluded_note_ids.contains(&stored.id)
             || legal_source_tombstoned(data, "note", &stored.id, stored.updated_at_epoch_millis)
         {
             continue;
