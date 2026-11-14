@@ -1,3 +1,5 @@
+Windows 1.1.0.12 客户网络画布及收付款 Rust 追赶候选：[说明](windows/release_notes_windows_v1.1.0.12.md)。
+
 Android 2.13.5.7 恢复客户金额入口并显式呈现逐笔收款：[说明](android/release_notes_v2.13.5.7.md)。
 Android 2.13.5.6 客户收付款逐笔明细与历史汇总隔离候选：[说明](android/release_notes_v2.13.5.6.md)。
 Android 2.13.5.3 首页今日计时零时长标签语义修复候选：[说明](android/release_notes_v2.13.5.3.md)。

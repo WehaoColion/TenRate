@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 mod referral_layout;
 #[path = "android_canvas_money.rs"]
 mod money;
-use money::ClientCharge;
+pub use money::{ClientCharge, ClientReceipt};
 
 // Inactive boards and unchanged graph data are shared between transactions and
 // undo entries. Panning a large board does not clone all its cards or strings.
@@ -458,6 +458,39 @@ fn response_json(
         warning: &session.warning,
     })
     .map_err(|_| "画布响应编码失败".into())
+}
+
+/// Shares the exact Android money rules with the Windows client. The caller
+/// owns persistence, so a failed operation cannot partially update a record.
+pub fn apply_customer_money_operation(node: &mut Node, request: &Value) -> Result<(), String> {
+    if node.kind != "client" {
+        return Err("只有客户卡片可以记录款项".into());
+    }
+    let mut sandbox = Canvas::new("单笔款项事务");
+    sandbox.nodes = vec![node.clone()].into();
+    money::edit(&mut sandbox, request)?;
+    let candidate = sandbox.nodes.first().ok_or("客户记录已失效")?;
+    money::validate(candidate)?;
+    *node = candidate.clone();
+    Ok(())
+}
+
+/// Validates both legacy aggregate balances and individual charges/receipts.
+pub fn checked_client_totals(node: &Node) -> Result<(i64, i64), String> {
+    money::validate(node)?;
+    Ok(money::totals(node))
+}
+
+/// Decimal Yuan input remains integer cents on every platform.
+pub fn parse_client_yuan(value: &str) -> Result<Option<i64>, String> {
+    client_money_yuan(value)
+}
+
+/// The shared Android tree layout is also used by Windows. Only customer
+/// positions change; unrelated notes, pages and links keep their positions.
+pub fn layout_customer_referrals(canvas: &mut Canvas) -> Result<(), String> {
+    canvas.validate()?;
+    referral_layout::arrange(canvas)
 }
 
 pub fn open(root: &Path, workspace: &str) -> Result<Value, String> {

@@ -25,12 +25,48 @@ fn desktop_ai_history_json(turns: &[DesktopAiTurn]) -> String {
     Value::Array(recent).to_string()
 }
 
+#[derive(Clone)]
+struct DesktopAiImage {
+    name: String,
+    bytes: Arc<Vec<u8>>,
+    digest: String,
+}
+
+fn desktop_ai_load_images(paths: &[PathBuf]) -> Result<Vec<DesktopAiImage>, String> {
+    if paths.len() > 5 {
+        return Err("每次最多选择 5 张图片，请减少图片数量".into());
+    }
+    let mut result = Vec::with_capacity(paths.len());
+    let mut total = 0usize;
+    for path in paths {
+        let name = path.file_name().and_then(|s| s.to_str())
+            .unwrap_or("图片").chars().take(80).collect::<String>();
+        let file = File::open(path).map_err(|_| format!("{name} 无法打开"))?;
+        let mut bytes = Vec::new();
+        file.take(6 * 1024 * 1024 + 1).read_to_end(&mut bytes)
+            .map_err(|_| format!("{name} 无法读取"))?;
+        total = total.saturating_add(bytes.len());
+        if total > 20 * 1024 * 1024 {
+            return Err("图片总大小不能超过 20 MiB".into());
+        }
+        result.push(DesktopAiImage {
+            name,
+            digest: format!("{:x}", Sha256::digest(&bytes)),
+            bytes: Arc::new(bytes),
+        });
+    }
+    let all = result.iter().map(|image| (*image.bytes).clone()).collect::<Vec<_>>();
+    ai_client::validate_explicit_image_inputs(&all)?;
+    Ok(result)
+}
+
 struct DesktopAiPreview {
     binding: QueryBinding,
     consent: QueryConsent,
     mode: QueryMode,
     question: String,
     history_json: String,
+    images: Vec<DesktopAiImage>,
     sources: Vec<(String, String, String, String)>,
     notes_version: u64,
     recipient: String,
@@ -48,6 +84,7 @@ struct DesktopAiSession {
     last_workspace: Option<String>,
     last_configuration: Option<String>,
     turns: Vec<DesktopAiTurn>,
+    images: Vec<DesktopAiImage>,
     priority_note_id: Option<String>,
     mode: QueryMode,
     boundary: QueryBoundary,
@@ -97,7 +134,9 @@ impl TimerWindowsClient {
             payload: format!(
                 "{:x}",
                 Sha256::digest(
-                    json!([mode.wire(), question, sources, history_json])
+                    json!([mode.wire(), question, sources, history_json,
+                        self.desktop_ai.images.iter().map(|image| (&image.digest, image.bytes.len()))
+                            .collect::<Vec<_>>()])
                         .to_string()
                         .as_bytes()
                 )
@@ -109,6 +148,7 @@ impl TimerWindowsClient {
         self.cancel_desktop_agent();
         self.desktop_agent.draft = None;
         self.desktop_ai.turns.clear();
+        self.desktop_ai.images.clear();
         self.knowledge_ai_answer = None;
         self.desktop_ai.preview = None;
         self.desktop_ai.probe_binding = None;
@@ -138,6 +178,7 @@ impl TimerWindowsClient {
         let previous_configuration = self.desktop_ai.last_configuration.replace(configuration.clone());
         if previous_configuration.as_deref().is_some_and(|previous| previous != configuration) {
             self.desktop_ai.turns.clear();
+            self.desktop_ai.images.clear();
             self.knowledge_ai_answer = None;
         }
         let previous_workspace = self.desktop_ai.last_workspace.replace(workspace.clone());
@@ -150,6 +191,7 @@ impl TimerWindowsClient {
             self.desktop_ai.priority_note_id = None;
             self.knowledge_ai_answer = None;
             self.desktop_ai.turns.clear();
+            self.desktop_ai.images.clear();
             self.desktop_ai.probe_binding = None;
             self.desktop_ai.probe_ok = false;
             self.desktop_ai.probe_message.clear();
@@ -332,6 +374,9 @@ impl TimerWindowsClient {
             }
         }
         let history_json = desktop_ai_history_json(&self.desktop_ai.turns);
+        let image_bytes = self.desktop_ai.images.iter()
+            .map(|image| (*image.bytes).clone()).collect::<Vec<_>>();
+        ai_client::validate_explicit_image_inputs(&image_bytes)?;
         let binding = self.desktop_ai_current_binding(mode, &question, &sources, &history_json);
         self.desktop_ai.preview = Some(DesktopAiPreview {
             consent: QueryConsent::preview(binding.clone()),
@@ -339,6 +384,7 @@ impl TimerWindowsClient {
             mode,
             question,
             history_json,
+            images: self.desktop_ai.images.clone(),
             sources,
             notes_version: self.notes_cache_version(),
             recipient,
@@ -376,6 +422,9 @@ impl TimerWindowsClient {
             return;
         };
         let origin_workspace = self.ai_workspace_identity();
+        let image_bytes = preview.images.iter().map(|image| (*image.bytes).clone())
+            .collect::<Vec<_>>();
+        self.desktop_ai.images.clear();
         let api_key = self.sync.ai_api_key.clone();
         let base_url = self.sync.ai_base_url.clone();
         let model = self.sync.ai_model.clone();
@@ -417,7 +466,7 @@ impl TimerWindowsClient {
                 if cancellation.is_cancelled() {
                     return;
                 }
-                let result = ai_client::complete_android_conversation(
+                let result = ai_client::complete_android_conversation_with_images(
                     &api_key,
                     &base_url,
                     &model,
@@ -427,6 +476,7 @@ impl TimerWindowsClient {
                     &source_folders,
                     &source_excerpts,
                     &history_json,
+                    &image_bytes,
                 );
                 if !cancellation.is_cancelled() {
                     let _ = tx.send(KnowledgeAiTaskResult {
@@ -577,6 +627,7 @@ impl TimerWindowsClient {
         self.desktop_ai.mode = mode;
         self.desktop_ai.priority_note_id = None;
         self.desktop_ai.preview = None;
+        self.desktop_ai.images.clear();
     }
 
     fn open_desktop_document_ai(&mut self, note_id: &str) {
@@ -613,10 +664,20 @@ impl TimerWindowsClient {
         egui::Window::new("确认发送给 AI").id(egui::Id::new("desktop_ai_send_preview")).collapsible(false).resizable(true).default_width(640.0).show(ctx, |ui| {
             let preview = self.desktop_ai.preview.as_ref().unwrap();
             ui.label(format!("接收方：{} · 模型：{}", preview.recipient, preview.model));
-            ui.label(if preview.mode == QueryMode::Direct { "范围：仅你的问题，不发送知识页".into() } else { format!("范围：你的问题 + {} 个知识页节选（最多 5 页，每页最多 900 字；加密及已删除内容不纳入）", preview.sources.len()) });
+            ui.label(if preview.mode == QueryMode::Direct {
+                format!("范围：你的问题 + {} 张主动选取图片，不发送知识页", preview.images.len())
+            } else {
+                format!("范围：你的问题 + {} 个知识页节选 + {} 张图片（加密及已删除内容不纳入）", preview.sources.len(), preview.images.len())
+            });
             let bytes = preview.question.len() + preview.sources.iter().map(|source| source.1.len() + source.2.len() + source.3.len()).sum::<usize>();
             ui.label(format!("资料正文：{bytes} 字节 · 1 次请求 · 会消耗服务商额度"));
             ui.label("资料将发送到以上接收方；请求设置 store: false，服务商仍按自身规则处理与保存资料。");
+            if !preview.images.is_empty() {
+                ui.strong(format!("本次发送图片 {} 张，共 {} 字节",
+                    preview.images.len(),
+                    preview.images.iter().map(|image| image.bytes.len()).sum::<usize>()));
+                for image in &preview.images { ui.label(&image.name); }
+            }
             ui.horizontal(|ui| {
                 confirm = ui.add_enabled(self.workspace_persistence_ready && self.background_work_is_allowed() && !self.workspace_edit_locked() && !self.knowledge_ai_pending, egui::Button::new("确认发送问题")).clicked();
                 cancel = ui.button("返回修改").clicked();

@@ -90,6 +90,8 @@ fn native_window_visual_review() {
         ("notes_minimum", AppTab::Notes, 1, 760.0, 480.0),
         ("knowledge_light", AppTab::Knowledge, 1, 1240.0, 800.0),
         ("knowledge_dark", AppTab::Knowledge, 2, 1240.0, 800.0),
+        ("canvas_customer", AppTab::Knowledge, 1, 1240.0, 800.0),
+        ("canvas_customer_zoom", AppTab::Knowledge, 1, 1240.0, 800.0),
         ("history_light", AppTab::History, 1, 1240.0, 800.0),
         ("history_minimum", AppTab::History, 1, 760.0, 480.0),
         ("history_empty", AppTab::History, 1, 760.0, 480.0),
@@ -207,7 +209,32 @@ fn native_window_visual_review() {
                     }
                 }
                 if tab == AppTab::Knowledge {
-                    self.client.select_note_by_id("doc-a");
+                    if SCENES[self.scene].0.starts_with("canvas_customer") {
+                        self.client.return_to_document_list();
+                        self.client.knowledge_view = KnowledgeCollectionView::Canvas;
+                        assert!(self.client.ensure_knowledge_canvas_loaded());
+                        if !self.client.desktop_ui.knowledge_canvas.store.active()
+                            .is_some_and(|canvas| canvas.nodes.iter()
+                                .any(|node| node.kind == KnowledgeCanvasNodeKind::Client))
+                        {
+                            self.client.knowledge_canvas_add_customer_named("演示客户", None);
+                            let selected = self.client.desktop_ui.knowledge_canvas
+                                .selected_nodes[0].clone();
+                            self.client.knowledge_canvas_update_customer(&selected,
+                                json!({"op":"saveProfile","name":"演示客户",
+                                    "details":"独立知识画布客户记录","paidYuan":"560.00",
+                                    "pendingYuan":"660.00"})).unwrap();
+                        }
+                        if let Some(canvas) = self.client.desktop_ui.knowledge_canvas.store.active_mut() {
+                            canvas.zoom = if SCENES[self.scene].0 == "canvas_customer_zoom" {
+                                0.01
+                            } else {
+                                1.0
+                            };
+                        }
+                    } else {
+                        self.client.select_note_by_id("doc-a");
+                    }
                 }
                 if let Some(page) = [
                     "finance_cockpit",

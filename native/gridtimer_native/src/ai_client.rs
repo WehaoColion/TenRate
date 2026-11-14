@@ -179,6 +179,11 @@ pub fn complete_android_conversation(
 
 /// Only the Android picker explicitly provides these bytes. The existing
 /// text-only entry points remain identical for desktop and legacy Android.
+/// Checks explicit user-selected visual inputs without contacting an AI provider.
+pub fn validate_explicit_image_inputs(images: &[Vec<u8>]) -> Result<(), String> {
+    crate::android_ai_images::validate_image_inputs(images)
+}
+
 pub fn complete_android_conversation_with_images(
     api_key: &str,
     base_url: &str,
