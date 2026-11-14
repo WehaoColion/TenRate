@@ -205,7 +205,7 @@ impl TimerWindowsClient {
         if previous_configuration.as_deref().is_some_and(|previous| previous != configuration) {
             self.desktop_ai.turns.clear();
             self.desktop_ai.images.clear();
-        self.desktop_ai.thumbnail_textures.clear();
+            self.desktop_ai.thumbnail_textures.clear();
             self.knowledge_ai_answer = None;
         }
         let previous_workspace = self.desktop_ai.last_workspace.replace(workspace.clone());
@@ -219,7 +219,7 @@ impl TimerWindowsClient {
             self.knowledge_ai_answer = None;
             self.desktop_ai.turns.clear();
             self.desktop_ai.images.clear();
-        self.desktop_ai.thumbnail_textures.clear();
+            self.desktop_ai.thumbnail_textures.clear();
             self.desktop_ai.probe_binding = None;
             self.desktop_ai.probe_ok = false;
             self.desktop_ai.probe_message.clear();
