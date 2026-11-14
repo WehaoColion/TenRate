@@ -780,6 +780,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
                 "org.json.JSONObject",
                 "androidx.compose.material3.Checkbox",
                 "androidx.compose.material3.OutlinedTextField",
+                "androidx.compose.runtime.mutableStateMapOf",
             ] {
                 let statement = format!("import {import}\n");
                 if !source.contains(&statement) {
