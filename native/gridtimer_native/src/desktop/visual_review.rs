@@ -174,6 +174,11 @@ fn native_window_visual_review() {
                 self.client.view_cache.data_version = u64::MAX;
                 self.client.desktop_ui.slot_editor_open = false;
                 self.client.desktop_ui.board_query.clear();
+                // Scene states are independent. The legal exclusion dialog is
+                // intentionally shown only for its own capture, not duplicated
+                // in the following page-copy confirmation scene.
+                self.client.desktop_ui.knowledge.directory.exclusion_target = None;
+                self.client.desktop_ui.knowledge.directory.exclusion_error.clear();
                 if tab == AppTab::History {
                     self.client.switch_tab(AppTab::Board);
                     let detail = SCENES[self.scene].0 == "history_detail_return";
