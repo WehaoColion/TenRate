@@ -22,17 +22,13 @@ fn mime_from_signature(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// Construct image parts only after validating the actual file signatures and
-/// overall request budget. No unsupported input is silently dropped.
-pub fn content_with_images(text: &str, images: &[Vec<u8>]) -> Result<Value, String> {
-    if images.is_empty() {
-        return Ok(json!(text));
-    }
+/// Shared validation for Android and Windows. Calling this never encodes
+/// images, allocates a request body, or transmits private local bytes.
+pub fn validate_image_inputs(images: &[Vec<u8>]) -> Result<(), String> {
     if images.len() > MAX_IMAGES {
         return Err(format!("每次最多发送 {MAX_IMAGES} 张图片，请减少选择。"));
     }
     let mut total = 0usize;
-    let mut blocks = vec![json!({"type":"input_text","text":text})];
     for (i, bytes) in images.iter().enumerate() {
         let index = i + 1;
         if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
@@ -42,9 +38,23 @@ pub fn content_with_images(text: &str, images: &[Vec<u8>]) -> Result<Value, Stri
         if total > MAX_TOTAL_IMAGE_BYTES {
             return Err("所选图片总大小超过 20 MiB，请减少图片数量。".into());
         }
-        let mime = mime_from_signature(bytes).ok_or_else(|| {
-            format!("第 {index} 张不是受支持的 JPEG、PNG、WebP 或 GIF 图片。")
-        })?;
+        if mime_from_signature(bytes).is_none() {
+            return Err(format!("第 {index} 张不是受支持的 JPEG、PNG、WebP 或 GIF 图片。"));
+        }
+    }
+    Ok(())
+}
+
+/// Construct image parts only after validating the actual file signatures and
+/// overall request budget. No unsupported input is silently dropped.
+pub fn content_with_images(text: &str, images: &[Vec<u8>]) -> Result<Value, String> {
+    validate_image_inputs(images)?;
+    if images.is_empty() {
+        return Ok(json!(text));
+    }
+    let mut blocks = vec![json!({"type":"input_text","text":text})];
+    for bytes in images {
+        let mime = mime_from_signature(bytes).expect("validated image signature");
         let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
         blocks.push(json!({
             "type":"input_image",
