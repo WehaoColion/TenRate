@@ -6,6 +6,7 @@ include!("legal_report_store.rs");
 include!("legal_report_sync.rs");
 include!("legal_background.rs");
 include!("legal_navigation.rs");
+include!("legal_exclusions.rs");
 
 struct DesktopLegalScanOutcome {
     scope: String,
@@ -26,6 +27,7 @@ struct DesktopLegalPreparedOutcome {
     version: u64,
     cancellation: Arc<AtomicBool>,
     digest: String,
+    policy_digest: String,
     result: Result<Arc<gridtimer_native::legal_scan::LegalScanPrepared>, String>,
 }
 
@@ -73,6 +75,7 @@ struct DesktopLegalRiskState {
     loaded_scope: String,
     preview: Option<Arc<gridtimer_native::legal_scan::LegalScanPrepared>>,
     preview_digest: String,
+    preview_policy_digest: String,
     preview_version: Option<u64>,
     preparing_version: Option<u64>,
     waiting_for_save: bool,
@@ -118,6 +121,7 @@ impl Default for DesktopLegalRiskState {
             loaded_scope: String::new(),
             preview: None,
             preview_digest: String::new(),
+            preview_policy_digest: String::new(),
             preview_version: None,
             preparing_version: None,
             waiting_for_save: false,
@@ -286,6 +290,9 @@ impl TimerWindowsClient {
                 .load(AtomicOrdering::Acquire)
             && self.desktop_ui.legal_risk.preview_version == Some(self.data_version)
             && self.desktop_ui.legal_risk.scope == self.legal_scope()
+            && desktop_legal_read_exclusions(&self.desktop_legal_exclusion_path())
+                .is_ok_and(|policy| policy.digest()
+                    == self.desktop_ui.legal_risk.preview_policy_digest)
     }
 
     fn cancel_changed_legal_scan(&mut self) {
@@ -619,6 +626,7 @@ impl TimerWindowsClient {
         let scope = self.legal_scope();
         let version = self.data_version;
         let raw = self.state_json.clone();
+        let exclusion_path = self.desktop_legal_exclusion_path();
         let identity = self.ai_workspace_identity();
         let unlocked = self.desktop_ui.legal_risk.unlocked_notes.clone();
         let cancellation = Arc::clone(&self.desktop_ui.legal_risk.cancel);
@@ -634,18 +642,26 @@ impl TimerWindowsClient {
                 let active =
                     || !token.is_cancelled() && !cancellation.load(AtomicOrdering::Acquire);
                 let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+                let policy_read = desktop_legal_read_exclusions(&exclusion_path);
+                let policy_digest = policy_read.as_ref()
+                    .map(|policy| policy.digest()).unwrap_or_default();
                 let result = (|| {
                     if !active() {
                         return Err("扫描准备已取消".into());
                     }
+                    let policy = policy_read?;
                     let data =
                         serde_json::from_str::<DesktopAppData>(&raw).map_err(|e| e.to_string())?;
-                    let attachments =
-                        desktop_legal_attachment_inputs(&data, &unlocked, &identity, &active);
-                    let scan_raw = desktop_legal_current_scan_snapshot(&raw, &data)?;
+                    let index = KnowledgeDirectoryIndex::build(&data.notes, &data.note_folders);
+                    let excluded = desktop_legal_excluded_note_ids(&index, &policy)?;
+                    let attachments = desktop_legal_attachment_inputs(
+                        &data, &unlocked, &identity, &excluded, &active,
+                    );
+                    let scan_raw = desktop_legal_current_scan_snapshot(&raw, &data, &excluded)?;
                     drop(data);
                     let unlocked_values = unlocked
                         .iter()
+                        .filter(|(id, _)| !excluded.contains(*id))
                         .filter_map(|(id, note)| {
                             desktop_legal_current_scan_note(note)
                                 .ok()
@@ -673,6 +689,9 @@ impl TimerWindowsClient {
                     if !active() {
                         return Err("扫描准备已取消".into());
                     }
+                    if desktop_legal_read_exclusions(&exclusion_path)?.digest() != policy_digest {
+                        return Err("法律排除规则在准备期间发生变化，请重新准备扫描".into());
+                    }
                     Ok(Arc::new(prepared))
                 })();
                 let _ = tx.send(DesktopLegalPreparedOutcome {
@@ -680,6 +699,7 @@ impl TimerWindowsClient {
                     version,
                     cancellation,
                     digest,
+                    policy_digest,
                     result,
                 });
             },
@@ -776,6 +796,8 @@ impl TimerWindowsClient {
         let (tx, rx) = mpsc::channel();
         let scope = self.legal_scope();
         let state_path = self.state_path.clone();
+        let exclusion_path = self.desktop_legal_exclusion_path();
+        let expected_policy = self.desktop_ui.legal_risk.preview_policy_digest.clone();
         let version = self.data_version;
         let api_key = self.sync.ai_api_key.clone();
         let base_url = self.sync.ai_base_url.clone();
@@ -798,7 +820,12 @@ impl TimerWindowsClient {
                     &base_url,
                     &model,
                     &gridtimer_native::legal_sources::verified_laws(),
-                    |_, _| !cancellation.load(AtomicOrdering::Acquire) && !token.is_cancelled(),
+                    |_, _| {
+                        !cancellation.load(AtomicOrdering::Acquire)
+                            && !token.is_cancelled()
+                            && desktop_legal_read_exclusions(&exclusion_path)
+                                .is_ok_and(|policy| policy.digest() == expected_policy)
+                    },
                 );
                 let analysis_error = (!report.completed).then(|| {
                     format!(
