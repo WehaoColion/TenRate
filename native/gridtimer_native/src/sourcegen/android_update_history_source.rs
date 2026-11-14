@@ -1,3 +1,4 @@
+// v2.13.5.8 - Refine Android knowledge workspace information hierarchy and contextual controls.
 // v2.13.5.7 - Direct customer payment details from edit and retain legacy amount controls.
 // v2.13.5.6 - Display client charge and receipt details in the Android update history.
 // v2.13.5.5 - Record exact RMB client payments independently of the finance ledger.
@@ -71,7 +72,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.7";
+pub const LATEST_VERSION: &str = "2.13.5.8";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -101,6 +102,23 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.8",
+        updatedAt = "2026-11-15 04:25",
+        summary = "知识首页与通用画布优化，清晰区分主操作与辅助状态",
+        sections = listOf(
+            AndroidUpdateSection("知识工作空间", listOf(
+                "知识首页突出新建页面，将置顶、任务块与图片统计收束为辅助信息，并保留最近编辑提示。",
+                "目录筛选集中为位置、类型和排序操作，仍能清除筛选与查看完整文档。",
+                "目录子项视觉更克制，编辑器将已置顶和已加密清晰标识为状态。"
+            )),
+            AndroidUpdateSection("通用画布", listOf(
+                "统一画布创建入口的说明，普通画布与客户网络模板继续并存。",
+                "卡片优先展示编辑和连线，调整尺寸、颜色及移除操作归入更多设置。",
+                "客户已支付与待支付的项目明细继续和风控账本严格分离。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.7",
         updatedAt = "2026-11-13 17:59",
