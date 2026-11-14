@@ -608,6 +608,7 @@ impl TimerWindowsClient {
                         .canvas_page_title(&node.page_id)
                         .map(|(title, _, _)| title),
                     KnowledgeCanvasNodeKind::Note => Some("便签".into()),
+                    KnowledgeCanvasNodeKind::Client => Some(node.text.lines().next().unwrap_or("客户").into()),
                 });
             ui.painter().text(
                 board_rect.left_top() + egui::vec2(14.0, 12.0),
@@ -1409,6 +1410,27 @@ impl TimerWindowsClient {
                 3.0,
                 accent,
             );
+            if zoom < 0.35 {
+                // A distant overview is a navigation surface, not a tiny editable note.
+                // Keep hit targets usable without placing 12px text over a 2px card.
+                let hit = egui::Rect::from_center_size(
+                    rect.center(), egui::vec2(rect.width().max(18.0), rect.height().max(18.0))
+                );
+                let hit_response = ui.interact(
+                    hit, egui::Id::new(("knowledge_canvas_overview_node", &node.id)),
+                    egui::Sense::click()
+                ).on_hover_text("点击放大并查看卡片");
+                if hit_response.clicked() {
+                    let canvas = &mut self.desktop_ui.knowledge_canvas.store.canvases[canvas_index];
+                    canvas.center_x = node.x + node.width * 0.5;
+                    canvas.center_y = node.y + node.height * 0.5;
+                    canvas.zoom = 1.0;
+                    self.desktop_ui.knowledge_canvas.selected_nodes = vec![node.id.clone()];
+                    self.desktop_ui.knowledge_canvas.selected_edge = None;
+                    changed = true;
+                }
+                continue;
+            }
             let painter = ui.painter().with_clip_rect(rect.intersect(board_rect));
 
             let header_height = (38.0 * zoom).clamp(30.0, 46.0);
