@@ -1,3 +1,4 @@
+// v2.13.5.9 - Preserve encrypted AI conversation history and full knowledge-page exports.
 // v2.13.5.8 - Refine Android knowledge workspace information hierarchy and contextual controls.
 // v2.13.5.7 - Direct customer payment details from edit and retain legacy amount controls.
 // v2.13.5.6 - Display client charge and receipt details in the Android update history.
@@ -72,7 +73,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.8";
+pub const LATEST_VERSION: &str = "2.13.5.9";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -102,6 +103,23 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.9",
+        updatedAt = "2026-11-15 07:30",
+        summary = "AI 多轮对话本机加密保存，整段收录并追加到同一个知识页面",
+        sections = listOf(
+            AndroidUpdateSection("对话防丢失", listOf(
+                "完整文字问答独立于模型最近 8 轮、24,000 字符的上下文限制，离开页面后可从历史对话恢复。",
+                "按账户和工作区隔离，使用系统密钥加密及原子写入；保存失败时保留当前答案并提供重试。",
+                "新对话不再清空旧记录；切换直接问 AI 和知识库模式时保留旧会话。"
+            )),
+            AndroidUpdateSection("知识页面", listOf(
+                "整段问答可以一次性保存到一个知识页面；继续追问后仍追加到同一页面。",
+                "页面写入使用已确认的持久化回调，重复保存使用固定页面标识降低重复创建风险。",
+                "追加只增加新问答块，保留知识页中已有的人工编辑；图片原件仍需主动再次引用。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.8",
         updatedAt = "2026-11-15 04:25",
