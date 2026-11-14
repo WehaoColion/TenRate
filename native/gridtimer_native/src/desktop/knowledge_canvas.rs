@@ -654,6 +654,10 @@ impl TimerWindowsClient {
         // area on the right instead of hiding the canvas card beneath a modal.
         let board_size = if has_customer && available.x >= 850.0 {
             egui::vec2((available.x - 440.0).max(390.0), available.y)
+        } else if has_customer && available.x >= 640.0 {
+            // On a compact 760px desktop window the inspector must not float
+            // over the selected customer card. Reserve a narrow canvas pane.
+            egui::vec2((available.x - 350.0).max(280.0), available.y)
         } else {
             available
         };
