@@ -1645,13 +1645,37 @@ private fun KnowledgeAiDialog(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text(if (agentMode) "AI Agent" else "AI 问答", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (!agentMode) TextButton(enabled = !busy, onClick = {
-                                boundary.invalidate(); conversation.clear(); invalidateAnswer(); question = ""; selectedImageUris = emptyList(); statusText = ""
-                            }) { Text("新对话") }
-                            CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() })
+                            if (!agentMode) {
+                                TextButton(enabled = !busy && !savingConversation && pendingTurn == null,
+                                    onClick = { showChatHistory = !showChatHistory }) { Text("历史") }
+                                TextButton(enabled = !busy && !savingConversation && pendingTurn == null,
+                                    onClick = ::beginNewConversation) { Text("新对话") }
+                            }
+                            CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = {
+                                if (savingConversation || pendingTurn != null)
+                                    statusText = "仍有未确认保存的内容，请先完成保存。"
+                                else { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }
+                            })
                         }
                     }
             LazyColumn(state = messageListState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!agentMode && showChatHistory) {
+                    item { Text("历史对话 · 本机加密保存", fontWeight = FontWeight.SemiBold) }
+                    items(chatSessions, key = { "history-" + it.id }) { chat ->
+                        TextButton(
+                            enabled = !busy && !savingConversation && pendingTurn == null,
+                            onClick = { openHistoricalConversation(chat) }
+                        ) {
+                            Column {
+                                Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(chat.turns.size.toString() + " 轮" +
+                                    if (chat.pageId != null) " · 已关联知识页" else "",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    if (chatSessions.isEmpty()) item { Text("暂无历史对话。") }
+                }
                 item {
                     TextButton(onClick = { boundary.invalidate(); onDismiss(); onOpenAiSettings() }) {
                         Text(if (configuration.testable) "${configuration.model} · ${configuration.recipientHost} · 设置" else "配置 DeepSeek / 其他 AI", maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1752,8 +1776,33 @@ private fun KnowledgeAiDialog(
                         TextButton(onClick = { stopAgent("已取消 Agent") }, enabled = !agentCancelling) { Text("取消并停止后续请求") }
                     }
                 }
+                if (!agentMode && !historyReady) item { Text("正在恢复本机对话记录…") }
+                if (!agentMode && historyError.isNotBlank()) item {
+                    Text(historyError, color = MaterialTheme.colorScheme.error)
+                }
+                if (!agentMode && pendingTurn != null) item {
+                    TextButton(onClick = ::retrySavingTurn, enabled = !busy) { Text("重试保存本轮回答") }
+                }
                 if (statusText.isNotBlank()) item {
-                    Text(statusText, style = MaterialTheme.typography.bodyMedium, color = if (answer.isBlank() && !busy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    Text(statusText, style = MaterialTheme.typography.bodyMedium,
+                        color = if (statusText.contains("失败") || statusText.contains("未确认"))
+                            MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                }
+                if (!agentMode && conversation.isNotEmpty()) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("本次对话共 " + conversation.size + " 轮，完整文字记录保留在本机。",
+                            style = MaterialTheme.typography.bodySmall)
+                        PhysicalButton(label = if (savingConversation) "正在核验知识页保存"
+                                else "保存整段对话为一个知识页",
+                            icon = Icons.Rounded.SaveAlt, accent = notesAccentColor, filled = true,
+                            enabled = historyReady && historyError.isBlank() && !busy &&
+                                !savingConversation && pendingTurn == null && !agentBusy,
+                            modifier = Modifier.fillMaxWidth(), onClick = ::saveWholeConversation)
+                        val linked = currentChat?.pageId
+                        if (linked != null) TextButton(
+                            onClick = { onOpenConversationPage(linked) },
+                            enabled = !savingConversation && !busy) { Text("查看关联知识页") }
+                    }
                 }
                 if (!agentMode) {
                     items(conversation, key = { "turn-${it.id}" }) { entry ->
@@ -1762,10 +1811,10 @@ private fun KnowledgeAiDialog(
                                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                                     Text("你", style = MaterialTheme.typography.labelSmall, color = notesAccentColor)
                                     Text(entry.turn.question, style = MaterialTheme.typography.bodyLarge)
-                                    if (entry.imageUris.isNotEmpty()) {
+                                    if (entry.imageCount > 0) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text("附图 " + entry.imageUris.size + " 张", style = MaterialTheme.typography.labelSmall)
-                                            TextButton(enabled = !busy && !agentBusy, onClick = {
+                                            Text("附图 " + entry.imageCount + " 张", style = MaterialTheme.typography.labelSmall)
+                                            TextButton(enabled = entry.imageUris.isNotEmpty() && !busy && !agentBusy, onClick = {
                                                 selectedImageUris = entry.imageUris
                                                 if (question.isBlank()) question = "继续分析这些图片"
                                                 invalidateAnswer()
@@ -1782,7 +1831,7 @@ private fun KnowledgeAiDialog(
                                     clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("AI 回答", entry.turn.answer))
                                     Toast.makeText(context, "已复制回答原文", Toast.LENGTH_SHORT).show()
                                 }) { Text("复制回答") }
-                                TextButton(enabled = !busy && !agentBusy, onClick = { onSaveAnswer(entry.turn.question, entry.turn.answer, entry.sources) }) { Text("保存为知识页") }
+                                TextButton(enabled = !busy && !agentBusy, onClick = { onSaveAnswer(entry.turn.question, entry.turn.answer, entry.sources) }) { Text("单独保存本轮") }
                             }
                             entry.sources.forEachIndexed { index, source ->
                                 KnowledgeSourceCard(source, index + 1) { onOpenSource(source) }
@@ -1876,10 +1925,11 @@ private fun KnowledgeAiDialog(
                 }
                 PhysicalButton(label = if (busy) "正在回答" else if (conversation.isEmpty()) "发送" else "继续提问",
                     icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
-                    enabled = !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() &&
+                    enabled = historyReady && historyError.isBlank() && pendingTurn == null &&
+                        !savingConversation && !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() &&
                         (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
                     modifier = Modifier.fillMaxWidth(), onClick = ::requestAnswer)
-                Text("最多保留 8 轮、24,000 字符的文本历史；图片只在明确选择时发送，追问可手动再次引用。", style = MaterialTheme.typography.labelSmall,
+                Text("模型上下文最多取最近 8 轮、24,000 字符；本机保留全部文字问答。图片原件不自动归档，须手动再次引用。", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
             }
           }
