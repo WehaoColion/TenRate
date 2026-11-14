@@ -101,7 +101,22 @@ impl TimerWindowsClient {
             self.status = "画布关系已达到数量上限".into();
             return;
         }
-        let (x, y) = knowledge_canvas_next_position(canvas);
+        let (x, y) = if let Some(parent_id) = parent {
+            let parent_card = canvas.nodes.iter()
+                .find(|node| node.id == parent_id)
+                .expect("validated existing customer");
+            let direct_children = canvas.edges.iter()
+                .filter(|edge| edge.from == parent_id
+                    && edge.relation.as_deref() == Some("referral")).count();
+            (parent_card.x + 210.0,
+                parent_card.y + direct_children as f32 * 162.0)
+        } else if canvas.nodes.is_empty() {
+            // The first customer must appear in the visible center,
+            // not at the legacy -500 world-unit grid origin.
+            (canvas.center_x - 96.0, canvas.center_y - 66.0)
+        } else {
+            knowledge_canvas_next_position(canvas)
+        };
         let new_id = random_desktop_identifier("knowledge-canvas-client");
         canvas.nodes.push(KnowledgeCanvasNode {
             id: new_id.clone(),
@@ -229,12 +244,16 @@ impl TimerWindowsClient {
         }
         let mut action: Option<Value> = None;
         let mut new_child: Option<String> = None;
+        let compact = ctx.screen_rect().width() < 900.0;
+        let inspector_y = if ctx.screen_rect().height() < 650.0 { 72.0 } else { 212.0 };
+        let inspector_height = (ctx.screen_rect().height() - inspector_y - 52.0).max(160.0);
         egui::Window::new("客户资料与收付款")
             .id(egui::Id::new(("knowledge_canvas_customer_inspector", &node.id)))
-            .default_width(410.0)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-14.0, inspector_y))
+            .default_width(if compact { 350.0 } else { 410.0 })
             .resizable(true)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().max_height(580.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(inspector_height).show(ui, |ui| {
                     let d = &mut self.desktop_ui.knowledge_canvas.customer_draft;
                     ui.label("客户姓名");
                     ui.text_edit_singleline(&mut d.name);
