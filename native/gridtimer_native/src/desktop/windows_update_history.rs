@@ -5,8 +5,9 @@
 // v1.1.0.6 Windows - Require valid visible money drafts before saving or reviewing finance.
 // v1.1.0.5 Windows - Preserve exact finance amounts during editing and sync.
 // v1.1.0.4 Windows - Repair automatic desktop entry maintenance.
-const WINDOWS_UPDATE_HISTORY_CURRENT_VERSION: &str = "1.1.0.11";
-const WINDOWS_UPDATE_HISTORY_CURRENT_TEXT: &str = "版本 1.1.0.11\n更新时间：2026-11-01（源码候选）\n\n同步服务在历史空间达到配额而拒绝写入时，新增可核对的历史压缩快照、历史媒体与引用元数据分项用量，以及版本与附件引用数量。检测与统计为只读，不会删除历史或覆盖客户端现有资料。\n\n此更新修正 Windows、同步服务、守护程序和预览安装包的版本标识。原有 24 MiB 历史限额暂未提高，历史增量压缩与媒体去重尚待后续更新；本版通过构建和部署后，才会在实际服务器上生效。";
+const WINDOWS_UPDATE_HISTORY_CURRENT_VERSION: &str = "1.1.0.12";
+const WINDOWS_UPDATE_HISTORY_CURRENT_TEXT: &str = "版本 1.1.0.12\\n更新时间：2026-11-14（Windows 源码候选）\\n\\n知识画布新增客户卡片、独立客户网络模板、客户资料与已付待付金额。款项名称、应收金额、服务地点和逐笔实收日期、地点、方式使用 Android 共用 Rust 校验，历史金额可以安全整理为收款项目；客户金额不进入风控账本。\\n\\n客户引荐只能有一位直接推荐人，拒绝形成循环，支持独立的推荐层级排列。画布缩放扩展到 1%～250%，低倍率仍可定位卡片。原有 Windows 画布和知识资料保持原位，发行候选不替换正式同步服务。";
+const WINDOWS_UPDATE_HISTORY_V11011_TEXT: &str = "版本 1.1.0.11\n更新时间：2026-11-01（源码候选）\n\n同步服务在历史空间达到配额而拒绝写入时，新增可核对的历史压缩快照、历史媒体与引用元数据分项用量，以及版本与附件引用数量。检测与统计为只读，不会删除历史或覆盖客户端现有资料。\n\n此更新修正 Windows、同步服务、守护程序和预览安装包的版本标识。原有 24 MiB 历史限额暂未提高，历史增量压缩与媒体去重尚待后续更新；本版通过构建和部署后，才会在实际服务器上生效。";
 const WINDOWS_UPDATE_HISTORY_V11010_TEXT: &str = "版本 1.1.0.10\n更新时间：2026-10-29 06:59\n\n修复 Windows 同步时将安卓图片导入占位符误认为无效附件，导致附件引用核对无法完成的问题。只有与同一份文档图片块严格匹配的临时标识才会被识别；真实附件和无法确认的引用继续受到保护。\n\n账户、已配对手机、数据目录及同步协议继续沿用，安卓安装包不变。";
 const WINDOWS_UPDATE_HISTORY_V1109_TEXT: &str = "版本 1.1.0.9\n更新时间：2026-10-28 18:02\n\n同步服务兼容安卓图片导入期间产生的临时占位标识，避免将它误判成无效附件。笔记正文和历史记录继续保留；其他无效附件标识仍会被拒绝。\n\nWindows 客户端、同步服务和守护程序统一更新，账户、已配对手机、数据目录及同步协议继续沿用。";
 const WINDOWS_UPDATE_HISTORY_V1109_PREVIEW_TEXT: &str = "版本 1.1.0.9\n更新时间：2026-10-25（源码候选）\n\n对齐安卓连续 AI 追问：问答面板保留成功的最近对话，下一次请求携带最多 8 轮、24,000 字符的上下文，已发送的问题、回答与本次来源仍受工作区、配置、知识范围及一次性授权限制。取消、切换范围及账户时不跨边界复用历史。\n\n风控默认进入每日收支，顶部增加记支出、记收入快捷入口和风险分析入口，快捷记账创建有真实记录编号的当天草稿，沿用原精确金额、确认失效及持久保存门禁。原风险计算和月季年数据不变。\n\nAgent 工作区加入任务目标、选择资料、核对授权、执行任务及审阅结果阶段，提供常用目标模板、完成后新任务入口和未保存草稿放弃确认。保留原受限工具、资料许可、真实进度与独立核验。\n\n知识页图片导入后保留末尾图片作为插入锚点，图片下方可以直接增加正文段落，原生文件选择器支持多张图片一起导入并合并引用提交，不改附件编号、恢复日志和同步格式。导出 PNG 在保留原有 Canvas 规则的同时尝试使用内置 KaTeX 排版公式，浏览器不允许绘制时回退到原 LaTeX 文字。共享的流式图片摘要与 Windows 原有恢复保护继续生效。\n\n本版仅是 Windows 源码候选，尚未替换正式 Windows 1.1.0.7 可执行程序与同步服务；需要 Windows CI 和真实桌面验收。Android 仍独立为 2.23.2.55，不改其 APK、签名与同步协议。\n";
@@ -30,7 +31,7 @@ impl TimerWindowsClient {
             egui::CollapsingHeader::new(format!("更新记录 · v{}", WINDOWS_CLIENT_VERSION))
                 .default_open(false)
                 .show(ui, |ui| {
-                    egui::CollapsingHeader::new("1.1.0.11 · 历史容量诊断与版本校正")
+                    egui::CollapsingHeader::new("1.1.0.12 · Windows 客户网络与收付款")
                         .default_open(true)
                         .show(ui, |ui| {
                             if ui.button("复制本版完整更新说明").clicked() { ui.output_mut(|output| output.copied_text = WINDOWS_UPDATE_HISTORY_CURRENT_TEXT.to_owned()); }
@@ -39,6 +40,12 @@ impl TimerWindowsClient {
                     egui::CollapsingHeader::new("历史版本")
                         .default_open(false)
                         .show(ui, |ui| {
+                    egui::CollapsingHeader::new("1.1.0.11 · 历史容量诊断与版本校正")
+                        .default_open(false).show(ui, |ui| {
+                            for paragraph in WINDOWS_UPDATE_HISTORY_V11011_TEXT.split("\\n\\n") {
+                                windows_update_note(ui, paragraph);
+                            }
+                        });
                     egui::CollapsingHeader::new("1.1.0.10 · 修复附件引用核对")
                         .default_open(false).show(ui, |ui| {
                             for paragraph in WINDOWS_UPDATE_HISTORY_V11010_TEXT.split("\n\n") { windows_update_note(ui, paragraph); }
