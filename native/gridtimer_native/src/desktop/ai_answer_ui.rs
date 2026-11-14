@@ -205,6 +205,7 @@ impl TimerWindowsClient {
         if previous_configuration.as_deref().is_some_and(|previous| previous != configuration) {
             self.desktop_ai.turns.clear();
             self.desktop_ai.images.clear();
+        self.desktop_ai.thumbnail_textures.clear();
             self.knowledge_ai_answer = None;
         }
         let previous_workspace = self.desktop_ai.last_workspace.replace(workspace.clone());
@@ -218,6 +219,7 @@ impl TimerWindowsClient {
             self.knowledge_ai_answer = None;
             self.desktop_ai.turns.clear();
             self.desktop_ai.images.clear();
+        self.desktop_ai.thumbnail_textures.clear();
             self.desktop_ai.probe_binding = None;
             self.desktop_ai.probe_ok = false;
             self.desktop_ai.probe_message.clear();
@@ -451,6 +453,7 @@ impl TimerWindowsClient {
         let image_bytes = preview.images.iter().map(|image| (*image.bytes).clone())
             .collect::<Vec<_>>();
         self.desktop_ai.images.clear();
+        self.desktop_ai.thumbnail_textures.clear();
         let api_key = self.sync.ai_api_key.clone();
         let base_url = self.sync.ai_base_url.clone();
         let model = self.sync.ai_model.clone();
@@ -654,6 +657,7 @@ impl TimerWindowsClient {
         self.desktop_ai.priority_note_id = None;
         self.desktop_ai.preview = None;
         self.desktop_ai.images.clear();
+        self.desktop_ai.thumbnail_textures.clear();
     }
 
     fn open_desktop_document_ai(&mut self, note_id: &str) {
