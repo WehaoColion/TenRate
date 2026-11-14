@@ -162,7 +162,7 @@ mod desktop_legal_destination_tests {
             assert_eq!(desktop_legal_destination(&data, path), None, "{path}");
         }
         assert!(desktop_legal_destination(&data, "note/n/current/block/live").is_some());
-        let snapshot = desktop_legal_current_scan_snapshot(&raw, &data).unwrap();
+        let snapshot = desktop_legal_current_scan_snapshot(&raw, &data, &HashSet::new()).unwrap();
         let prepared = gridtimer_native::legal_scan::prepare_scan(
             &snapshot,
             "synthetic-current-scope",
@@ -191,7 +191,7 @@ mod desktop_legal_destination_tests {
         let data: DesktopAppData = serde_json::from_str(&raw).unwrap();
         assert!(desktop_legal_current_attachments(&data.notes[0]).is_empty());
         assert!(desktop_legal_destination(&data, "note/n/current/attachment/old-file").is_none());
-        let snapshot = desktop_legal_current_scan_snapshot(&raw, &data).unwrap();
+        let snapshot = desktop_legal_current_scan_snapshot(&raw, &data, &HashSet::new()).unwrap();
         let prepared = gridtimer_native::legal_scan::prepare_scan(
             &snapshot,
             "synthetic-current-scope",
