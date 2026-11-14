@@ -199,6 +199,7 @@ fn knowledge_directory_saved_order_survives_content_dates_and_discards_only_miss
     );
     let invalid = KnowledgeDirectoryPreferences {
         parents: BTreeMap::from([("null".into(), saved)]),
+        ..Default::default()
     };
     assert!(!invalid.validate());
     assert_ne!(
