@@ -1115,6 +1115,8 @@ private fun KnowledgeAiDialog(
     onDismiss: () -> Unit,
     onOpenSource: (KnowledgeSourceCandidate) -> Unit,
     onSaveAnswer: (String, String, List<KnowledgeSourceCandidate>) -> Unit,
+    onSaveConversation: (DurableAiSession, (String?, String) -> Unit) -> Unit,
+    onOpenConversationPage: (String) -> Unit,
     onSaveAgentDraft: (String, String, String, List<KnowledgeSourceCandidate>, (Boolean, String) -> Unit) -> Unit
 ) {
     val context = LocalContext.current
@@ -1140,9 +1142,54 @@ private fun KnowledgeAiDialog(
     var searchScope by rememberSaveable(workspaceKey, priorityNoteId, selectedFolderId) {
         mutableStateOf(if (selectedFolderId == null) KnowledgeSearchScope.ALL else KnowledgeSearchScope.CURRENT_FOLDER)
     }
-    val conversation = remember(workspaceKey, identity, priorityNoteId, queryMode, configuration, searchScope, agentMode) {
-        mutableStateListOf<KnowledgeConversationEntry>()
+    // Tokens are intentionally omitted: a refresh must not orphan previous history.
+    val historyOwner = listOf(workspaceKey, syncSession.userId,
+        syncSession.serverInstanceId, syncSession.accountNamespace).joinToString("\u0000")
+    var chatSessions by remember(workspaceKey, historyOwner) { mutableStateOf<List<DurableAiSession>>(emptyList()) }
+    var activeChatId by remember(workspaceKey, historyOwner) { mutableStateOf(UUID.randomUUID().toString()) }
+    var historyReady by remember(workspaceKey, historyOwner) { mutableStateOf(false) }
+    var historyError by remember(workspaceKey, historyOwner) { mutableStateOf("") }
+    var pendingTurn by remember(workspaceKey, historyOwner) { mutableStateOf<DurableAiTurn?>(null) }
+    val ephemeralImages = remember(workspaceKey, historyOwner) {
+        mutableStateMapOf<String, List<android.net.Uri>>()
     }
+    var showChatHistory by remember(workspaceKey, historyOwner) { mutableStateOf(false) }
+    var savingConversation by remember(workspaceKey, historyOwner) { mutableStateOf(false) }
+    LaunchedEffect(historyOwner) {
+        val restored = withContext(Dispatchers.IO) {
+            runCatching { DurableAiConversationStore.read(context, historyOwner) }
+        }
+        if (restored.isSuccess) {
+            chatSessions = restored.getOrThrow()
+            val latest = chatSessions.firstOrNull()
+            if (latest != null) {
+                activeChatId = latest.id
+                val restoredMode = if (latest.mode == KnowledgeAiMode.KNOWLEDGE.wireValue)
+                    KnowledgeAiMode.KNOWLEDGE else KnowledgeAiMode.DIRECT
+                boundary.changeMode(restoredMode)
+                queryMode = restoredMode
+            }
+        } else historyError = "加密对话存档无法读取，已禁止覆盖。请先检查本机存储或密钥。"
+        historyReady = true
+    }
+    val currentChat = chatSessions.firstOrNull { it.id == activeChatId }
+    val sourceNoteIndex = remember(appData.notes) { appData.notes.associateBy { it.id } }
+    val conversation = (currentChat?.turns.orEmpty() +
+        listOfNotNull(pendingTurn?.takeIf { currentChat?.id == null || activeChatId == currentChat.id }))
+        .map { record ->
+            KnowledgeConversationEntry(
+                id = record.id,
+                turn = KnowledgeConversationTurn(record.question, record.answer),
+                sources = record.sourceIds.mapNotNull { id ->
+                    val note = sourceNoteIndex[id] ?: return@mapNotNull null
+                    KnowledgeSourceCandidate(note,
+                        note.folderId?.let { appData.findNoteFolder(it)?.name }.orEmpty(),
+                        note.content.take(760))
+                },
+                imageUris = ephemeralImages[record.id].orEmpty(),
+                imageCount = record.imageCount
+            )
+        }
     val messageListState = rememberLazyListState()
     var answer by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf("") }
     var answerQuestion by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf("") }
@@ -1248,6 +1295,7 @@ private fun KnowledgeAiDialog(
         boundary.changeMode(next)
         invalidateAnswer()
         queryMode = next
+        activeChatId = UUID.randomUUID().toString()
         selectedImageUris = emptyList()
         showSendingContent = false
         if (busy) statusText = "模式已切换，旧请求结束前不能重复发送。"
@@ -1287,7 +1335,7 @@ private fun KnowledgeAiDialog(
     }
 
     fun requestAnswer() {
-        if (agentMode || agentBusy) return
+        if (agentMode || agentBusy || !historyReady || historyError.isNotBlank() || pendingTurn != null) return
         val safeQuestion = question.trim()
         val requestImageUris = selectedImageUris.toList()
         val sources = sourceCandidates.toList()
@@ -1299,6 +1347,7 @@ private fun KnowledgeAiDialog(
         observedConfiguration = configuration
         val ticket = boundary.begin(true, configuration.testable, safeQuestion, sources.size) ?: return
         val requestMode = queryMode
+        val requestChatId = activeChatId
         val requestIdentity = identity
         val requestConfiguration = configuration
         val requestSignature = sourceSignature
@@ -1350,10 +1399,25 @@ private fun KnowledgeAiDialog(
                 if (outcome != null && latestBoundary === boundary) {
                     if (outcome.ok) {
                         answer = outcome.text; answerQuestion = safeQuestion; answerSources = sources
-                        conversation.add(KnowledgeConversationEntry(turn = KnowledgeConversationTurn(safeQuestion, outcome.text), sources = sources, imageUris = requestImageUris))
+                        val turn = DurableAiTurn(UUID.randomUUID().toString(), safeQuestion,
+                            outcome.text, sources.map { it.note.id }, requestImageUris.size)
+                        ephemeralImages[turn.id] = requestImageUris
+                        val persisted = withContext(Dispatchers.IO) {
+                            runCatching { DurableAiConversationStore.append(
+                                context, historyOwner, requestChatId, requestMode.wireValue, turn) }
+                        }
+                        if (persisted.isSuccess && activeChatId == requestChatId) {
+                            chatSessions = persisted.getOrThrow()
+                            pendingTurn = null
+                        } else {
+                            pendingTurn = turn
+                        }
                         question = ""
                         selectedImageUris = emptyList()
-                        statusText = if (requestMode == KnowledgeAiMode.DIRECT) "AI 回答完成" else "回答完成 · ${sources.size} 个来源"
+                        statusText = if (pendingTurn == null) "本轮问答已加密保存到本机" else
+                            "本机保存失败：请点击重试保存，成功之前不要关闭对话。"
+                        // Previous model-context limits do not truncate local history.
+                        // statusText = if (requestMode == KnowledgeAiMode.DIRECT) "AI 回答完成" else "回答完成 · ${sources.size} 个来源"
                     } else statusText = outcome.message
                 }
             } finally {
@@ -1361,6 +1425,73 @@ private fun KnowledgeAiDialog(
                     val interrupted = cancelling
                     busy = false; cancelling = false
                     if (interrupted) statusText = "请求已结束，可以重新发送。"
+                }
+            }
+        }
+    }
+
+
+    fun beginNewConversation() {
+        if (busy || savingConversation || pendingTurn != null || !historyReady) return
+        boundary.invalidate()
+        activeChatId = UUID.randomUUID().toString()
+        question = ""; selectedImageUris = emptyList()
+        showChatHistory = false
+        invalidateAnswer()
+        statusText = "新对话已开始，旧对话仍在历史记录中。"
+    }
+
+    fun openHistoricalConversation(chat: DurableAiSession) {
+        if (busy || savingConversation || pendingTurn != null) return
+        val next = if (chat.mode == KnowledgeAiMode.KNOWLEDGE.wireValue)
+            KnowledgeAiMode.KNOWLEDGE else KnowledgeAiMode.DIRECT
+        boundary.changeMode(next)
+        queryMode = next
+        activeChatId = chat.id
+        question = ""; selectedImageUris = emptyList()
+        showChatHistory = false
+        invalidateAnswer()
+        statusText = "已恢复 " + chat.turns.size + " 轮完整对话。"
+    }
+
+    fun retrySavingTurn() {
+        val turn = pendingTurn ?: return
+        if (busy || !historyReady || historyError.isNotBlank()) return
+        busy = true
+        scope.launch {
+            val persisted = withContext(Dispatchers.IO) {
+                runCatching { DurableAiConversationStore.append(
+                    context, historyOwner, activeChatId, queryMode.wireValue, turn) }
+            }
+            if (persisted.isSuccess) {
+                chatSessions = persisted.getOrThrow()
+                pendingTurn = null
+                statusText = "本轮已安全保存，可以继续追问。"
+            } else statusText = "仍无法写入本机加密存档，请保留窗口并检查存储。"
+            busy = false
+        }
+    }
+
+    fun saveWholeConversation() {
+        val chat = currentChat ?: return
+        if (busy || savingConversation || pendingTurn != null ||
+            historyError.isNotBlank() || chat.turns.isEmpty()) return
+        savingConversation = true
+        onSaveConversation(chat) { pageId, message ->
+            if (pageId == null) {
+                statusText = message.ifBlank { "知识页未确认保存，请重试。" }
+                savingConversation = false
+            } else {
+                scope.launch {
+                    val linked = withContext(Dispatchers.IO) {
+                        runCatching { DurableAiConversationStore.pageCommitted(
+                            context, historyOwner, chat.id, pageId, chat.turns.size) }
+                    }
+                    if (linked.isSuccess) {
+                        chatSessions = linked.getOrThrow()
+                        statusText = "已保存 " + chat.turns.size + " 轮到同一知识页，后续可继续追加。"
+                    } else statusText = "知识页已保存，但本机关联未确认；重复操作不会创建新页面。"
+                    savingConversation = false
                 }
             }
         }
@@ -1501,7 +1632,12 @@ private fun KnowledgeAiDialog(
         }
     }
 
-    Dialog(onDismissRequest = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    Dialog(onDismissRequest = {
+        if (!savingConversation && pendingTurn == null) {
+            if (agentBusy) stopAgent("已关闭 Agent 面板")
+            onDismiss()
+        }
+    }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Box(modifier = Modifier.fillMaxSize().padding(8.dp).imePadding().navigationBarsPadding()
             .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))) {
         Surface(modifier = Modifier.fillMaxWidth().fillMaxHeight(), shape = RoundedCornerShape(24.dp), color = flowusPanelBackground(), border = BorderStroke(1.dp, flowusBorderColor())) {
