@@ -293,8 +293,7 @@ const EMPTY_STATE: &str = r####"        if (!trashMode && filteredActiveNotes.is
 
 "####;
 
-const CONTROLS: &str = r####"@OptIn(ExperimentalLayoutApi::class)
-private fun NoteCollectionControls(
+const CONTROLS: &str = r####"private fun NoteCollectionControls(
     quickFilter: NoteQuickFilter,
     quickFilterCounts: Map<NoteQuickFilter, Int>,
     selectedFolderId: String?,
