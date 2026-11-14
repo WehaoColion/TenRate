@@ -214,3 +214,23 @@ mod desktop_legal_destination_tests {
         assert!(value["document"].get("knowledge").is_none());
     }
 }
+
+    #[test]
+    fn legal_knowledge_exclusion_never_enters_the_remote_scan_snapshot() {
+        let raw = json!({"notes":[
+            {"id":"excluded","title":"客户秘密文书","content":"禁止外传的客户明细"},
+            {"id":"allowed","title":"允许的知识资料","content":"可以发送的学习记录"}
+        ]}).to_string();
+        let data: DesktopAppData = serde_json::from_str(&raw).unwrap();
+        let excluded = HashSet::from(["excluded".to_owned()]);
+        let cleaned = desktop_legal_current_scan_snapshot(&raw,&data,&excluded).unwrap();
+        assert!(cleaned.contains("可以发送的学习记录"));
+        assert!(!cleaned.contains("禁止外传"));
+        assert!(!cleaned.contains("客户秘密文书"));
+        assert!(raw.contains("禁止外传"), "original records cannot be mutated by scan preparation");
+        let prepared = gridtimer_native::legal_scan::prepare_scan(
+            &cleaned, "policy-bound-scope", 500, "[]", "[]"
+        ).unwrap();
+        let manifest = serde_json::to_string(&prepared).unwrap();
+        assert!(!manifest.contains("禁止外传"));
+    }
