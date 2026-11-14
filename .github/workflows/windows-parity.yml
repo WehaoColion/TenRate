@@ -35,9 +35,34 @@ jobs:
         run: rustup update stable
       - name: Compile Windows client
         run: cargo check --locked --features desktop --bin timer_windows_client
+      - name: Compile native desktop visual test harness
+        run: cargo test --locked --features desktop --bin timer_windows_client native_window_visual_review --no-run
+      - name: Install Mesa CPU OpenGL for headless Windows runner
+        uses: f3d-app/install-mesa-windows-action@v1
+        with:
+          path: ${{ runner.temp }}/tenrate-mesa
+          version: 24.0.5
+      - name: Attach Mesa software renderer to test executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mesa = Join-Path $env:RUNNER_TEMP 'tenrate-mesa'
+          $dll = Join-Path $mesa 'opengl32.dll'
+          if (!(Test-Path -LiteralPath $dll -PathType Leaf)) { throw 'Mesa software OpenGL library missing' }
+          $binaries = @(Get-ChildItem 'target/debug' -Recurse -Filter 'timer_windows_client-*.exe' -File)
+          if ($binaries.Count -eq 0) { throw 'Native Windows test executable missing' }
+          $dlls = @(Get-ChildItem $mesa -Filter '*.dll' -File)
+          foreach ($exe in $binaries) {
+            foreach ($lib in $dlls) {
+              Copy-Item -LiteralPath $lib.FullName -Destination $exe.DirectoryName -Force
+            }
+          }
+          "Mesa software renderer installed next to $($binaries.Count) native Windows test binaries" >> $env:GITHUB_STEP_SUMMARY
       - name: Launch real Windows GUI and inspect captures
         env:
           TIMER_VISUAL_REVIEW_DIR: ${{ runner.temp }}\\tenrate-visual
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: '1'
         run: cargo test --locked --features desktop --bin timer_windows_client native_window_visual_review -- --ignored --nocapture
       - name: Upload native Windows GUI screenshots
         if: always()
