@@ -97,6 +97,7 @@ include!("../desktop/agent_ui.rs");
 include!("../desktop/ai_current_content.rs");
 include!("../desktop/knowledge_exit.rs");
 include!("../desktop/knowledge_canvas.rs");
+include!("../desktop/knowledge_canvas_customer.rs");
 include!("../desktop/knowledge_experience.rs");
 include!("../desktop/knowledge_workspace.rs");
 include!("../desktop/knowledge_database_ui.rs");
