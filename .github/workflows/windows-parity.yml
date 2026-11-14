@@ -37,6 +37,9 @@ jobs:
         run: cargo check --locked --features desktop --bin timer_windows_client
       - name: Compile native desktop visual test harness
         run: cargo test --locked --features desktop --bin timer_windows_client native_window_visual_review --no-run
+      - name: Prepare software OpenGL staging
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'tenrate-mesa') | Out-Null
       - name: Install Mesa CPU OpenGL for headless Windows runner
         uses: f3d-app/install-mesa-windows-action@v1
         with:
