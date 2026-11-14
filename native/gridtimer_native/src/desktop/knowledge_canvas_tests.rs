@@ -209,6 +209,67 @@ fn windows_customer_amounts_and_receipts_use_shared_rust_precision() {
 }
 
 #[test]
+fn windows_customer_corrections_keep_integer_cents_and_reject_unsafe_deletion() {
+    let customer = KnowledgeCanvasNode {
+        id: "client-edit".into(),
+        kind: KnowledgeCanvasNodeKind::Client,
+        text: "客户甲\\n".into(),
+        ..Default::default()
+    };
+    let mut core = knowledge_canvas_customer_to_core(&customer);
+    let apply = |node: &mut gridtimer_native::android_canvas::Node, command: Value| {
+        gridtimer_native::android_canvas::apply_customer_money_operation(node, &command)
+    };
+    apply(&mut core, json!({"op":"addClientCharge","id":"client-edit",
+        "chargeId":"charge-edit","title":"咨询","totalYuan":"100.00",
+        "serviceLocation":"长沙","dueOn":"2026-11-30","note":"首期"})).unwrap();
+    apply(&mut core, json!({"op":"addClientReceipt","id":"client-edit",
+        "chargeId":"charge-edit","receiptId":"receipt-edit",
+        "amountYuan":"30.00","receivedOn":"2026-11-12",
+        "location":"长沙","channel":"转账","note":"首笔"})).unwrap();
+    assert_eq!(gridtimer_native::android_canvas::checked_client_totals(&core).unwrap(),
+        (3_000, 7_000));
+
+    let before = core.clone();
+    assert!(apply(&mut core, json!({"op":"removeClientCharge",
+        "id":"client-edit","chargeId":"charge-edit"})).is_err());
+    assert_eq!(core, before, "charges with payments must not be deleted");
+    assert!(apply(&mut core, json!({"op":"updateClientCharge","id":"client-edit",
+        "chargeId":"charge-edit","title":"违规缩减","totalYuan":"20.00",
+        "serviceLocation":"","dueOn":"","note":""})).is_err());
+    assert_eq!(core, before, "lowering a charge below collected money must roll back");
+
+    apply(&mut core, json!({"op":"updateClientCharge","id":"client-edit",
+        "chargeId":"charge-edit","title":"咨询二期","totalYuan":"125.50",
+        "serviceLocation":"株洲","dueOn":"2026-12-15","note":"更正"})).unwrap();
+    apply(&mut core, json!({"op":"updateClientReceipt","id":"client-edit",
+        "chargeId":"charge-edit","receiptId":"receipt-edit",
+        "amountYuan":"45.00","receivedOn":"2026-11-13",
+        "location":"株洲","channel":"现金","note":"已核对"})).unwrap();
+    assert_eq!(core.charges[0].title, "咨询二期");
+    assert_eq!(core.charges[0].receipts[0].channel, "现金");
+    assert_eq!(core.charges[0].receipts[0].note, "已核对");
+    assert_eq!(gridtimer_native::android_canvas::checked_client_totals(&core).unwrap(),
+        (4_500, 8_050));
+
+    let edited = core.clone();
+    assert!(apply(&mut core, json!({"op":"updateClientReceipt","id":"client-edit",
+        "chargeId":"charge-edit","receiptId":"receipt-edit",
+        "amountYuan":"125.501","receivedOn":"2026-11-13",
+        "location":"株洲","channel":"现金","note":""})).is_err());
+    assert_eq!(core, edited, "invalid fractional cents cannot mutate a saved receipt");
+
+    apply(&mut core, json!({"op":"removeClientReceipt","id":"client-edit",
+        "chargeId":"charge-edit","receiptId":"receipt-edit"})).unwrap();
+    assert_eq!(gridtimer_native::android_canvas::checked_client_totals(&core).unwrap(),
+        (0, 12_550));
+    apply(&mut core, json!({"op":"removeClientCharge",
+        "id":"client-edit","chargeId":"charge-edit"})).unwrap();
+    assert_eq!(gridtimer_native::android_canvas::checked_client_totals(&core).unwrap(),
+        (0, 0));
+}
+
+#[test]
 fn windows_referral_graph_rejects_cycles_and_multiple_direct_parents() {
     let mut store = KnowledgeCanvasStore::default();
     assert!(store.new_canvas("客户网络"));
