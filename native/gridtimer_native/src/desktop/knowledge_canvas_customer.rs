@@ -256,8 +256,9 @@ impl TimerWindowsClient {
         egui::Window::new("客户资料与收付款")
             .id(egui::Id::new(("knowledge_canvas_customer_inspector", &node.id)))
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-14.0, inspector_y))
-            .default_width(if compact { 350.0 } else { 410.0 })
-            .resizable(true)
+            .default_width(if compact { 315.0 } else { 410.0 })
+            .min_width(if compact { 300.0 } else { 360.0 })
+            .resizable(!compact)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().max_height(inspector_height).show(ui, |ui| {
                     let d = &mut self.desktop_ui.knowledge_canvas.customer_draft;
@@ -265,12 +266,23 @@ impl TimerWindowsClient {
                     ui.text_edit_singleline(&mut d.name);
                     ui.label("备注");
                     ui.add(egui::TextEdit::multiline(&mut d.details).desired_rows(2));
-                    ui.horizontal(|ui| {
-                        ui.label("历史已收（元）");
-                        ui.add(egui::TextEdit::singleline(&mut d.legacy_paid).desired_width(96.0));
-                        ui.label("历史待收（元）");
-                        ui.add(egui::TextEdit::singleline(&mut d.legacy_pending).desired_width(96.0));
-                    });
+                    if compact {
+                        ui.horizontal(|ui| {
+                            ui.label("历史已收（元）");
+                            ui.add(egui::TextEdit::singleline(&mut d.legacy_paid).desired_width(112.0));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("历史待收（元）");
+                            ui.add(egui::TextEdit::singleline(&mut d.legacy_pending).desired_width(112.0));
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.label("历史已收（元）");
+                            ui.add(egui::TextEdit::singleline(&mut d.legacy_paid).desired_width(96.0));
+                            ui.label("历史待收（元）");
+                            ui.add(egui::TextEdit::singleline(&mut d.legacy_pending).desired_width(96.0));
+                        });
+                    }
                     if ui.button("保存客户资料与原始金额").clicked() {
                         action = Some(json!({"op":"saveProfile","name":d.name,"details":d.details,
                             "paidYuan":d.legacy_paid,"pendingYuan":d.legacy_pending}));
@@ -280,7 +292,7 @@ impl TimerWindowsClient {
                         gridtimer_native::android_canvas::checked_client_totals(
                             &knowledge_canvas_customer_to_core(&node))
                     {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.strong(format!("累计已收 {}", customer_money_label(paid)));
                             ui.label(format!("尚待收 {}", customer_money_label(pending)));
                         });
