@@ -92,6 +92,8 @@ fn native_window_visual_review() {
         ("knowledge_dark", AppTab::Knowledge, 2, 1240.0, 800.0),
         ("canvas_customer", AppTab::Knowledge, 1, 1240.0, 800.0),
         ("canvas_customer_zoom", AppTab::Knowledge, 1, 1240.0, 800.0),
+        ("canvas_customer_overview", AppTab::Knowledge, 1, 1240.0, 800.0),
+        ("canvas_customer_receipts", AppTab::Knowledge, 1, 1240.0, 800.0),
         ("history_light", AppTab::History, 1, 1240.0, 800.0),
         ("history_minimum", AppTab::History, 1, 760.0, 480.0),
         ("history_empty", AppTab::History, 1, 760.0, 480.0),
@@ -224,6 +226,39 @@ fn native_window_visual_review() {
                                 json!({"op":"saveProfile","name":"演示客户",
                                     "details":"独立知识画布客户记录","paidYuan":"560.00",
                                     "pendingYuan":"660.00"})).unwrap();
+                        }
+                        if SCENES[self.scene].0 == "canvas_customer_overview" {
+                            let original = self.client.desktop_ui.knowledge_canvas.store.active().unwrap()
+                                .nodes.iter().find(|n| n.kind == KnowledgeCanvasNodeKind::Client)
+                                .unwrap().id.clone();
+                            let existing = self.client.desktop_ui.knowledge_canvas.store.active().unwrap()
+                                .nodes.iter().filter(|n| n.kind == KnowledgeCanvasNodeKind::Client).count();
+                            if existing < 3 {
+                                self.client.knowledge_canvas_add_customer_named("被推荐客户乙", Some(&original));
+                                self.client.knowledge_canvas_add_customer_named("被推荐客户丙", Some(&original));
+                            }
+                            self.client.desktop_ui.knowledge_canvas.selected_nodes.clear();
+                        }
+                        if SCENES[self.scene].0 == "canvas_customer_receipts" {
+                            let id = self.client.desktop_ui.knowledge_canvas.store.active().unwrap()
+                                .nodes.iter().find(|n| n.kind == KnowledgeCanvasNodeKind::Client)
+                                .unwrap().id.clone();
+                            let has_charge = self.client.desktop_ui.knowledge_canvas.store.active().unwrap()
+                                .nodes.iter().any(|n| n.id == id && !n.charges.is_empty());
+                            if !has_charge {
+                                self.client.knowledge_canvas_update_customer(&id, json!({
+                                    "op":"addClientCharge","id":id,"chargeId":"visual-charge",
+                                    "title":"文书服务","totalYuan":"120.00",
+                                    "serviceLocation":"长沙","dueOn":"2026-12-01","note":"核对后的服务项目"
+                                })).unwrap();
+                                self.client.knowledge_canvas_update_customer(&id, json!({
+                                    "op":"addClientReceipt","id":id,"chargeId":"visual-charge",
+                                    "receiptId":"visual-receipt","amountYuan":"56.00",
+                                    "receivedOn":"2026-11-14","location":"长沙",
+                                    "channel":"银行转账","note":"到账核验"
+                                })).unwrap();
+                            }
+                            self.client.desktop_ui.knowledge_canvas.selected_nodes = vec![id];
                         }
                         if let Some(canvas) = self.client.desktop_ui.knowledge_canvas.store.active_mut() {
                             canvas.zoom = if SCENES[self.scene].0 == "canvas_customer_zoom" {

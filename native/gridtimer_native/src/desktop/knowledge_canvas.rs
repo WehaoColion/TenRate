@@ -579,6 +579,7 @@ impl TimerWindowsClient {
         }
         self.draw_knowledge_canvas_edges(ui, board_rect, canvas_index);
         self.draw_knowledge_canvas_nodes(ui, board_rect, canvas_index);
+        self.draw_knowledge_canvas_overview(ui, board_rect, canvas_index);
         self.ui_knowledge_canvas_customer_inspector(ui.ctx());
         if ui.is_enabled() {
             self.handle_knowledge_canvas_shortcuts(ui.ctx());
@@ -1344,6 +1345,153 @@ impl TimerWindowsClient {
         if let Some(id) = clicked_edge {
             self.desktop_ui.knowledge_canvas.selected_edge = Some(id);
             self.desktop_ui.knowledge_canvas.selected_nodes.clear();
+        }
+    }
+
+    /// A view-only spatial overview: no alternate canvas data or sync state.
+    /// Selecting a position changes just the viewport, never card coordinates.
+    fn draw_knowledge_canvas_overview(
+        &mut self,
+        ui: &mut egui::Ui,
+        board_rect: egui::Rect,
+        canvas_index: usize,
+    ) {
+        if board_rect.width() < 500.0 || board_rect.height() < 330.0 {
+            return;
+        }
+        let (bounds, viewport, canvas_id, node_positions, edges) = {
+            let canvas = &self.desktop_ui.knowledge_canvas.store.canvases[canvas_index];
+            if canvas.nodes.len() < 3 {
+                return;
+            }
+            let mut min_x = f32::INFINITY;
+            let mut min_y = f32::INFINITY;
+            let mut max_x = f32::NEG_INFINITY;
+            let mut max_y = f32::NEG_INFINITY;
+            for node in &canvas.nodes {
+                min_x = min_x.min(node.x);
+                min_y = min_y.min(node.y);
+                max_x = max_x.max(node.x + node.width);
+                max_y = max_y.max(node.y + node.height);
+            }
+            let pad = ((max_x - min_x).max(max_y - min_y) * 0.05).max(48.0);
+            let bounds = egui::Rect::from_min_max(
+                egui::pos2(min_x - pad, min_y - pad),
+                egui::pos2(max_x + pad, max_y + pad),
+            );
+            let half = board_rect.size() * (0.5 / canvas.zoom);
+            let viewport = egui::Rect::from_center_size(
+                egui::pos2(canvas.center_x, canvas.center_y),
+                half * 2.0,
+            );
+            let positions = canvas.nodes.iter().map(|node| (
+                node.id.clone(), node.kind,
+                egui::Rect::from_min_size(
+                    egui::pos2(node.x, node.y),
+                    egui::vec2(node.width, node.height),
+                ),
+            )).collect::<Vec<_>>();
+            let edges = canvas.edges.iter().map(|e| (e.from.clone(),e.to.clone())).collect::<Vec<_>>();
+            (bounds, viewport, canvas.id.clone(), positions, edges)
+        };
+        // Prefer unobstructed corners. A fixed bottom-right overview can hide
+        // the very customer card the user is trying to locate.
+        let panel_size = egui::vec2(206.0, 136.0);
+        let candidates = [
+            egui::Rect::from_min_size(
+                board_rect.right_bottom() - egui::vec2(220.0, 150.0), panel_size,
+            ),
+            egui::Rect::from_min_size(
+                board_rect.left_bottom() + egui::vec2(14.0, -150.0), panel_size,
+            ),
+            egui::Rect::from_min_size(
+                board_rect.right_top() + egui::vec2(-220.0, 14.0), panel_size,
+            ),
+            egui::Rect::from_min_size(
+                board_rect.left_top() + egui::vec2(14.0, 14.0), panel_size,
+            ),
+        ];
+        let world_to_board = board_rect.width() / viewport.width();
+        let overlap = |candidate: egui::Rect| {
+            node_positions.iter().map(|(_, _, world)| {
+                let screen = egui::Rect::from_min_max(
+                    board_rect.center()
+                        + (world.min - viewport.center()) * world_to_board,
+                    board_rect.center()
+                        + (world.max - viewport.center()) * world_to_board,
+                ).expand(8.0);
+                let intersection = screen.intersect(candidate);
+                if intersection.is_positive() { intersection.area() } else { 0.0 }
+            }).sum::<f32>()
+        };
+        let panel = candidates.into_iter().enumerate()
+            .min_by(|(left_index, left), (right_index, right)| {
+                (overlap(*left) + *left_index as f32 * 3.0)
+                    .total_cmp(&(overlap(*right) + *right_index as f32 * 3.0))
+            })
+            .map(|(_, rect)| rect)
+            .expect("four overview placements");
+        let content = egui::Rect::from_min_max(
+            panel.left_top() + egui::vec2(10.0, 27.0),
+            panel.right_bottom() - egui::vec2(10.0, 10.0),
+        );
+        let scale = (content.width() / bounds.width())
+            .min(content.height() / bounds.height());
+        let map = |pos: egui::Pos2| egui::pos2(
+            content.center().x + (pos.x - bounds.center().x) * scale,
+            content.center().y + (pos.y - bounds.center().y) * scale,
+        );
+        let p = palette();
+        let painter = ui.painter();
+        painter.rect_filled(panel, 8.0, p.panel);
+        painter.rect_stroke(panel, 8.0, egui::Stroke::new(1.0, p.line));
+        painter.text(
+            panel.left_top() + egui::vec2(10.0, 7.0),
+            egui::Align2::LEFT_TOP,
+            "画布总览 · 点击定位",
+            egui::FontId::proportional(11.0),
+            p.muted,
+        );
+        let positions = node_positions.iter()
+            .map(|(id, _, rect)| (id.as_str(), rect.center()))
+            .collect::<std::collections::HashMap<_, _>>();
+        for (from, to) in &edges {
+            if let (Some(start), Some(end)) = (positions.get(from.as_str()), positions.get(to.as_str())) {
+                painter.line_segment([map(*start), map(*end)], egui::Stroke::new(0.8, p.line));
+            }
+        }
+        for (_, kind, rect) in &node_positions {
+            let min = map(rect.min);
+            let max = map(rect.max);
+            let shown = egui::Rect::from_min_max(min,max);
+            let color = match kind {
+                KnowledgeCanvasNodeKind::Client => p.warn,
+                KnowledgeCanvasNodeKind::Page => p.accent,
+                KnowledgeCanvasNodeKind::Note => p.good,
+            };
+            painter.rect_filled(shown, 2.0, color);
+        }
+        let view = egui::Rect::from_min_max(map(viewport.min), map(viewport.max));
+        let visible_view = view.intersect(content);
+        if visible_view.is_positive() {
+            painter.rect_stroke(visible_view, 1.0, egui::Stroke::new(1.5, p.accent));
+        }
+        let response = ui.interact(
+            panel,
+            egui::Id::new(("knowledge_canvas_overview", canvas_id)),
+            egui::Sense::click(),
+        );
+        if response.clicked() {
+            if let Some(point) = response.interact_pointer_pos().filter(|p| content.contains(*p)) {
+                let destination = egui::pos2(
+                    bounds.center().x + (point.x - content.center().x) / scale,
+                    bounds.center().y + (point.y - content.center().y) / scale,
+                );
+                let canvas = &mut self.desktop_ui.knowledge_canvas.store.canvases[canvas_index];
+                canvas.center_x = destination.x.clamp(-200_000.0, 200_000.0);
+                canvas.center_y = destination.y.clamp(-200_000.0, 200_000.0);
+                self.mark_knowledge_canvas_dirty();
+            }
         }
     }
 

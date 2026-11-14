@@ -1,4 +1,4 @@
-TenRate Windows 1.1.0.12 - UNSIGNED TEST CANDIDATE
+TenRate Windows 1.1.0.13 - UNSIGNED TEST CANDIDATE
 ==================================================
 This is a preview of the Windows GUI from the integration source, not a formal update.
 Its installer uses a separate per-user directory and shortcuts. It does
@@ -18,4 +18,4 @@ publisher. Do not disable operating-system security protections.
 
 The ZIP is portable: extract it and launch timer_windows_client.exe.
 The EXE setup installs the same test program in a separate directory.
-Only install if you intentionally want to test Windows 1.1.0.12.
+Only install if you intentionally want to test Windows 1.1.0.13.
