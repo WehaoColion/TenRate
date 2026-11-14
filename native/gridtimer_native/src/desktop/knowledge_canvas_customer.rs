@@ -253,13 +253,20 @@ impl TimerWindowsClient {
         let compact = ctx.screen_rect().width() < 900.0;
         let inspector_y = if ctx.screen_rect().height() < 650.0 { 72.0 } else { 212.0 };
         let inspector_height = (ctx.screen_rect().height() - inspector_y - 52.0).max(160.0);
-        egui::Window::new("客户资料与收付款")
+        let inspector = egui::Window::new("客户资料与收付款")
             .id(egui::Id::new(("knowledge_canvas_customer_inspector", &node.id)))
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-14.0, inspector_y))
             .default_width(if compact { 315.0 } else { 410.0 })
             .min_width(if compact { 300.0 } else { 360.0 })
-            .resizable(!compact)
-            .show(ctx, |ui| {
+            .resizable(!compact);
+        // egui persists a Window's previous size by ID. The compact scene
+        // must override a wide inspector previously opened for this customer.
+        let inspector = if compact {
+            inspector.fixed_size(egui::vec2(315.0, inspector_height + 34.0))
+        } else {
+            inspector
+        };
+        inspector.show(ctx, |ui| {
                 egui::ScrollArea::vertical().max_height(inspector_height).show(ui, |ui| {
                     let d = &mut self.desktop_ui.knowledge_canvas.customer_draft;
                     ui.label("客户姓名");
