@@ -486,6 +486,13 @@ pub fn parse_client_yuan(value: &str) -> Result<Option<i64>, String> {
     client_money_yuan(value)
 }
 
+/// The shared Android tree layout is also used by Windows. Only customer
+/// positions change; unrelated notes, pages and links keep their positions.
+pub fn layout_customer_referrals(canvas: &mut Canvas) -> Result<(), String> {
+    canvas.validate()?;
+    referral_layout::arrange(canvas)
+}
+
 pub fn open(root: &Path, workspace: &str) -> Result<Value, String> {
     open_with(root, workspace, |token, session| {
         Ok(response(token, session))
