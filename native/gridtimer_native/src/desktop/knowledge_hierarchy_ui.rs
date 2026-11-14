@@ -317,10 +317,25 @@ fn knowledge_directory_ordered(available: &[String], saved: &[String]) -> Vec<St
         .cloned()
         .collect()
 }
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct KnowledgeDirectoryMoveUse {
+    id: Option<String>,
+    count: u32,
+    last_used_at: i64,
+}
+
+fn knowledge_directory_move_rank(value: &KnowledgeDirectoryMoveUse, now: i64) -> f64 {
+    let days = now.saturating_sub(value.last_used_at).max(0) as f64 / 86_400_000.0;
+    value.count as f64 * 30.0 / (30.0 + days)
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct KnowledgeDirectoryPreferences {
     parents: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    move_history: Vec<KnowledgeDirectoryMoveUse>,
 }
 impl KnowledgeDirectoryPreferences {
     fn validate(&self) -> bool {
@@ -328,6 +343,14 @@ impl KnowledgeDirectoryPreferences {
             ids.iter().all(|id| !id.is_empty())
                 && ids.iter().collect::<HashSet<_>>().len() == ids.len()
         })
+        && self.move_history.len() <= 64
+        && self.move_history.iter().all(|row| {
+            row.id.as_ref().is_none_or(|id| !id.is_empty() && id.len() <= 512)
+                && (1..=10_000).contains(&row.count)
+                && row.last_used_at > 0
+        })
+        && self.move_history.iter().map(|row| &row.id).collect::<HashSet<_>>().len()
+            == self.move_history.len()
     }
     fn parent_key(parent: Option<&str>) -> String {
         serde_json::to_string(&parent).unwrap_or_default()
@@ -451,6 +474,32 @@ impl TimerWindowsClient {
     fn reset_knowledge_directory_order(&mut self, expected: &KnowledgeDirectoryScope) -> bool {
         self.update_knowledge_directory_order(expected, None)
     }
+
+    fn remember_knowledge_move_destination(&mut self, target: Option<&str>) {
+        let mut proposed = self.desktop_ui.knowledge.directory.preferences.clone();
+        let now = now_millis();
+        if let Some(row) = proposed.move_history.iter_mut()
+            .find(|row| row.id.as_deref() == target)
+        {
+            row.count = row.count.saturating_add(1).min(10_000);
+            row.last_used_at = now;
+        } else {
+            proposed.move_history.push(KnowledgeDirectoryMoveUse {
+                id: target.map(str::to_string), count: 1, last_used_at: now,
+            });
+        }
+        proposed.move_history.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
+        proposed.move_history.truncate(64);
+        if let Err(error) = save_json_config(
+            &self.knowledge_directory_preferences_path(),
+            &proposed,
+            "knowledge_directory",
+        ) {
+            self.status = format!("页面移动已执行，但常用位置记录未保存：{error}");
+        } else {
+            self.desktop_ui.knowledge.directory.preferences = proposed;
+        }
+    }
     fn update_knowledge_directory_order(
         &mut self,
         expected: &KnowledgeDirectoryScope,
@@ -527,6 +576,9 @@ impl TimerWindowsClient {
             return false;
         }
         self.desktop_ui.knowledge.directory.cache = None;
+        if request.action == "move" {
+            self.remember_knowledge_move_destination(request.parent.as_deref());
+        }
         if selected == request.id {
             if let Some(note) = self.data.notes.iter().find(|n| n.id == selected).cloned() {
                 self.load_note_draft_without_flush(&note);
@@ -1162,6 +1214,29 @@ impl TimerWindowsClient {
                     );
                 }
                 if request.action == "move" {
+                    let mut frequent = self.desktop_ui.knowledge.directory.preferences.move_history
+                        .iter()
+                        .filter(|row| row.count >= 2
+                            && index.may_move(&request.id, row.id.as_deref()))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let now = now_millis();
+                    frequent.sort_by(|a, b| knowledge_directory_move_rank(b, now)
+                        .total_cmp(&knowledge_directory_move_rank(a, now)));
+                    if !frequent.is_empty() {
+                        ui.label("常用位置");
+                        for item in frequent.into_iter().take(6) {
+                            let label = item.id.as_ref().map_or("知识目录根层".into(), |id| {
+                                index.path(id).iter()
+                                    .filter_map(|part| index.nodes.get(part))
+                                    .map(|node| node.title.as_str())
+                                    .collect::<Vec<_>>().join(" / ")
+                            });
+                            ui.selectable_value(&mut request.parent, item.id, label);
+                        }
+                        ui.separator();
+                    }
+                    ui.label("全部位置");
                     egui::ScrollArea::vertical()
                         .max_height(280.0)
                         .show(ui, |ui| {
