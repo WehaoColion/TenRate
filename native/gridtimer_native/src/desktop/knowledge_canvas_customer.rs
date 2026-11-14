@@ -13,11 +13,17 @@ struct KnowledgeCanvasCustomerDraft {
     charge_amount: String,
     service_location: String,
     due_on: String,
+    charge_note: String,
+    charge_edit_id: String,
+    charge_remove_id: String,
     charge_id: String,
     receipt_amount: String,
     receipt_date: String,
     receipt_location: String,
     receipt_channel: String,
+    receipt_note: String,
+    receipt_edit_id: String,
+    receipt_remove_id: String,
 }
 
 fn knowledge_canvas_customer_to_core(
@@ -280,32 +286,60 @@ impl TimerWindowsClient {
                         });
                     }
                     ui.small("以下客户款项只保存在知识画布，不进入风控账本。");
-                    ui.collapsing("新增款项项目", |ui| {
-                        ui.label("款项名称");
-                        ui.text_edit_singleline(&mut d.charge_title);
-                        ui.horizontal(|ui| {
-                            ui.label("应收金额（元）");
-                            ui.add(egui::TextEdit::singleline(&mut d.charge_amount).desired_width(108.0));
-                        });
-                        ui.label("服务地点");
-                        ui.text_edit_singleline(&mut d.service_location);
-                        ui.label("预计付款日期（可留空，格式 YYYY-MM-DD）");
-                        ui.text_edit_singleline(&mut d.due_on);
-                        if ui.button("记录这笔款项").clicked() {
-                            action = Some(json!({"op":"addClientCharge", "id":node.id,
-                                "chargeId":random_desktop_identifier("customer-charge"),
-                                "title":d.charge_title,"totalYuan":d.charge_amount,
-                                "serviceLocation":d.service_location,"dueOn":d.due_on,"note":""}));
-                        }
-                        if ui.button("把原始历史金额整理为这笔款项").clicked() {
-                            action = Some(json!({"op":"importClientHistory","id":node.id,
-                                "chargeId":random_desktop_identifier("customer-charge"),
-                                "receiptId":random_desktop_identifier("customer-receipt"),
-                                "title":d.charge_title, "serviceLocation":d.service_location,
-                                "dueOn":d.due_on, "receivedOn":"", "location":d.receipt_location,
-                                "channel":d.receipt_channel,"note":"","receiptNote":""}));
-                        }
-                    });
+                    ui.collapsing(
+                        if d.charge_edit_id.is_empty() { "新增款项项目" } else { "正在修改款项项目" },
+                        |ui| {
+                            ui.label("款项名称");
+                            ui.text_edit_singleline(&mut d.charge_title);
+                            ui.horizontal(|ui| {
+                                ui.label("应收金额（元）");
+                                ui.add(egui::TextEdit::singleline(&mut d.charge_amount).desired_width(108.0));
+                            });
+                            ui.label("服务地点");
+                            ui.text_edit_singleline(&mut d.service_location);
+                            ui.label("预计付款日期（可留空，格式 YYYY-MM-DD）");
+                            ui.text_edit_singleline(&mut d.due_on);
+                            ui.label("款项备注");
+                            ui.add(egui::TextEdit::multiline(&mut d.charge_note).desired_rows(2));
+                            if d.charge_edit_id.is_empty() {
+                                if ui.button("记录这笔款项").clicked() {
+                                    action = Some(json!({"op":"addClientCharge", "id":node.id,
+                                        "chargeId":random_desktop_identifier("customer-charge"),
+                                        "title":d.charge_title,"totalYuan":d.charge_amount,
+                                        "serviceLocation":d.service_location,
+                                        "dueOn":d.due_on,"note":d.charge_note}));
+                                }
+                                if (node.paid_cents.unwrap_or(0) > 0 || node.pending_cents.unwrap_or(0) > 0)
+                                    && ui.button("把原始历史金额整理为这笔款项").clicked()
+                                {
+                                    action = Some(json!({"op":"importClientHistory","id":node.id,
+                                        "chargeId":random_desktop_identifier("customer-charge"),
+                                        "receiptId":random_desktop_identifier("customer-receipt"),
+                                        "title":d.charge_title, "serviceLocation":d.service_location,
+                                        "dueOn":d.due_on, "receivedOn":"", "location":d.receipt_location,
+                                        "channel":d.receipt_channel,"note":d.charge_note,"receiptNote":""}));
+                                }
+                            } else {
+                                ui.horizontal(|ui| {
+                                    if ui.button("保存款项修改").clicked() {
+                                        action = Some(json!({"op":"updateClientCharge","id":node.id,
+                                            "chargeId":d.charge_edit_id,"title":d.charge_title,
+                                            "totalYuan":d.charge_amount,
+                                            "serviceLocation":d.service_location,
+                                            "dueOn":d.due_on,"note":d.charge_note}));
+                                    }
+                                    if ui.button("取消修改款项").clicked() {
+                                        d.charge_edit_id.clear();
+                                        d.charge_title.clear();
+                                        d.charge_amount.clear();
+                                        d.service_location.clear();
+                                        d.due_on.clear();
+                                        d.charge_note.clear();
+                                    }
+                                });
+                            }
+                        },
+                    );
                     if !node.charges.is_empty() {
                         ui.separator();
                         ui.strong("款项与实际收款记录");
@@ -316,39 +350,136 @@ impl TimerWindowsClient {
                                 customer_money_label(charge.total_cents)), |ui| {
                                 ui.label(format!("服务地点：{}",
                                     if charge.service_location.is_empty() {"未填写"} else {&charge.service_location}));
+                                ui.label(format!("预计付款：{}",
+                                    if charge.due_on.is_empty() {"未填写"} else {&charge.due_on}));
+                                if !charge.note.is_empty() {
+                                    ui.label(format!("款项备注：{}", charge.note));
+                                }
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.small_button("修改款项").clicked() {
+                                        d.charge_edit_id = charge.id.clone();
+                                        d.charge_title = charge.title.clone();
+                                        d.charge_amount = customer_money_editable(Some(charge.total_cents));
+                                        d.service_location = charge.service_location.clone();
+                                        d.due_on = charge.due_on.clone();
+                                        d.charge_note = charge.note.clone();
+                                    }
+                                    if charge.receipts.is_empty() {
+                                        if ui.small_button("删除款项…").clicked() {
+                                            d.charge_remove_id = charge.id.clone();
+                                        }
+                                    } else {
+                                        ui.small("已有收款，须先移除收款记录才能删除款项");
+                                    }
+                                });
+                                if d.charge_remove_id == charge.id {
+                                    ui.label("确认删除此款项？该操作不能通过关闭面板取消。");
+                                    ui.horizontal(|ui| {
+                                        if ui.button("确认删除款项").clicked() {
+                                            action = Some(json!({"op":"removeClientCharge","id":node.id,
+                                                "chargeId":charge.id}));
+                                        }
+                                        if ui.button("取消").clicked() {
+                                            d.charge_remove_id.clear();
+                                        }
+                                    });
+                                }
                                 for receipt in &charge.receipts {
-                                    ui.label(format!("{} · {} · {}",
+                                    ui.separator();
+                                    ui.label(format!("收款 {} · {} · {}",
                                         customer_money_label(receipt.amount_cents),
                                         if receipt.received_on.is_empty() {"历史日期未知"} else {&receipt.received_on},
                                         if receipt.location.is_empty() {"地点未填写"} else {&receipt.location}));
+                                    ui.label(format!("收款方式：{}",
+                                        if receipt.channel.is_empty() {"未填写"} else {&receipt.channel}));
+                                    if !receipt.note.is_empty() {
+                                        ui.label(format!("收款备注：{}", receipt.note));
+                                    }
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.small_button("修改本次收款").clicked() {
+                                            d.charge_id = charge.id.clone();
+                                            d.receipt_edit_id = receipt.id.clone();
+                                            d.receipt_amount = customer_money_editable(Some(receipt.amount_cents));
+                                            d.receipt_date = receipt.received_on.clone();
+                                            d.receipt_location = receipt.location.clone();
+                                            d.receipt_channel = receipt.channel.clone();
+                                            d.receipt_note = receipt.note.clone();
+                                        }
+                                        if ui.small_button("删除本次收款…").clicked() {
+                                            d.receipt_remove_id = receipt.id.clone();
+                                        }
+                                    });
+                                    if d.receipt_remove_id == receipt.id {
+                                        ui.label("确认删除本次收款？客户已收和待收汇总会同步重新计算。");
+                                        ui.horizontal(|ui| {
+                                            if ui.button("确认删除收款").clicked() {
+                                                action = Some(json!({"op":"removeClientReceipt","id":node.id,
+                                                    "chargeId":charge.id, "receiptId":receipt.id}));
+                                            }
+                                            if ui.button("取消").clicked() {
+                                                d.receipt_remove_id.clear();
+                                            }
+                                        });
+                                    }
                                 }
-                                if ui.button("记录这项款项的收款").clicked() {
+                                if ui.button("记录这项款项的新收款").clicked() {
                                     d.charge_id = charge.id.clone();
+                                    d.receipt_edit_id.clear();
+                                    d.receipt_amount.clear();
+                                    d.receipt_date.clear();
+                                    d.receipt_location.clear();
+                                    d.receipt_channel.clear();
+                                    d.receipt_note.clear();
                                 }
                             });
                         }
                     }
                     if !d.charge_id.is_empty() {
                         ui.separator();
-                        ui.label("记录实际收款");
+                        ui.label(if d.receipt_edit_id.is_empty() {
+                            "记录实际收款"
+                        } else {
+                            "修改实际收款"
+                        });
                         ui.horizontal(|ui| {
                             ui.label("金额（元）");
                             ui.add(egui::TextEdit::singleline(&mut d.receipt_amount).desired_width(112.0));
                         });
-                        ui.label("实际日期（YYYY-MM-DD）");
+                        ui.label("实际日期（YYYY-MM-DD；历史金额整理前未知的日期可以留空）");
                         ui.text_edit_singleline(&mut d.receipt_date);
                         ui.label("实际收款地点");
                         ui.text_edit_singleline(&mut d.receipt_location);
                         ui.label("收款方式");
                         ui.text_edit_singleline(&mut d.receipt_channel);
-                        if ui.button("保存本次收款").clicked() {
-                            action = Some(json!({"op":"addClientReceipt","id":node.id,
-                                "chargeId":d.charge_id,
-                                "receiptId":random_desktop_identifier("customer-receipt"),
-                                "amountYuan":d.receipt_amount, "receivedOn":d.receipt_date,
-                                "location":d.receipt_location, "channel":d.receipt_channel,
-                                "note":""}));
-                        }
+                        ui.label("收款备注");
+                        ui.add(egui::TextEdit::multiline(&mut d.receipt_note).desired_rows(2));
+                        ui.horizontal(|ui| {
+                            if d.receipt_edit_id.is_empty() {
+                                if ui.button("保存本次收款").clicked() {
+                                    action = Some(json!({"op":"addClientReceipt","id":node.id,
+                                        "chargeId":d.charge_id,
+                                        "receiptId":random_desktop_identifier("customer-receipt"),
+                                        "amountYuan":d.receipt_amount, "receivedOn":d.receipt_date,
+                                        "location":d.receipt_location, "channel":d.receipt_channel,
+                                        "note":d.receipt_note}));
+                                }
+                            } else if ui.button("保存收款修改").clicked() {
+                                action = Some(json!({"op":"updateClientReceipt","id":node.id,
+                                    "chargeId":d.charge_id,"receiptId":d.receipt_edit_id,
+                                    "amountYuan":d.receipt_amount, "receivedOn":d.receipt_date,
+                                    "location":d.receipt_location,"channel":d.receipt_channel,
+                                    "note":d.receipt_note}));
+                            }
+                            if ui.button("关闭收款编辑").clicked() {
+                                d.charge_id.clear();
+                                d.receipt_edit_id.clear();
+                                d.receipt_amount.clear();
+                                d.receipt_date.clear();
+                                d.receipt_location.clear();
+                                d.receipt_channel.clear();
+                                d.receipt_note.clear();
+                            }
+                        });
                     }
                     ui.separator();
                     ui.label("新增被此客户推荐的客户");
