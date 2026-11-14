@@ -94,6 +94,9 @@ fn native_window_visual_review() {
         ("canvas_customer_zoom", AppTab::Knowledge, 1, 1240.0, 800.0),
         ("canvas_customer_overview", AppTab::Knowledge, 1, 1240.0, 800.0),
         ("canvas_customer_receipts", AppTab::Knowledge, 1, 1240.0, 800.0),
+        ("canvas_customer_compact", AppTab::Knowledge, 1, 760.0, 560.0),
+        ("knowledge_legal_exclusion_dialog", AppTab::Knowledge, 1, 1240.0, 800.0),
+        ("knowledge_directory_duplicate", AppTab::Knowledge, 1, 1240.0, 800.0),
         ("history_light", AppTab::History, 1, 1240.0, 800.0),
         ("history_minimum", AppTab::History, 1, 760.0, 480.0),
         ("history_empty", AppTab::History, 1, 760.0, 480.0),
@@ -171,6 +174,11 @@ fn native_window_visual_review() {
                 self.client.view_cache.data_version = u64::MAX;
                 self.client.desktop_ui.slot_editor_open = false;
                 self.client.desktop_ui.board_query.clear();
+                // Scene states are independent. The legal exclusion dialog is
+                // intentionally shown only for its own capture, not duplicated
+                // in the following page-copy confirmation scene.
+                self.client.desktop_ui.knowledge.directory.exclusion_target = None;
+                self.client.desktop_ui.knowledge.directory.exclusion_error.clear();
                 if tab == AppTab::History {
                     self.client.switch_tab(AppTab::Board);
                     let detail = SCENES[self.scene].0 == "history_detail_return";
@@ -269,6 +277,19 @@ fn native_window_visual_review() {
                         }
                     } else {
                         self.client.select_note_by_id("doc-a");
+                        if SCENES[self.scene].0 == "knowledge_legal_exclusion_dialog" {
+                            assert!(self.client.open_knowledge_directory(None));
+                            self.client.desktop_ui.knowledge.directory.exclusion_target = Some(None);
+                        }
+                        if SCENES[self.scene].0 == "knowledge_directory_duplicate" {
+                            assert!(self.client.open_knowledge_directory(None));
+                            self.client.request_knowledge_directory_action(
+                                "duplicate_page",
+                                &random_hex_identifier(),
+                                Some("doc-a".into()),
+                                "",
+                            );
+                        }
                     }
                 }
                 if let Some(page) = [

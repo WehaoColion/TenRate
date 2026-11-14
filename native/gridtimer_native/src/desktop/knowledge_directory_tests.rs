@@ -199,6 +199,7 @@ fn knowledge_directory_saved_order_survives_content_dates_and_discards_only_miss
     );
     let invalid = KnowledgeDirectoryPreferences {
         parents: BTreeMap::from([("null".into(), saved)]),
+        ..Default::default()
     };
     assert!(!invalid.validate());
     assert_ne!(
@@ -418,4 +419,25 @@ fn knowledge_source_target_reveals_only_ancestors_without_mutating_saved_toggle_
         knowledge_block_reveal_ancestors(&blocks, "outer"),
         HashSet::from(["inner".into()])
     );
+}
+
+#[test]
+fn frequent_move_targets_are_ranked_by_successful_use_not_recent_single_clicks() {
+    let now = 500_i64 * 86_400_000;
+    let routine = KnowledgeDirectoryMoveUse {
+        id:Some("routine".into()),count:20,last_used_at:now-86_400_000,
+    };
+    let occasional = KnowledgeDirectoryMoveUse {
+        id:Some("occasional".into()),count:1,last_used_at:now,
+    };
+    let outdated = KnowledgeDirectoryMoveUse {
+        id:Some("outdated".into()),count:10,last_used_at:now-300*86_400_000,
+    };
+    assert!(knowledge_directory_move_rank(&routine,now)>knowledge_directory_move_rank(&occasional,now));
+    assert!(knowledge_directory_move_rank(&occasional,now)>knowledge_directory_move_rank(&outdated,now));
+    let mut stored = KnowledgeDirectoryPreferences::default();
+    stored.move_history = vec![routine,occasional];
+    assert!(stored.validate());
+    stored.move_history.push(stored.move_history[0].clone());
+    assert!(!stored.validate(), "duplicate destination IDs must be rejected");
 }

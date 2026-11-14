@@ -43,6 +43,7 @@ fn desktop_legal_attachment_inputs(
     data: &DesktopAppData,
     unlocked: &std::collections::HashMap<String, DesktopNote>,
     identity: &AiWorkspaceIdentity,
+    excluded_note_ids: &HashSet<String>,
     active: &impl Fn() -> bool,
 ) -> Vec<Value> {
     let mut result = Vec::new();
@@ -55,6 +56,7 @@ fn desktop_legal_attachment_inputs(
             break;
         }
         if stored.deleted_at_epoch_millis.is_some()
+            || excluded_note_ids.contains(&stored.id)
             || legal_source_tombstoned(data, "note", &stored.id, stored.updated_at_epoch_millis)
         {
             continue;
@@ -143,6 +145,9 @@ impl TimerWindowsClient {
                 self.desktop_ui.legal_risk.preparing_version = None;
                 if outcome.scope != self.legal_scope()
                     || outcome.version != self.data_version
+                    || desktop_legal_read_exclusions(&self.desktop_legal_exclusion_path())
+                        .map(|policy| policy.digest()).ok().as_deref()
+                        != Some(outcome.policy_digest.as_str())
                     || outcome.cancellation.load(AtomicOrdering::Acquire)
                     || !Arc::ptr_eq(&outcome.cancellation, &self.desktop_ui.legal_risk.cancel)
                     || self.note_dirty
@@ -163,6 +168,7 @@ impl TimerWindowsClient {
                     Ok(prepared) => {
                         self.desktop_ui.legal_risk.send_consent = None;
                         self.desktop_ui.legal_risk.preview = Some(prepared);
+                        self.desktop_ui.legal_risk.preview_policy_digest = outcome.policy_digest;
                         self.desktop_ui.legal_risk.preview_version = Some(outcome.version);
                         self.desktop_ui.legal_risk.preview_digest = outcome.digest;
                         self.desktop_ui.legal_risk.selected_evidence_id.clear();

@@ -31,10 +31,12 @@ fn legal_snapshot_version_scope_dirty_and_cancel_block_sending() {
     let mut client = knowledge_test_client(&root);
     client.desktop_ui.legal_risk.scope = client.legal_scope();
     client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
     assert!(client.legal_snapshot_current());
     client.data_version += 1;
     assert!(!client.legal_snapshot_current());
     client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
     client.note_dirty = true;
     assert!(!client.legal_snapshot_current());
     client.note_dirty = false;
@@ -57,6 +59,7 @@ fn legal_pending_account_migration_stops_batches_before_the_identity_changes() {
     let mut client = knowledge_test_client(&root);
     client.desktop_ui.legal_risk.scope = client.legal_scope();
     client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
     client.desktop_ui.legal_risk.preview = Some(legal_performance_prepared(16));
     client.desktop_ui.legal_risk.preview_digest =
         format!("{:x}", Sha256::digest(client.state_json.as_bytes()));
@@ -126,6 +129,7 @@ fn legal_preparation_drops_changed_cancelled_and_other_workspace_results() {
             version: client.data_version + u64::from(case == 0),
             cancellation: Arc::clone(&client.desktop_ui.legal_risk.cancel),
             digest: "test".into(),
+            policy_digest: DesktopLegalKnowledgeExclusions::default().digest(),
             result: Ok(Arc::clone(&prepared)),
         })
         .unwrap();
@@ -305,6 +309,7 @@ fn legal_reopened_page_rejects_cancelled_store_and_preparation_payloads() {
         version: client.data_version,
         cancellation: preparation_cancel,
         digest: "same-version".into(),
+        policy_digest: DesktopLegalKnowledgeExclusions::default().digest(),
         result: Ok(prepared),
     })
     .unwrap();
@@ -441,6 +446,7 @@ fn legal_old_scan_receipt_keeps_history_without_selecting_or_loading_current_rep
     client.desktop_ui.legal_risk.loaded_scope = scope.clone();
     client.desktop_ui.legal_risk.open = true;
     client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
     client.desktop_ui.legal_risk.selected_report_id = "current-selection".into();
     client.desktop_ui.legal_risk.message = "current-session".into();
     client.task_supervisor.begin_shutdown();
@@ -493,6 +499,7 @@ fn legal_send_dispatch_requires_configuration_and_matching_digest() {
     let mut client = knowledge_test_client(&root);
     client.desktop_ui.legal_risk.scope = client.legal_scope();
     client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
     client.desktop_ui.legal_risk.preview = Some(legal_performance_prepared(16));
     client.desktop_ui.legal_risk.preview_digest =
         format!("{:x}", Sha256::digest(client.state_json.as_bytes()));
@@ -523,6 +530,7 @@ fn legal_confirmation_changes_never_dispatch_or_reuse_a_stale_authorization() {
     let mut client = knowledge_test_client(&root);
     client.desktop_ui.legal_risk.scope = client.legal_scope();
     client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
     client.desktop_ui.legal_risk.preview = Some(legal_performance_prepared(16));
     client.desktop_ui.legal_risk.preview_digest =
         format!("{:x}", Sha256::digest(client.state_json.as_bytes()));
@@ -566,6 +574,7 @@ fn legal_cancel_and_account_change_stop_after_synthetic_capability_probe() {
         client.desktop_ui.legal_risk.loaded_scope = scope;
         client.desktop_ui.legal_risk.open = true;
         client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
         client.desktop_ui.legal_risk.preview_digest =
             format!("{:x}", Sha256::digest(client.state_json.as_bytes()));
         client.desktop_ui.legal_risk.preview = Some(Arc::new(
@@ -677,6 +686,7 @@ fn legal_preview_frame_allocation_benchmark() {
         client.desktop_ui.legal_risk.scope = client.legal_scope();
         client.desktop_ui.legal_risk.loaded_scope = client.legal_scope();
         client.desktop_ui.legal_risk.preview_version = Some(client.data_version);
+    client.desktop_ui.legal_risk.preview_policy_digest = DesktopLegalKnowledgeExclusions::default().digest();
         client.desktop_ui.legal_risk.open = true;
         client.desktop_ui.legal_risk.preview = Some(legal_performance_prepared(mib * 1024 * 1024));
         let ctx = workspace_test_context();

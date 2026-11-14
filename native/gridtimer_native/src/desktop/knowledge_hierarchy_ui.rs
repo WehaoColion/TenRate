@@ -317,10 +317,25 @@ fn knowledge_directory_ordered(available: &[String], saved: &[String]) -> Vec<St
         .cloned()
         .collect()
 }
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct KnowledgeDirectoryMoveUse {
+    id: Option<String>,
+    count: u32,
+    last_used_at: i64,
+}
+
+fn knowledge_directory_move_rank(value: &KnowledgeDirectoryMoveUse, now: i64) -> f64 {
+    let days = now.saturating_sub(value.last_used_at).max(0) as f64 / 86_400_000.0;
+    value.count as f64 * 30.0 / (30.0 + days)
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct KnowledgeDirectoryPreferences {
     parents: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    move_history: Vec<KnowledgeDirectoryMoveUse>,
 }
 impl KnowledgeDirectoryPreferences {
     fn validate(&self) -> bool {
@@ -328,6 +343,14 @@ impl KnowledgeDirectoryPreferences {
             ids.iter().all(|id| !id.is_empty())
                 && ids.iter().collect::<HashSet<_>>().len() == ids.len()
         })
+        && self.move_history.len() <= 64
+        && self.move_history.iter().all(|row| {
+            row.id.as_ref().is_none_or(|id| !id.is_empty() && id.len() <= 512)
+                && (1..=10_000).contains(&row.count)
+                && row.last_used_at > 0
+        })
+        && self.move_history.iter().map(|row| &row.id).collect::<HashSet<_>>().len()
+            == self.move_history.len()
     }
     fn parent_key(parent: Option<&str>) -> String {
         serde_json::to_string(&parent).unwrap_or_default()
@@ -350,6 +373,8 @@ struct DesktopKnowledgeDirectory {
     preferences: KnowledgeDirectoryPreferences,
     order_error: String,
     request: Option<KnowledgeDirectoryRequest>,
+    exclusion_target: Option<Option<String>>,
+    exclusion_error: String,
     cache: Option<(u64, Arc<KnowledgeDirectoryIndex>)>,
 }
 impl TimerWindowsClient {
@@ -449,6 +474,32 @@ impl TimerWindowsClient {
     fn reset_knowledge_directory_order(&mut self, expected: &KnowledgeDirectoryScope) -> bool {
         self.update_knowledge_directory_order(expected, None)
     }
+
+    fn remember_knowledge_move_destination(&mut self, target: Option<&str>) {
+        let mut proposed = self.desktop_ui.knowledge.directory.preferences.clone();
+        let now = now_millis();
+        if let Some(row) = proposed.move_history.iter_mut()
+            .find(|row| row.id.as_deref() == target)
+        {
+            row.count = row.count.saturating_add(1).min(10_000);
+            row.last_used_at = now;
+        } else {
+            proposed.move_history.push(KnowledgeDirectoryMoveUse {
+                id: target.map(str::to_string), count: 1, last_used_at: now,
+            });
+        }
+        proposed.move_history.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
+        proposed.move_history.truncate(64);
+        if let Err(error) = save_json_config(
+            &self.knowledge_directory_preferences_path(),
+            &proposed,
+            "knowledge_directory",
+        ) {
+            self.status = format!("页面移动已执行，但常用位置记录未保存：{error}");
+        } else {
+            self.desktop_ui.knowledge.directory.preferences = proposed;
+        }
+    }
     fn update_knowledge_directory_order(
         &mut self,
         expected: &KnowledgeDirectoryScope,
@@ -525,12 +576,15 @@ impl TimerWindowsClient {
             return false;
         }
         self.desktop_ui.knowledge.directory.cache = None;
+        if request.action == "move" {
+            self.remember_knowledge_move_destination(request.parent.as_deref());
+        }
         if selected == request.id {
             if let Some(note) = self.data.notes.iter().find(|n| n.id == selected).cloned() {
                 self.load_note_draft_without_flush(&note);
             }
         }
-        if request.action == "create_page" {
+        if matches!(request.action.as_str(), "create_page" | "duplicate_page") {
             self.close_knowledge_directory();
             self.select_note_by_id(&request.id);
         } else if request.action == "create_folder" {
@@ -580,7 +634,18 @@ impl TimerWindowsClient {
                     }
                 });
             });
+            if parent.is_none() {
+                if ui.add_enabled(enabled, egui::Button::new("法律扫描排除设置…")).clicked() {
+                    self.desktop_ui.knowledge.directory.exclusion_target = Some(None);
+                    self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                }
+            }
             if let Some(node) = parent.and_then(|id| index.nodes.get(id)) {
+                if ui.add_enabled(enabled && !node.encrypted,
+                    egui::Button::new("法律扫描排除设置…")).clicked() {
+                    self.desktop_ui.knowledge.directory.exclusion_target = Some(Some(node.id.clone()));
+                    self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                }
                 ui.add_enabled_ui(enabled && node.writable, |ui| {
                     ui.menu_button("管理", |ui| {
                         for (label, action) in [
@@ -613,6 +678,17 @@ impl TimerWindowsClient {
                         }
                     });
                 });
+                if !node.folder && node.has_note && node.writable && !node.encrypted
+                    && node.issue != Some(KnowledgeDirectoryIssue::IdentityConflict)
+                    && ui.button("创建同级副本…").clicked()
+                {
+                    self.request_knowledge_directory_action(
+                        "duplicate_page",
+                        &random_hex_identifier(),
+                        Some(node.id.clone()),
+                        "",
+                    );
+                }
                 if node.has_note
                     && node.issue != Some(KnowledgeDirectoryIssue::IdentityConflict)
                     && ui.button("编辑正文").clicked()
@@ -907,6 +983,26 @@ impl TimerWindowsClient {
                                         });
                                     }
                                     ui.menu_button("⋯", |ui| {
+                                        if ui.add_enabled(!node.encrypted && node.issue.is_none(),
+                                            egui::Button::new("法律扫描排除设置…")).clicked()
+                                        {
+                                            self.desktop_ui.knowledge.directory.exclusion_target =
+                                                Some(Some(node.id.clone()));
+                                            self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                                            ui.close_menu();
+                                        }
+                                        if !node.folder && node.has_note && node.writable
+                                            && !node.encrypted && node.issue.is_none()
+                                            && ui.button("创建同级页面副本…").clicked()
+                                        {
+                                            self.request_knowledge_directory_action(
+                                                "duplicate_page",
+                                                &random_hex_identifier(),
+                                                Some(node.id.clone()),
+                                                "",
+                                            );
+                                            ui.close_menu();
+                                        }
                                         if ui
                                             .add_enabled(
                                                 node.issue
@@ -970,7 +1066,106 @@ impl TimerWindowsClient {
             self.close_knowledge_directory();
         }
         self.ui_knowledge_directory_request(ctx, &index);
+        self.ui_knowledge_legal_exclusion_dialog(ctx, &index);
     }
+
+    fn ui_knowledge_legal_exclusion_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        index: &KnowledgeDirectoryIndex,
+    ) {
+        let Some(target) = self.desktop_ui.knowledge.directory.exclusion_target.clone() else {
+            return;
+        };
+        let path = self.desktop_legal_exclusion_path();
+        let policy = desktop_legal_read_exclusions(&path);
+        let mut cancel = false;
+        let mut confirm = false;
+        let mut open = true;
+        egui::Window::new("法律风险分析排除范围")
+            .id(egui::Id::new("knowledge_directory_legal_exclusions"))
+            .collapsible(false).resizable(false)
+            .default_width(430.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(if let Some(id) = &target {
+                    index.nodes.get(id).map_or("所选知识目录", |node| node.title.as_str())
+                } else {
+                    "整个知识模块"
+                });
+                match &policy {
+                    Ok(policy) => {
+                        let direct = match target.as_deref() {
+                            Some(id) => policy.node_ids.iter().any(|saved| saved == id),
+                            None => policy.root_excluded,
+                        };
+                        let inherited = if let Some(id) = target.as_deref() {
+                            let mut cursor = index.nodes.get(id).and_then(|node| node.parent.as_deref());
+                            let mut visited = HashSet::new();
+                            let mut inherited = policy.root_excluded;
+                            while let Some(parent) = cursor {
+                                if !visited.insert(parent) {
+                                    inherited = true;
+                                    break;
+                                }
+                                if policy.node_ids.iter().any(|saved| saved == parent) {
+                                    inherited = true;
+                                    break;
+                                }
+                                cursor = index.nodes.get(parent).and_then(|node| node.parent.as_deref());
+                            }
+                            inherited
+                        } else {
+                            false
+                        };
+                        if inherited {
+                            ui.colored_label(palette().muted, "当前范围继承上级排除，请从上级修改。");
+                        } else if direct {
+                            ui.label("此范围及下级知识资料已从未来的法律 AI 扫描中排除。");
+                            ui.label("恢复后，下次扫描将重新纳入；仍受其他上级规则约束。");
+                        } else {
+                            ui.label("确认后，此范围及其所有下级知识页与附件不再上传到法律 AI。");
+                            ui.label("设置保存在本机当前工作区，不会自动同步到 Android。");
+                        }
+                        ui.add_space(8.0);
+                        if ui.add_enabled(!inherited && self.workspace_persistence_ready
+                                && !self.workspace_edit_locked(),
+                            egui::Button::new(if direct { "确认恢复参与扫描" }
+                                else { "确认排除法律扫描" })).clicked()
+                        {
+                            confirm = true;
+                        }
+                    }
+                    Err(error) => {
+                        ui.colored_label(palette().danger, error);
+                        ui.label("无法读取排除规则时不允许修改，也不会允许发送法律资料。");
+                    }
+                }
+                if !self.desktop_ui.knowledge.directory.exclusion_error.is_empty() {
+                    ui.colored_label(palette().danger,
+                        &self.desktop_ui.knowledge.directory.exclusion_error);
+                }
+                if ui.button("关闭").clicked() { cancel = true; }
+            });
+        if confirm {
+            match self.desktop_legal_update_exclusion(target.as_deref()) {
+                Ok(excluded) => {
+                    self.status = if excluded {
+                        "法律扫描排除规则已保存，此范围将不再发送给 AI"
+                    } else {
+                        "法律扫描排除规则已更新，此范围重新允许参与扫描"
+                    }.into();
+                    self.desktop_ui.knowledge.directory.exclusion_target = None;
+                    self.desktop_ui.knowledge.directory.exclusion_error.clear();
+                }
+                Err(error) => self.desktop_ui.knowledge.directory.exclusion_error = error,
+            }
+        } else if cancel || !open {
+            self.desktop_ui.knowledge.directory.exclusion_target = None;
+            self.desktop_ui.knowledge.directory.exclusion_error.clear();
+        }
+    }
+
     fn ui_knowledge_directory_request(
         &mut self,
         ctx: &egui::Context,
@@ -989,6 +1184,7 @@ impl TimerWindowsClient {
         let label = match request.action.as_str() {
             "create_page" => "新建页面",
             "create_folder" => "新建文件夹",
+            "duplicate_page" => "创建同级页面副本",
             "rename" => "重命名",
             "move" => "移动到",
             "to_folder" => "转为文件夹",
@@ -1018,6 +1214,29 @@ impl TimerWindowsClient {
                     );
                 }
                 if request.action == "move" {
+                    let mut frequent = self.desktop_ui.knowledge.directory.preferences.move_history
+                        .iter()
+                        .filter(|row| row.count >= 2
+                            && index.may_move(&request.id, row.id.as_deref()))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let now = now_millis();
+                    frequent.sort_by(|a, b| knowledge_directory_move_rank(b, now)
+                        .total_cmp(&knowledge_directory_move_rank(a, now)));
+                    if !frequent.is_empty() {
+                        ui.label("常用位置");
+                        for item in frequent.into_iter().take(6) {
+                            let label = item.id.as_ref().map_or("知识目录根层".into(), |id| {
+                                index.path(id).iter()
+                                    .filter_map(|part| index.nodes.get(part))
+                                    .map(|node| node.title.as_str())
+                                    .collect::<Vec<_>>().join(" / ")
+                            });
+                            ui.selectable_value(&mut request.parent, item.id, label);
+                        }
+                        ui.separator();
+                    }
+                    ui.label("全部位置");
                     egui::ScrollArea::vertical()
                         .max_height(280.0)
                         .show(ui, |ui| {
@@ -1050,10 +1269,17 @@ impl TimerWindowsClient {
                 if matches!(request.action.as_str(), "to_folder" | "to_page") {
                     ui.label("保留正文、附件、历史版本及全部子项。");
                 }
+                if request.action == "duplicate_page" {
+                    ui.label("复制当前页面及子页面到原位置，不移动或修改原页面。");
+                    ui.label("已加密、不可修改和旧格式冲突的内容不会被复制。");
+                }
                 let valid = match request.action.as_str() {
                     "create_folder" | "rename" => !request.title.trim().is_empty(),
                     "move" => index.may_move(&request.id, request.parent.as_deref()),
                     "create_page" => index.may_create(request.parent.as_deref()),
+                    "duplicate_page" => request.parent.as_ref().and_then(|source| index.nodes.get(source))
+                        .is_some_and(|node| node.writable && node.has_note && !node.folder
+                            && !node.encrypted && node.issue.is_none()),
                     _ => index.nodes.get(&request.id).is_some_and(|node| {
                         node.writable && !(request.action == "to_folder" && node.database)
                     }),

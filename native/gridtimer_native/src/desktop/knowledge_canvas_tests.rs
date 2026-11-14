@@ -320,3 +320,40 @@ fn windows_canvas_json_preserves_android_customer_fields_and_one_percent_zoom() 
     let old = r#"{"version":1,"activeCanvasId":"a","canvases":[{"id":"a","title":"旧画布","centerX":0,"centerY":0,"zoom":1,"nodes":[],"edges":[]}]}"#;
     assert!(knowledge_canvas_json_is_valid(old).is_some());
 }
+
+#[test]
+fn windows_canvas_history_only_tracks_document_mutations_and_keeps_revision_unchanged_in_the_snapshot() {
+    let mut saved = KnowledgeCanvasStore::default();
+    assert!(saved.new_canvas("重要客户"));
+    saved.active_mut().unwrap().nodes.push(KnowledgeCanvasNode {
+        id:"customer".into(), kind:KnowledgeCanvasNodeKind::Client,
+        text:"客户甲\\n".into(), ..Default::default()
+    });
+    let mut pan = saved.clone();
+    pan.revision = 50;
+    pan.active_mut().unwrap().center_x += 200.0;
+    pan.active_mut().unwrap().zoom = 0.01;
+    assert!(!knowledge_canvas_business_changed(&saved,&pan),
+        "viewport gestures must not allocate an undo checkpoint");
+    let mut corrected = pan.clone();
+    corrected.active_mut().unwrap().nodes[0].text = "客户乙\\n更正".into();
+    assert!(knowledge_canvas_business_changed(&pan, &corrected));
+    assert!(knowledge_canvas_business_changed(&saved, &corrected));
+    let mut receipt = corrected.clone();
+    receipt.active_mut().unwrap().nodes[0].pending_cents = Some(500);
+    assert!(knowledge_canvas_business_changed(&corrected, &receipt));
+}
+#[test]
+fn windows_canvas_digest_detects_external_changes_and_missing_files() {
+    let path = std::env::temp_dir().join(format!(
+        "tenrate_canvas_undo_{}.json", random_hex_identifier()
+    ));
+    assert_eq!(knowledge_canvas_disk_fingerprint(&path).unwrap(),None);
+    std::fs::write(&path,b"first").unwrap();
+    let first = knowledge_canvas_disk_fingerprint(&path).unwrap();
+    std::fs::write(&path,b"later committed by another editor").unwrap();
+    let second = knowledge_canvas_disk_fingerprint(&path).unwrap();
+    assert_ne!(first, second, "a stale writer must not replace a newer file");
+    std::fs::remove_file(&path).unwrap();
+    assert_ne!(knowledge_canvas_disk_fingerprint(&path).unwrap(), second);
+}

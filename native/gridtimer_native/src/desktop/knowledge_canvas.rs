@@ -336,6 +336,49 @@ struct KnowledgeCanvasWorkspaceState {
     dirty: bool,
     save_due_epoch_millis: i64,
     save_error: Option<String>,
+    /// The exact bytes fingerprint of the latest disk image observed by this workspace.
+    /// Checking this before replacement refuses stale desktop writes.
+    disk_fingerprint: Option<[u8; 32]>,
+    external_conflict: bool,
+    /// Last durably saved board, not one snapshot per pointer move.
+    saved_store: Option<KnowledgeCanvasStore>,
+    undo: std::collections::VecDeque<KnowledgeCanvasStore>,
+    redo: std::collections::VecDeque<KnowledgeCanvasStore>,
+    suppress_history_for_next_save: bool,
+    restore_checkpoint: Option<KnowledgeCanvasStore>,
+}
+
+/// A bounded-memory streaming digest; a missing file has a distinct fingerprint
+/// from any valid empty JSON document.
+fn knowledge_canvas_disk_fingerprint(path: &Path) -> io::Result<Option<[u8; 32]>> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer)?;
+        if read == 0 { break; }
+        digest.update(&buffer[..read]);
+    }
+    Ok(Some(digest.finalize().into()))
+}
+
+/// Classify only user document changes as undoable: scrolling/zooming never
+/// creates hundreds of history copies or makes the undo button flicker.
+fn knowledge_canvas_business_changed(before: &KnowledgeCanvasStore, after: &KnowledgeCanvasStore) -> bool {
+    if before.active_canvas_id != after.active_canvas_id
+        || before.canvases.len() != after.canvases.len()
+    {
+        return true;
+    }
+    before.canvases.iter().zip(&after.canvases).any(|(left, right)| {
+        left.id != right.id || left.title != right.title
+            || left.template != right.template
+            || left.nodes != right.nodes || left.edges != right.edges
+    })
 }
 
 fn knowledge_canvas_path(state_path: &Path) -> PathBuf {
@@ -390,10 +433,64 @@ fn knowledge_canvas_load(path: &Path) -> PersistenceLoad<KnowledgeCanvasStore> {
 impl TimerWindowsClient {
     fn mark_knowledge_canvas_dirty(&mut self) {
         let state = &mut self.desktop_ui.knowledge_canvas;
+        // A new user mutation after an undo invalidates redo even when it
+        // arrives before the undo has had time to persist.
+        if state.suppress_history_for_next_save {
+            if let Some(checkpoint) = state.restore_checkpoint.as_ref() {
+                if knowledge_canvas_business_changed(checkpoint, &state.store) {
+                    state.saved_store = Some(checkpoint.clone());
+                    state.restore_checkpoint = None;
+                    state.suppress_history_for_next_save = false;
+                    state.redo.clear();
+                }
+            }
+        }
         state.dirty = true;
+        state.store.revision = state.store.revision.saturating_add(1);
         state.save_due_epoch_millis =
             now_millis().saturating_add(KNOWLEDGE_CANVAS_SAVE_DEBOUNCE_MILLIS);
-        state.save_error = None;
+        if !state.external_conflict {
+            state.save_error = None;
+        }
+    }
+
+    fn undo_knowledge_canvas(&mut self) {
+        let state = &mut self.desktop_ui.knowledge_canvas;
+        let current = state.store.clone();
+        let unsaved_change = state.saved_store.as_ref()
+            .is_some_and(|saved| knowledge_canvas_business_changed(saved, &current));
+        let previous = if unsaved_change {
+            state.saved_store.clone()
+        } else {
+            state.undo.pop_back()
+        };
+        let Some(mut previous) = previous else { return; };
+        state.redo.push_back(current.clone());
+        if state.redo.len() > 32 { state.redo.pop_front(); }
+        previous.revision = current.revision.saturating_add(1);
+        state.store = previous;
+        state.restore_checkpoint = Some(state.store.clone());
+        state.suppress_history_for_next_save = true;
+        state.selected_nodes.clear();
+        state.selected_edge = None;
+        state.customer_draft = KnowledgeCanvasCustomerDraft::default();
+        self.mark_knowledge_canvas_dirty();
+    }
+
+    fn redo_knowledge_canvas(&mut self) {
+        let state = &mut self.desktop_ui.knowledge_canvas;
+        let Some(mut next) = state.redo.pop_back() else { return; };
+        let current = state.store.clone();
+        state.undo.push_back(current.clone());
+        if state.undo.len() > 32 { state.undo.pop_front(); }
+        next.revision = current.revision.saturating_add(1);
+        state.store = next;
+        state.restore_checkpoint = Some(state.store.clone());
+        state.suppress_history_for_next_save = true;
+        state.selected_nodes.clear();
+        state.selected_edge = None;
+        state.customer_draft = KnowledgeCanvasCustomerDraft::default();
+        self.mark_knowledge_canvas_dirty();
     }
 
     fn persist_knowledge_canvas(&mut self, force: bool) -> io::Result<()> {
@@ -406,12 +503,41 @@ impl TimerWindowsClient {
             .scope_path
             .clone()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "画布工作区尚未载入"))?;
+        if state.external_conflict {
+            return Err(io::Error::new(io::ErrorKind::Other,
+                "画布文件已经在其他窗口修改；请先备份本机数据并重新打开，不会覆盖外部内容"));
+        }
+        // A stale editor must never silently replace a newer file. This is a
+        // preflight check; the existing single-instance guard still owns the
+        // process-level writer boundary.
+        if knowledge_canvas_disk_fingerprint(&path)? != state.disk_fingerprint {
+            let state = &mut self.desktop_ui.knowledge_canvas;
+            state.external_conflict = true;
+            state.save_error = Some("画布文件已经在其他窗口修改，已暂停写入".into());
+            return Err(io::Error::new(io::ErrorKind::Other,
+                "画布文件已经在其他窗口修改，已暂停写入"));
+        }
         let content = serde_json::to_string_pretty(&state.store)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let result = atomic_save_text(&path, &content, |raw| knowledge_canvas_json_is_valid(raw));
+        let result = atomic_save_text(&path, &content, |raw| knowledge_canvas_json_is_valid(raw))
+            .and_then(|()| knowledge_canvas_disk_fingerprint(&path));
         let state = &mut self.desktop_ui.knowledge_canvas;
         match result {
-            Ok(()) => {
+            Ok(fingerprint) => {
+                if !state.suppress_history_for_next_save
+                    && state.saved_store.as_ref().is_some_and(|before|
+                        knowledge_canvas_business_changed(before, &state.store))
+                {
+                    if let Some(previous) = state.saved_store.take() {
+                        state.undo.push_back(previous);
+                        if state.undo.len() > 32 { state.undo.pop_front(); }
+                    }
+                    state.redo.clear();
+                }
+                state.saved_store = Some(state.store.clone());
+                state.disk_fingerprint = fingerprint;
+                state.suppress_history_for_next_save = false;
+                state.restore_checkpoint = None;
                 state.dirty = false;
                 state.save_error = None;
                 Ok(())
@@ -433,11 +559,25 @@ impl TimerWindowsClient {
             return false;
         }
         let loaded = knowledge_canvas_load(&path);
+        let disk_fingerprint = match knowledge_canvas_disk_fingerprint(&path) {
+            Ok(digest) => digest,
+            Err(error) => {
+                self.status = format!("无法核对画布文件，未打开：{error}");
+                return false;
+            }
+        };
         if let Some(message) = loaded.message {
             self.status = message;
         }
         let state = &mut self.desktop_ui.knowledge_canvas;
         state.store = loaded.value;
+        state.saved_store = Some(state.store.clone());
+        state.disk_fingerprint = disk_fingerprint;
+        state.external_conflict = false;
+        state.undo.clear();
+        state.redo.clear();
+        state.suppress_history_for_next_save = false;
+        state.restore_checkpoint = None;
         state.scope_path = Some(path);
         state.selected_nodes.clear();
         state.selected_edge = None;
@@ -466,6 +606,11 @@ impl TimerWindowsClient {
     }
 
     fn flush_due_knowledge_canvas(&mut self) {
+        if self.desktop_ui.knowledge_canvas.external_conflict {
+            // The rejected write remains in memory. Do not hammer the
+            // filesystem or silently clear a previously reported conflict.
+            return;
+        }
         if self.desktop_ui.knowledge_canvas.dirty
             && now_millis() >= self.desktop_ui.knowledge_canvas.save_due_epoch_millis
         {
@@ -509,6 +654,10 @@ impl TimerWindowsClient {
         // area on the right instead of hiding the canvas card beneath a modal.
         let board_size = if has_customer && available.x >= 850.0 {
             egui::vec2((available.x - 440.0).max(390.0), available.y)
+        } else if has_customer && available.x >= 640.0 {
+            // On a compact 760px desktop window the inspector must not float
+            // over the selected customer card. Reserve a narrow canvas pane.
+            egui::vec2((available.x - 350.0).max(280.0), available.y)
         } else {
             available
         };
@@ -932,6 +1081,20 @@ impl TimerWindowsClient {
                 ui.ctx().data_mut(|data| {
                     data.insert_temp(egui::Id::new("knowledge_canvas_fit_requested"), true)
                 });
+            }
+            let can_undo = {
+                let state = &self.desktop_ui.knowledge_canvas;
+                !state.undo.is_empty() ||
+                    state.saved_store.as_ref().is_some_and(|saved|
+                        knowledge_canvas_business_changed(saved, &state.store))
+            };
+            if ui.add_enabled(can_undo, egui::Button::new("撤销")).clicked() {
+                self.undo_knowledge_canvas();
+            }
+            if ui.add_enabled(!self.desktop_ui.knowledge_canvas.redo.is_empty(),
+                egui::Button::new("重做")).clicked()
+            {
+                self.redo_knowledge_canvas();
             }
             if ui.small_button("−").on_hover_text("缩小").clicked() {
                 self.knowledge_canvas_zoom_by(0.85);
@@ -2067,7 +2230,19 @@ impl TimerWindowsClient {
         if ctx.wants_keyboard_input() {
             return;
         }
-        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        if ctx.input(|input|
+            input.modifiers.command && input.key_pressed(egui::Key::Z))
+        {
+            if ctx.input(|input| input.modifiers.shift) {
+                self.redo_knowledge_canvas();
+            } else {
+                self.undo_knowledge_canvas();
+            }
+        } else if ctx.input(|input| input.modifiers.command
+            && input.key_pressed(egui::Key::Y))
+        {
+            self.redo_knowledge_canvas();
+        } else if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             let state = &mut self.desktop_ui.knowledge_canvas;
             state.connect_mode = false;
             state.referral_mode = false;

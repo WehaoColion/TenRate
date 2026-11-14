@@ -7166,9 +7166,49 @@ impl TimerWindowsClient {
         if matches!(self.shutdown_state, ClientShutdownState::Running) {
             self.flush_due_saves(ctx);
             self.check_timer_bells();
+            self.poll_desktop_note_trash_retention(ctx);
             self.handle_dropped_note_files(ctx);
         }
         self.rebuild_view_cache();
+    }
+}
+
+impl TimerWindowsClient {
+    /// Android-compatible 100-day trash retention. Only the accepted snapshot
+    /// is eligible; unsaved edits, sync/rebase, or pending media operations defer
+    /// deletion. Tombstones and shared attachment references are handled by the
+    /// existing common Rust domain operation, not by a second Windows parser.
+    fn poll_desktop_note_trash_retention(&mut self, ctx: &egui::Context) {
+        if !self.workspace_persistence_ready
+            || self.workspace_edit_locked()
+            || self.persistence.pending()
+            || self.external_workspace_save_pending()
+            || self.sync_result_rx.is_some()
+            || self.note_media_sync_result_rx.is_some()
+            || self.note_dirty || self.slot_dirty || self.finance_dirty || self.theme_dirty
+            || !matches!(self.shutdown_state, ClientShutdownState::Running)
+        {
+            return;
+        }
+        let now = now_millis();
+        if now <= 0 { return; }
+        let id = egui::Id::new(("windows_note_trash_100_days", &self.state_path));
+        let previous = ctx.data_mut(|data| data.get_temp::<i64>(id));
+        if previous.is_some_and(|last| now >= last && now - last < 86_400_000) {
+            return;
+        }
+        // Mark the attempt before parsing the snapshot. Even corrupt data must
+        // not create a busy repaint loop or repeatedly retry a failing write.
+        ctx.data_mut(|data| data.insert_temp(id, now));
+        let Some(next) = gridtimer_native::app_data::
+            purge_expired_note_trash_app_data_json(&self.state_json, now)
+        else { return; };
+        if !self.replace_state(Some(next), "已安全清理超过 100 天的回收站资料") {
+            // A failed persistence attempt is not a successful purge. Check
+            // again after one minute rather than waiting another full day.
+            ctx.data_mut(|data| data.insert_temp(id, now - 86_340_000));
+            self.status = "回收站自动清理未保存，下次安全时会重试".into();
+        }
     }
 }
 
