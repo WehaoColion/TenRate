@@ -1278,6 +1278,10 @@ private fun KnowledgeAiDialog(
         }
     }
     fun setAgentMode(enabled: Boolean) {
+        if (pendingTurn != null || savingConversation) {
+            statusText = "请先确认保存当前问答，再切换 AI 模式。"
+            return
+        }
         if (agentMode == enabled) return
         if (agentBusy) stopAgent("已取消 Agent")
         boundary.invalidate()
@@ -1291,6 +1295,10 @@ private fun KnowledgeAiDialog(
         if (enabled) statusText = "先选择资料并查看发送范围，再点击授权并执行。"
     }
     fun changeMode(next: KnowledgeAiMode) {
+        if (pendingTurn != null || savingConversation) {
+            statusText = "请先保存当前问答，防止切换时丢失。"
+            return
+        }
         if (queryMode == next) return
         if (agentMode) setAgentMode(false)
         boundary.changeMode(next)
@@ -1678,7 +1686,10 @@ private fun KnowledgeAiDialog(
                     if (chatSessions.isEmpty()) item { Text("暂无历史对话。") }
                 }
                 item {
-                    TextButton(onClick = { boundary.invalidate(); onDismiss(); onOpenAiSettings() }) {
+                    TextButton(
+                        enabled = !busy && !savingConversation && pendingTurn == null,
+                        onClick = { boundary.invalidate(); onDismiss(); onOpenAiSettings() }
+                    ) {
                         Text(if (configuration.testable) "${configuration.model} · ${configuration.recipientHost} · 设置" else "配置 DeepSeek / 其他 AI", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -1832,10 +1843,14 @@ private fun KnowledgeAiDialog(
                                     clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("AI 回答", entry.turn.answer))
                                     Toast.makeText(context, "已复制回答原文", Toast.LENGTH_SHORT).show()
                                 }) { Text("复制回答") }
-                                TextButton(enabled = !busy && !agentBusy, onClick = { onSaveAnswer(entry.turn.question, entry.turn.answer, entry.sources) }) { Text("单独保存本轮") }
+                                TextButton(enabled = !busy && !agentBusy && !savingConversation && pendingTurn == null,
+                                    onClick = { onSaveAnswer(entry.turn.question, entry.turn.answer, entry.sources) }) { Text("单独保存本轮") }
                             }
                             entry.sources.forEachIndexed { index, source ->
-                                KnowledgeSourceCard(source, index + 1) { onOpenSource(source) }
+                                KnowledgeSourceCard(source, index + 1) {
+                                    if (pendingTurn == null && !savingConversation) onOpenSource(source)
+                                    else statusText = "请先保存当前未确认的回答。"
+                                }
                             }
                         }
                     }
