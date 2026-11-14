@@ -30,6 +30,26 @@ struct DesktopAiImage {
     name: String,
     bytes: Arc<Vec<u8>>,
     digest: String,
+    thumbnail: Option<egui::ColorImage>,
+}
+
+/// Decode only a bounded thumbnail for consent preview. Original bytes are
+/// retained unchanged for the eventual explicit provider request.
+fn desktop_ai_thumbnail(bytes: &[u8]) -> Option<egui::ColorImage> {
+    let mut reader = image::io::Reader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format().ok()?;
+    reader.limits(image::io::Limits {
+        max_image_width: Some(8_192),
+        max_image_height: Some(8_192),
+        max_alloc: Some(64 * 1024 * 1024),
+        ..Default::default()
+    });
+    let decoded = reader.decode().ok()?;
+    let bitmap = decoded.thumbnail(144, 144).to_rgba8();
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [bitmap.width() as usize, bitmap.height() as usize],
+        bitmap.as_raw(),
+    ))
 }
 
 fn desktop_ai_load_images(paths: &[PathBuf]) -> Result<Vec<DesktopAiImage>, String> {
@@ -53,10 +73,14 @@ fn desktop_ai_load_images(paths: &[PathBuf]) -> Result<Vec<DesktopAiImage>, Stri
             name,
             digest: format!("{:x}", Sha256::digest(&bytes)),
             bytes: Arc::new(bytes),
+            thumbnail: None,
         });
     }
     let all = result.iter().map(|image| (*image.bytes).clone()).collect::<Vec<_>>();
     ai_client::validate_explicit_image_inputs(&all)?;
+    for item in &mut result {
+        item.thumbnail = desktop_ai_thumbnail(item.bytes.as_slice());
+    }
     Ok(result)
 }
 
@@ -85,6 +109,7 @@ struct DesktopAiSession {
     last_configuration: Option<String>,
     turns: Vec<DesktopAiTurn>,
     images: Vec<DesktopAiImage>,
+    thumbnail_textures: std::collections::HashMap<String, egui::TextureHandle>,
     priority_note_id: Option<String>,
     mode: QueryMode,
     boundary: QueryBoundary,
@@ -149,6 +174,7 @@ impl TimerWindowsClient {
         self.desktop_agent.draft = None;
         self.desktop_ai.turns.clear();
         self.desktop_ai.images.clear();
+        self.desktop_ai.thumbnail_textures.clear();
         self.knowledge_ai_answer = None;
         self.desktop_ai.preview = None;
         self.desktop_ai.probe_binding = None;
