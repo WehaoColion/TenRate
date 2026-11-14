@@ -373,7 +373,7 @@ impl TimerWindowsClient {
                                     }
                                 });
                                 if d.charge_remove_id == charge.id {
-                                    ui.label("确认删除此款项？该操作不能通过关闭面板取消。");
+                                    ui.label("确认删除此款项？删除后客户待收汇总会重新计算。");
                                     ui.horizontal(|ui| {
                                         if ui.button("确认删除款项").clicked() {
                                             action = Some(json!({"op":"removeClientCharge","id":node.id,
@@ -493,7 +493,7 @@ impl TimerWindowsClient {
         if let Some(request) = action {
             match self.knowledge_canvas_update_customer(&node.id, request) {
                 Ok(()) => {
-                    self.status = "客户资料已保存到当前画布".into();
+                    self.status = "客户资料已更新，等待本地画布保存完成".into();
                     self.desktop_ui.knowledge_canvas.customer_draft.client_id.clear();
                 },
                 Err(error) => self.status = format!("客户更新未保存：{error}"),
