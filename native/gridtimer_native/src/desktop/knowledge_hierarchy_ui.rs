@@ -530,7 +530,7 @@ impl TimerWindowsClient {
                 self.load_note_draft_without_flush(&note);
             }
         }
-        if request.action == "create_page" {
+        if matches!(request.action.as_str(), "create_page" | "duplicate_page") {
             self.close_knowledge_directory();
             self.select_note_by_id(&request.id);
         } else if request.action == "create_folder" {
@@ -613,6 +613,17 @@ impl TimerWindowsClient {
                         }
                     });
                 });
+                if !node.folder && node.has_note && node.writable && !node.encrypted
+                    && node.issue != Some(KnowledgeDirectoryIssue::IdentityConflict)
+                    && ui.button("创建同级副本…").clicked()
+                {
+                    self.request_knowledge_directory_action(
+                        "duplicate_page",
+                        &random_hex_identifier(),
+                        Some(node.id.clone()),
+                        "",
+                    );
+                }
                 if node.has_note
                     && node.issue != Some(KnowledgeDirectoryIssue::IdentityConflict)
                     && ui.button("编辑正文").clicked()
@@ -989,6 +1000,7 @@ impl TimerWindowsClient {
         let label = match request.action.as_str() {
             "create_page" => "新建页面",
             "create_folder" => "新建文件夹",
+            "duplicate_page" => "创建同级页面副本",
             "rename" => "重命名",
             "move" => "移动到",
             "to_folder" => "转为文件夹",
@@ -1050,10 +1062,17 @@ impl TimerWindowsClient {
                 if matches!(request.action.as_str(), "to_folder" | "to_page") {
                     ui.label("保留正文、附件、历史版本及全部子项。");
                 }
+                if request.action == "duplicate_page" {
+                    ui.label("复制当前页面及子页面到原位置，不移动或修改原页面。");
+                    ui.label("已加密、不可修改和旧格式冲突的内容不会被复制。");
+                }
                 let valid = match request.action.as_str() {
                     "create_folder" | "rename" => !request.title.trim().is_empty(),
                     "move" => index.may_move(&request.id, request.parent.as_deref()),
                     "create_page" => index.may_create(request.parent.as_deref()),
+                    "duplicate_page" => request.parent.as_ref().and_then(|source| index.nodes.get(source))
+                        .is_some_and(|node| node.writable && node.has_note && !node.folder
+                            && !node.encrypted && node.issue.is_none()),
                     _ => index.nodes.get(&request.id).is_some_and(|node| {
                         node.writable && !(request.action == "to_folder" && node.database)
                     }),
