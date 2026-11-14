@@ -168,3 +168,94 @@ fn windows_canvas_legacy_blank_title_is_repaired_without_losing_cards() {
     assert_eq!(repaired.active().unwrap().nodes[0].id, "legacy-card");
     assert_eq!(repaired.active().unwrap().nodes[0].text, "历史内容");
 }
+
+
+#[test]
+fn windows_customer_amounts_and_receipts_use_shared_rust_precision() {
+    let customer = KnowledgeCanvasNode {
+        id: "client-1".into(),
+        kind: KnowledgeCanvasNodeKind::Client,
+        text: "客户甲\\n备注".into(),
+        ..Default::default()
+    };
+    let customer = knowledge_canvas_apply_profile(
+        &customer, "客户甲", "备注", "560.00", "660.00",
+    ).unwrap();
+    let mut core = knowledge_canvas_customer_to_core(&customer);
+    assert_eq!(gridtimer_native::android_canvas::checked_client_totals(&core).unwrap(), (56_000, 66_000));
+    gridtimer_native::android_canvas::apply_customer_money_operation(
+        &mut core,
+        &json!({"op":"importClientHistory","id":"client-1",
+            "chargeId":"charge-1","receiptId":"receipt-1",
+            "title":"服务项目","serviceLocation":"服务地","dueOn":"",
+            "receivedOn":"","location":"收款地","channel":"转账",
+            "note":"","receiptNote":""}),
+    ).unwrap();
+    assert_eq!(core.charges.len(), 1);
+    assert_eq!(core.charges[0].receipts[0].location, "收款地");
+    assert_eq!(core.charges[0].receipts[0].amount_cents, 56_000);
+    assert_eq!(gridtimer_native::android_canvas::checked_client_totals(&core).unwrap(), (56_000, 66_000));
+    assert!(core.paid_cents.is_none() && core.pending_cents.is_none());
+
+    let before = core.clone();
+    assert!(gridtimer_native::android_canvas::apply_customer_money_operation(
+        &mut core,
+        &json!({"op":"addClientReceipt","id":"client-1",
+            "chargeId":"charge-1","receiptId":"receipt-invalid",
+            "amountYuan":"660.001","receivedOn":"2026-11-14",
+            "location":"长沙","channel":"转账","note":""}),
+    ).is_err());
+    assert_eq!(core, before, "failed cents validation must never mutate a receipt");
+}
+
+#[test]
+fn windows_referral_graph_rejects_cycles_and_multiple_direct_parents() {
+    let mut store = KnowledgeCanvasStore::default();
+    assert!(store.new_canvas("客户网络"));
+    let canvas = store.active_mut().unwrap();
+    canvas.template = "customer_network".into();
+    for name in ["甲", "乙", "丙"] {
+        canvas.nodes.push(KnowledgeCanvasNode {
+            id: name.into(), kind: KnowledgeCanvasNodeKind::Client,
+            text: format!("{name}\\n"), ..Default::default()
+        });
+    }
+    canvas.edges.push(KnowledgeCanvasEdge {
+        id:"e1".into(), from:"甲".into(), to:"乙".into(), relation:Some("referral".into())
+    });
+    canvas.edges.push(KnowledgeCanvasEdge {
+        id:"e2".into(), from:"乙".into(), to:"丙".into(), relation:Some("referral".into())
+    });
+    assert!(store.validate().is_ok());
+    store.active_mut().unwrap().edges.push(KnowledgeCanvasEdge {
+        id:"e3".into(), from:"丙".into(), to:"甲".into(), relation:Some("referral".into())
+    });
+    assert!(store.validate().is_err(), "a cycle must be rejected");
+    store.active_mut().unwrap().edges.pop();
+    store.active_mut().unwrap().edges.push(KnowledgeCanvasEdge {
+        id:"e4".into(), from:"甲".into(), to:"丙".into(), relation:Some("referral".into())
+    });
+    assert!(store.validate().is_err(), "only one direct introducer is permitted");
+}
+
+#[test]
+fn windows_canvas_json_preserves_android_customer_fields_and_one_percent_zoom() {
+    let mut store = KnowledgeCanvasStore::default();
+    assert!(store.new_canvas("客户"));
+    let canvas = store.active_mut().unwrap();
+    canvas.template = "customer_network".into();
+    canvas.zoom = 0.01;
+    canvas.nodes.push(KnowledgeCanvasNode {
+        id:"client-a".into(), kind: KnowledgeCanvasNodeKind::Client,
+        text:"客户甲\\n说明".into(), paid_cents:Some(1), pending_cents:Some(99),
+        ..Default::default()
+    });
+    let encoded = serde_json::to_string(&store).unwrap();
+    let decoded: KnowledgeCanvasStore = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, store);
+    assert_eq!(decoded.active().unwrap().zoom, 0.01);
+    assert_eq!(decoded.active().unwrap().nodes[0].paid_cents, Some(1));
+    assert!(knowledge_canvas_json_is_valid(&encoded).is_some());
+    let old = r#"{"version":1,"activeCanvasId":"a","canvases":[{"id":"a","title":"旧画布","centerX":0,"centerY":0,"zoom":1,"nodes":[],"edges":[]}]}"#;
+    assert!(knowledge_canvas_json_is_valid(old).is_some());
+}
