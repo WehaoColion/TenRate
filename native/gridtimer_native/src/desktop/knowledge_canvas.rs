@@ -498,8 +498,22 @@ impl TimerWindowsClient {
         }
         ui.add_space(8.0);
         let available = ui.available_size().max(egui::vec2(320.0, 260.0));
+        let has_customer = self.desktop_ui.knowledge_canvas.selected_nodes.iter().any(|id| {
+            self.desktop_ui.knowledge_canvas.store.active().is_some_and(|canvas|
+                canvas.nodes.iter().any(|node|
+                    node.id == *id && node.kind == KnowledgeCanvasNodeKind::Client
+                )
+            )
+        });
+        // On a wide Windows window the customer inspector occupies its own
+        // area on the right instead of hiding the canvas card beneath a modal.
+        let board_size = if has_customer && available.x >= 850.0 {
+            egui::vec2((available.x - 440.0).max(390.0), available.y)
+        } else {
+            available
+        };
         let (board_rect, board_response) =
-            ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+            ui.allocate_exact_size(board_size, egui::Sense::click_and_drag());
         if !ui.is_rect_visible(board_rect) {
             return;
         }
