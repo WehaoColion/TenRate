@@ -930,11 +930,177 @@ const KNOWLEDGE_DIALOG: &str = r####"private fun buildKnowledgeAgentDraftNote(
     )
 }
 
+
+private data class DurableAiTurn(
+    val id: String, val question: String, val answer: String,
+    val sourceIds: List<String>, val imageCount: Int
+)
+private data class DurableAiSession(
+    val id: String, val title: String, val mode: String,
+    val turns: List<DurableAiTurn>, val pageId: String? = null,
+    val savedTurnCount: Int = 0, val updatedAt: Long = System.currentTimeMillis()
+)
+
+// This device's encrypted, account/workspace-separated archive. A corrupt archive is never
+// replaced by a fresh empty one; AtomicFile rolls back interrupted writes.
+private object DurableAiConversationStore {
+    private const val KEY_ALIAS = "tenrate_android_ai_history_v1"
+    private fun file(context: android.content.Context, owner: String): android.util.AtomicFile {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(owner.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        val dir = java.io.File(context.noBackupFilesDir, "ai_history").apply { mkdirs() }
+        return android.util.AtomicFile(java.io.File(dir, digest + ".enc"))
+    }
+    private fun key(): javax.crypto.SecretKey {
+        val store = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val existing = store.getKey(KEY_ALIAS, null) as? javax.crypto.SecretKey
+        if (existing != null) return existing
+        val generator = javax.crypto.KeyGenerator.getInstance(
+            android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(android.security.keystore.KeyGenParameterSpec.Builder(KEY_ALIAS,
+            android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or
+                android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true).build())
+        return generator.generateKey()
+    }
+    private fun encrypt(clear: ByteArray): ByteArray {
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key())
+        return cipher.iv + cipher.doFinal(clear)
+    }
+    private fun decrypt(data: ByteArray): ByteArray {
+        require(data.size >= 28) { "AI 对话密文长度无效" }
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key(),
+            javax.crypto.spec.GCMParameterSpec(128, data.copyOfRange(0, 12)))
+        return cipher.doFinal(data.copyOfRange(12, data.size))
+    }
+    private fun decode(data: ByteArray): List<DurableAiSession> {
+        val array = org.json.JSONArray(String(decrypt(data), Charsets.UTF_8))
+        return (0 until array.length()).map { i ->
+            val item = array.getJSONObject(i)
+            val storedTurns = item.getJSONArray("turns")
+            val turns = (0 until storedTurns.length()).map { j ->
+                val turn = storedTurns.getJSONObject(j)
+                val sourceIds = turn.optJSONArray("sources") ?: org.json.JSONArray()
+                DurableAiTurn(turn.getString("id"), turn.getString("question"),
+                    turn.getString("answer"),
+                    (0 until sourceIds.length()).map { sourceIds.getString(it) },
+                    turn.optInt("images", 0))
+            }
+            DurableAiSession(item.getString("id"), item.optString("title", "AI 对话"),
+                item.optString("mode", "direct"), turns,
+                item.optString("pageId").takeIf { it.isNotBlank() && it != "null" },
+                item.optInt("savedTurnCount", 0).coerceIn(0, turns.size),
+                item.optLong("updatedAt", 0L))
+        }.sortedByDescending { it.updatedAt }
+    }
+    private fun encode(sessions: List<DurableAiSession>): ByteArray {
+        val array = org.json.JSONArray()
+        sessions.forEach { chat ->
+            val item = org.json.JSONObject().put("id", chat.id).put("title", chat.title)
+                .put("mode", chat.mode).put("savedTurnCount", chat.savedTurnCount)
+                .put("updatedAt", chat.updatedAt)
+            if (chat.pageId != null) item.put("pageId", chat.pageId)
+            val turns = org.json.JSONArray()
+            chat.turns.forEach { turn ->
+                turns.put(org.json.JSONObject().put("id", turn.id)
+                    .put("question", turn.question).put("answer", turn.answer)
+                    .put("sources", org.json.JSONArray(turn.sourceIds))
+                    .put("images", turn.imageCount))
+            }
+            item.put("turns", turns)
+            array.put(item)
+        }
+        return encrypt(array.toString().toByteArray(Charsets.UTF_8))
+    }
+    private fun readUnlocked(context: android.content.Context, owner: String): List<DurableAiSession> {
+        val target = file(context, owner)
+        if (!target.baseFile.exists() &&
+            !java.io.File(target.baseFile.path + ".bak").exists()) return emptyList()
+        return decode(target.openRead().use { it.readBytes() })
+    }
+    @Synchronized fun read(context: android.content.Context, owner: String): List<DurableAiSession> =
+        readUnlocked(context, owner)
+    private fun writeUnlocked(context: android.content.Context, owner: String,
+        sessions: List<DurableAiSession>) {
+        val target = file(context, owner)
+        val stream = target.startWrite()
+        try {
+            stream.write(encode(sessions))
+            target.finishWrite(stream)
+        } catch (error: Throwable) {
+            target.failWrite(stream)
+            throw error
+        }
+    }
+    @Synchronized fun append(context: android.content.Context, owner: String,
+        chatId: String, mode: String, turn: DurableAiTurn): List<DurableAiSession> {
+        val sessions = readUnlocked(context, owner).toMutableList()
+        val index = sessions.indexOfFirst { it.id == chatId }
+        val old = sessions.getOrNull(index)
+        if (old?.turns?.any { it.id == turn.id } == true) return sessions
+        val title = old?.title ?: turn.question.lineSequence().firstOrNull()
+            .orEmpty().trim().take(36).ifBlank { "AI 对话" }
+        val current = (old ?: DurableAiSession(chatId, title, mode, emptyList()))
+            .copy(turns = old?.turns.orEmpty() + turn,
+                updatedAt = System.currentTimeMillis())
+        if (index >= 0) sessions[index] = current else sessions.add(current)
+        writeUnlocked(context, owner, sessions)
+        return sessions.sortedByDescending { it.updatedAt }
+    }
+    @Synchronized fun pageCommitted(context: android.content.Context, owner: String,
+        chatId: String, pageId: String, count: Int): List<DurableAiSession> {
+        val sessions = readUnlocked(context, owner).toMutableList()
+        val index = sessions.indexOfFirst { it.id == chatId }
+        require(index >= 0) { "对话存档尚未完成，不能标记知识页" }
+        val old = sessions[index]
+        sessions[index] = old.copy(pageId = pageId,
+            savedTurnCount = maxOf(old.savedTurnCount, count.coerceAtMost(old.turns.size)))
+        writeUnlocked(context, owner, sessions)
+        return sessions.sortedByDescending { it.updatedAt }
+    }
+}
+private fun conversationMarkdown(turns: List<DurableAiTurn>, startIndex: Int): String =
+    turns.mapIndexed { index, turn ->
+        "<!-- tenrate-ai-turn:" + turn.id + " -->\n" +
+            "## 问题 " + (startIndex + index + 1) + "\n\n" + turn.question +
+            "\n\n**AI 回答**\n\n" + turn.answer
+    }.joinToString("\n\n")
+private fun buildDurableConversationNote(
+    session: DurableAiSession, existing: NoteEntry?
+): NoteEntry {
+    val text = existing?.content.orEmpty()
+    val additionTurns = session.turns.drop(if (existing == null) 0 else session.savedTurnCount)
+        .filterNot { text.contains("<!-- tenrate-ai-turn:" + it.id + " -->") }
+    val addition = conversationMarkdown(additionTurns,
+        if (existing == null) 0 else session.turns.size - additionTurns.size)
+    val now = System.currentTimeMillis()
+    if (existing != null) {
+        val original = existing.document ?: NoteDocument(markdownEnabled = true,
+            blocks = listOf(NoteBlock(type = NoteBlockType.TEXT, text = existing.content)))
+        return existing.copy(
+            content = (existing.content.trimEnd() + if (addition.isBlank()) "" else "\n\n" + addition).trim(),
+            document = original.copy(blocks = original.blocks +
+                (if (addition.isBlank()) emptyList() else listOf(NoteBlock(type = NoteBlockType.TEXT, text = addition)))),
+            updatedAtEpochMillis = now
+        )
+    }
+    require(addition.isNotBlank()) { "不能保存空白 AI 对话" }
+    return NoteEntry(id = session.id, title = session.title, content = addition,
+        kind = NoteEntryKind.DOCUMENT,
+        document = NoteDocument(markdownEnabled = true,
+            blocks = listOf(NoteBlock(type = NoteBlockType.TEXT, text = addition))),
+        accentSeed = "blue", createdAtEpochMillis = now, updatedAtEpochMillis = now)
+}
 private data class KnowledgeConversationEntry(
     val id: String = UUID.randomUUID().toString(),
     val turn: KnowledgeConversationTurn,
     val sources: List<KnowledgeSourceCandidate>,
-    val imageUris: List<android.net.Uri> = emptyList()
+    val imageUris: List<android.net.Uri> = emptyList(),
+    val imageCount: Int = imageUris.size
 )
 
 @OptIn(ExperimentalLayoutApi::class)
