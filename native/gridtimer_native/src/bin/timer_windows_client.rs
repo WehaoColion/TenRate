@@ -7200,7 +7200,7 @@ impl TimerWindowsClient {
         // Mark the attempt before parsing the snapshot. Even corrupt data must
         // not create a busy repaint loop or repeatedly retry a failing write.
         ctx.data_mut(|data| data.insert_temp(id, now));
-        let Some(next) = gridtimer_native::note_trash_retention::
+        let Some(next) = gridtimer_native::app_data::
             purge_expired_note_trash_app_data_json(&self.state_json, now)
         else { return; };
         if !self.replace_state(Some(next), "已安全清理超过 100 天的回收站资料") {
