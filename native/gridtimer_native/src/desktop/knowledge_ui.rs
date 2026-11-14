@@ -572,6 +572,7 @@ impl TimerWindowsClient {
                     self.cancel_desktop_ai_query();
                     self.desktop_ai.turns.clear();
                     self.desktop_ai.images.clear();
+                    self.desktop_ai.thumbnail_textures.clear();
                     self.knowledge_ai_answer = None;
                     self.knowledge_ai_panel_open = false;
                 }
@@ -676,6 +677,7 @@ impl TimerWindowsClient {
                     self.cancel_desktop_ai_query();
                     self.desktop_ai.turns.clear();
                     self.desktop_ai.images.clear();
+                    self.desktop_ai.thumbnail_textures.clear();
                     self.knowledge_ai_answer = None;
                     self.knowledge_ai_question_draft.clear();
                 }
@@ -718,7 +720,7 @@ impl TimerWindowsClient {
                     ui.label(format!("已选择 {} 张，最多 5 张", self.desktop_ai.images.len()));
                     if ui.add_enabled(available, egui::Button::new("清空所选图片")).clicked() {
                         self.desktop_ai.images.clear();
-                        self.desktop_ai.thumbnail_textures.clear();
+                    self.desktop_ai.thumbnail_textures.clear();
                         self.desktop_ai.preview = None;
                     }
                 }
