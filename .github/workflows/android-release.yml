@@ -830,7 +830,7 @@ jobs:
 
   knowledge-actions-emulator:
     name: Android 2.13.5.10 knowledge actions on API 35
-    if: github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.10'
+    if: github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10'
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 95
