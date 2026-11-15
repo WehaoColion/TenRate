@@ -1798,9 +1798,7 @@ private fun KnowledgeAiDialog(
                     TextButton(onClick = ::retrySavingTurn, enabled = !busy) { Text("重试保存本轮回答") }
                 }
                 if (statusText.isNotBlank()) item {
-                    Text(statusText, style = MaterialTheme.typography.bodyMedium,
-                        color = if (statusText.contains("失败") || statusText.contains("未确认"))
-                            MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    Text(statusText, style = MaterialTheme.typography.bodyMedium, color = if (answer.isBlank() && !busy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
                 }
                 if (!agentMode && conversation.isNotEmpty()) item {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
