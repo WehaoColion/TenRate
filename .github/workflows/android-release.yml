@@ -766,7 +766,7 @@ jobs:
 
   ai-conversation-emulator:
     name: Android 2.13.5.9 AI conversation on API 35 emulator
-    if: github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10'
+    if: github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9'
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 95
