@@ -1,3 +1,4 @@
+// v2.13.5.9 Android - Preserve encrypted AI conversations and full knowledge-page exports.
 // v2.13.5.8 Android - Refine knowledge workspace visual hierarchy and contextual tools.
 // v2.13.5.7 Android - Restore customer payment UI entry and original customer amount fields.
 // v2.13.5.6 Android - Detailed client charges and installment receipts remain separate from risk ledger.
@@ -142,8 +143,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.13.5.8";
-pub const ANDROID_VERSION_CODE: i32 = 22358;
+pub const ANDROID_APP_VERSION: &str = "2.13.5.9";
+pub const ANDROID_VERSION_CODE: i32 = 22359;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

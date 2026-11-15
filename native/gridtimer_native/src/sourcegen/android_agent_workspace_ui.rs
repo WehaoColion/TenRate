@@ -38,7 +38,9 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         "        agentWorkspaceStep = 3\n        agentBusy = true; agentCancelling = false;",
     )?;
     let start = source
-        .find("    Dialog(onDismissRequest = { if (agentBusy) stopAgent(\"已关闭 Agent 面板\")")
+        .find("private fun KnowledgeAiDialog(")
+        .and_then(|dialog| source[dialog..].find("    Dialog(onDismissRequest = {")
+            .map(|offset| dialog + offset))
         .ok_or("Agent workspace dialog missing")?;
     let end = source[start..]
         .find("@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class")

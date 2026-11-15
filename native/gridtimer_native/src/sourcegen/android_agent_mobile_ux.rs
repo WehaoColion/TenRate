@@ -37,6 +37,10 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     replace_once(&mut source,
         "    LaunchedEffect(agentMode) { if (agentMode && !agentBusy && !agentSaving) agentWorkspaceStep = 0 }",
         r####"    fun requestAgentExit() {
+        if (pendingTurn != null || savingConversation) {
+            statusText = "当前问答仍未确认保存，请先点击重试保存。"
+            return
+        }
         if (agentSaving) return
         if (agentMode && agentBusy) agentExitConfirmation = true
         else if (agentMode && !busy) requestAgentWorkspaceReset(false, "close")
