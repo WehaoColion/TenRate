@@ -1643,12 +1643,7 @@ private fun KnowledgeAiDialog(
         }
     }
 
-    Dialog(onDismissRequest = {
-        if (!savingConversation && pendingTurn == null) {
-            if (agentBusy) stopAgent("已关闭 Agent 面板")
-            onDismiss()
-        }
-    }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    Dialog(onDismissRequest = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Box(modifier = Modifier.fillMaxSize().padding(8.dp).imePadding().navigationBarsPadding()
             .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))) {
         Surface(modifier = Modifier.fillMaxWidth().fillMaxHeight(), shape = RoundedCornerShape(24.dp), color = flowusPanelBackground(), border = BorderStroke(1.dp, flowusBorderColor())) {
@@ -1662,11 +1657,7 @@ private fun KnowledgeAiDialog(
                                 TextButton(enabled = !busy && !savingConversation && pendingTurn == null,
                                     onClick = ::beginNewConversation) { Text("新对话") }
                             }
-                            CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = {
-                                if (savingConversation || pendingTurn != null)
-                                    statusText = "仍有未确认保存的内容，请先完成保存。"
-                                else { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }
-                            })
+                            CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() })
                         }
                     }
             LazyColumn(state = messageListState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
