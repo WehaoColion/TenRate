@@ -1,3 +1,4 @@
+// v2.13.5.10 - Clarify knowledge action hierarchy and folder legal settings.
 // v2.13.5.9 - Preserve encrypted AI conversation history and full knowledge-page exports.
 // v2.13.5.8 - Refine Android knowledge workspace information hierarchy and contextual controls.
 // v2.13.5.7 - Direct customer payment details from edit and retain legacy amount controls.
@@ -73,7 +74,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.9";
+pub const LATEST_VERSION: &str = "2.13.5.10";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -103,6 +104,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.10",
+        updatedAt = "2026-11-16 06:22",
+        summary = "知识目录突出新建操作，移动与重命名收进管理菜单",
+        sections = listOf(
+            AndroidUpdateSection("目录操作", listOf(
+                "新建子页面与新建子文件夹保持直接可见，移动、重命名、类型转换及正文入口收纳到管理菜单。",
+                "新建和管理沿用原有的权限及转换限制，不更改页面树、文件内容或目录排序逻辑。"
+            )),
+            AndroidUpdateSection("法律分析设置", listOf(
+                "法律风险分析的排除与恢复入口移至知识设置、文件夹设置或页面设置。",
+                "仍须二次确认，继续沿用原本的本机加密规则、继承排除和同步隔离。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.9",
         updatedAt = "2026-11-15 07:30",
