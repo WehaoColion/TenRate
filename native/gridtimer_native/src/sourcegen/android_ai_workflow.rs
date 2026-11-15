@@ -1935,6 +1935,11 @@ private fun KnowledgeAiDialog(
                         }
                     }
                 }
+                if (!historyReady) Text("正在恢复本机加密对话记录…", style = MaterialTheme.typography.bodySmall)
+                if (historyError.isNotBlank()) Text(historyError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                if (pendingTurn != null) TextButton(onClick = ::retrySavingTurn, enabled = !busy && !savingConversation) {
+                    Text("重试保存尚未写入的回答")
+                }
                 PhysicalButton(label = if (busy) "正在回答" else if (conversation.isEmpty()) "发送" else "继续提问",
                     icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
                     enabled = historyReady && historyError.isBlank() && pendingTurn == null &&
