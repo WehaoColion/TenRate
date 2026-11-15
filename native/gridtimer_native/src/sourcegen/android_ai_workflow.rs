@@ -1176,7 +1176,7 @@ private fun KnowledgeAiDialog(
     val currentChat = chatSessions.firstOrNull { it.id == activeChatId }
     val sourceNoteIndex = remember(appData.notes) { appData.notes.associateBy { it.id } }
     val conversation = (currentChat?.turns.orEmpty() +
-        listOfNotNull(pendingTurn?.takeIf { currentChat?.id == null || activeChatId == currentChat.id }))
+        listOfNotNull(pendingTurn?.takeIf { currentChat == null || activeChatId == currentChat.id }))
         .map { record ->
             KnowledgeConversationEntry(
                 id = record.id,
