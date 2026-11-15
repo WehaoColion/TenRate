@@ -88,8 +88,9 @@ fn run(dir: &Path) -> Result<String, String> {
     capture(dir, "01_app_started");
     for _ in 0..16 {
         let ui = dump()?;
-        if ui.contains("AI 问答") && ui.contains("直接问 AI") { break; }
-        if tap_label(&["AI 问答", "AI 对话", "开始对话"])? { continue; }
+        if (ui.contains("新对话") || ui.contains("New chat")) &&
+            (ui.contains("历史") || ui.contains("History")) { break; }
+        if tap_label(&["AI chat", "Start chat", "AI 问答", "AI 对话", "开始对话"])? { continue; }
         if tap_label(&["知识", "Knowledge", "Notes"])? { continue; }
         if tap_label(&["文档库", "页面与文件夹"])? { continue; }
         cmd(&["shell", "input", "swipe", "500", "1700", "500", "650", "430"])?;
@@ -97,19 +98,20 @@ fn run(dir: &Path) -> Result<String, String> {
     }
     let opened = dump()?;
     capture(dir, "02_ai_dialog");
-    if !(opened.contains("AI 问答") && opened.contains("新对话") &&
-        opened.contains("历史") && opened.contains("直接问 AI")) {
+    if !((opened.contains("AI 问答") || opened.contains("AI chat") || opened.contains("AI Q&A")) &&
+        (opened.contains("新对话") || opened.contains("New chat")) &&
+        (opened.contains("历史") || opened.contains("History"))) {
         return Err("AI dialog or historical-conversation controls were not visible".into());
     }
-    if !tap_label(&["历史"])? { return Err("History action is not tappable".into()); }
+    if !tap_label(&["历史", "History"])? { return Err("History action is not tappable".into()); }
     sleep(Duration::from_millis(700));
     capture(dir, "03_history");
-    if !dump()?.contains("历史对话") {
+    if !(dump()?.contains("历史对话") || dump()?.contains("Chat history")) {
         return Err("History list was not displayed".into());
     }
-    if !tap_label(&["新对话"])? { return Err("New-chat action is not tappable".into()); }
+    if !tap_label(&["新对话", "New chat"])? { return Err("New-chat action is not tappable".into()); }
     capture(dir, "04_new_chat");
-    if !dump()?.contains("新对话") {
+    if !(dump()?.contains("新对话") || dump()?.contains("New chat")) {
         return Err("New-chat did not keep the AI interface open".into());
     }
     if cmd(&["shell", "pidof", PACKAGE])?.trim().is_empty() {
