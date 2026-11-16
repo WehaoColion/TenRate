@@ -171,6 +171,7 @@ private fun NoteSummaryCard(
     onManageFolders: () -> Unit
 ) {
     val totalCount = if (trashMode) trashCount else noteCount
+    val archive = knowledgeArchivePalette()
     FlowusPanel(modifier = Modifier.testTag("knowledge_compact_header"), accent = accent) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -204,7 +205,10 @@ private fun NoteSummaryCard(
                 androidx.compose.material3.Button(
                     onClick = onCreateNote,
                     modifier = Modifier.heightIn(min = 48.dp).testTag("knowledge_header_create"),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(11.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = archive.action, contentColor = archive.actionInk
+                    )
                 ) {
                     androidx.compose.material3.Icon(Icons.Rounded.Add, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
@@ -213,12 +217,12 @@ private fun NoteSummaryCard(
                 FlowusIconAction(
                     if (trashMode) "回到文档" else "回收站 $trashCount",
                     if (trashMode) Icons.Rounded.FolderOpen else Icons.Rounded.RestoreFromTrash,
-                    MaterialTheme.colorScheme.secondary,
+                    archive.ink,
                     modifier = Modifier.heightIn(min = 48.dp).testTag("knowledge_header_trash"),
                     onClick = onToggleTrash
                 )
                 FlowusIconAction(
-                    "文档库 $folderCount", Icons.Rounded.Folder, accent,
+                    "文档库 $folderCount", Icons.Rounded.Folder, archive.ink,
                     modifier = Modifier.heightIn(min = 48.dp).testTag("knowledge_header_folders")
                         .semantics { contentDescription = "管理文档库，共 $folderCount 个" },
                     onClick = onManageFolders

@@ -1,3 +1,4 @@
+Android 2.13.5.12 知识模块拟物材质、资料柜视觉与模拟器验收候选：[说明](android/release_notes_v2.13.5.12.md)。
 Android 2.13.5.11 知识模块统一动效、画布镜头及模拟器验收候选：[说明](android/release_notes_v2.13.5.11.md)。
 Android 2.13.5.9 AI 多轮问答本机加密历史、整段知识页收录及追加候选：[说明](android/release_notes_v2.13.5.9.md)。
 Android 2.13.5.8 知识模块工作空间视觉与操作层级优化候选：[说明](android/release_notes_v2.13.5.8.md)。

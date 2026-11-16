@@ -4,7 +4,7 @@ use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sl
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "2.13.5.11";
+const VERSION: &str = "2.13.5.12";
 const FOLDER: &str = "KnowledgeDesignFolder";
 
 #[derive(Clone)]
