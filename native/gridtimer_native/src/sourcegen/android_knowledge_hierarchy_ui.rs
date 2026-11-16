@@ -1,3 +1,4 @@
+// v2.13.5.10 - Prioritize knowledge creation and nest management/legal settings by intent.
 // v2.23.4 - Diagnose hierarchy save stages without changing durable write barriers.
 // v2.23.3 - Show complete, compact inline child lists in the mobile knowledge page.
 // Workspace-local sibling dragging in the full directory; page dates and shared data stay intact.
@@ -730,18 +731,74 @@ private fun KnowledgeHierarchyInlineRow(
 private fun KnowledgeHierarchyActions(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
     onRequest: (KnowledgeHierarchyRequest) -> Unit, onOpenBody: (() -> Unit)? = null) {
     val node = parentId?.let(index.nodes::get)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Button(enabled = !busy && index.mayCreateInside(parentId), onClick = { onRequest(KnowledgeHierarchyRequest("create_page", parentId = parentId)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("新建子页面") }
-        OutlinedButton(enabled = !busy && index.mayCreateInside(parentId), onClick = { onRequest(KnowledgeHierarchyRequest("create_folder", parentId = parentId)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("新建子文件夹") }
-        if (node != null) {
-            TextButton(enabled = !busy && node.writable, onClick = { onRequest(KnowledgeHierarchyRequest("move", node.id, node.parentId)) }) { Text("移动") }
-            TextButton(enabled = !busy && node.writable, onClick = { onRequest(KnowledgeHierarchyRequest("rename", node.id, node.parentId)) }) { Text("重命名") }
-            TextButton(enabled = !busy && node.writable && node.note?.document?.knowledge?.get("database")?.let { it != kotlinx.serialization.json.JsonNull } != true,
-                onClick = { onRequest(KnowledgeHierarchyRequest(if (node.isFolder) "to_page" else "to_folder", node.id, node.parentId)) }) {
-                Text(if (node.isFolder) "转为页面" else "转为文件夹")
-            }
-            if (onOpenBody != null && node.note != null) TextButton(enabled = !busy && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpenBody) { Text("查看与编辑正文") }
+    val workspace = LocalNoteMediaWorkspaceKey.current
+    val canCreate = !busy && index.mayCreateInside(parentId)
+    val canEdit = !busy && node?.writable == true
+    val canConvert = canEdit && node?.note?.document?.knowledge?.get("database")?.let {
+        it != kotlinx.serialization.json.JsonNull
+    } != true
+    val canOpenBody = !busy && node?.note != null && onOpenBody != null &&
+        index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT
+    var managementOpen by remember(parentId) { mutableStateOf(false) }
+    LaunchedEffect(busy, node?.writable, parentId) {
+        if (busy || node?.writable != true) managementOpen = false
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Button(enabled = canCreate,
+            onClick = { onRequest(KnowledgeHierarchyRequest("create_page", parentId = parentId)) },
+            modifier = Modifier.heightIn(min = 48.dp)) {
+            Text("新建子页面")
         }
+        OutlinedButton(enabled = canCreate,
+            onClick = { onRequest(KnowledgeHierarchyRequest("create_folder", parentId = parentId)) },
+            modifier = Modifier.heightIn(min = 48.dp)) {
+            Text("新建子文件夹")
+        }
+        if (node != null) {
+            Box {
+                TextButton(enabled = canEdit || canOpenBody,
+                    onClick = { managementOpen = true },
+                    modifier = Modifier.heightIn(min = 48.dp).semantics {
+                        contentDescription = "管理当前页面或文件夹"
+                    }) { Text("管理 ▾", maxLines = 1, softWrap = false) }
+                DropdownMenu(expanded = managementOpen && !busy,
+                    onDismissRequest = { managementOpen = false }) {
+                    DropdownMenuItem(text = { Text("移动") }, enabled = canEdit,
+                        onClick = {
+                            managementOpen = false
+                            onRequest(KnowledgeHierarchyRequest("move", node.id, node.parentId))
+                        })
+                    DropdownMenuItem(text = { Text("重命名") }, enabled = canEdit,
+                        onClick = {
+                            managementOpen = false
+                            onRequest(KnowledgeHierarchyRequest("rename", node.id, node.parentId))
+                        })
+                    DropdownMenuItem(text = {
+                        Text(if (node.isFolder) "转为页面" else "转为文件夹")
+                    }, enabled = canConvert, onClick = {
+                        managementOpen = false
+                        onRequest(KnowledgeHierarchyRequest(
+                            if (node.isFolder) "to_page" else "to_folder", node.id, node.parentId))
+                    })
+                    if (onOpenBody != null && node.note != null) {
+                        DropdownMenuItem(text = { Text("查看与编辑正文") },
+                            enabled = canOpenBody, onClick = {
+                                managementOpen = false
+                                onOpenBody()
+                            })
+                    }
+                }
+            }
+        }
+        KnowledgeLegalExclusionAction(workspace, parentId,
+            node?.title?.ifBlank { "无标题" } ?: "整个知识模块", index,
+            compact = true,
+            settingsLabel = when {
+                node == null -> "知识设置"
+                node.isFolder -> "文件夹设置"
+                else -> "页面设置"
+            })
     }
 }
 
@@ -843,7 +900,8 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
                 }
             }
         }
-        KnowledgeLegalExclusionAction(workspace, parentId, node?.title.orEmpty(), index)
+        KnowledgeLegalExclusionAction(workspace, parentId, node?.title.orEmpty(), index,
+            compact = true, settingsLabel = if (node?.isFolder != false) "文件夹设置" else "页面设置")
         if (expanded && children.isNotEmpty()) {
             // All direct children stay on the parent's scroll surface. No three-item preview
             // and no second "view all" screen for the current hierarchy level.
@@ -1141,8 +1199,6 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                 KnowledgeHierarchyActions(index, parentId, !navigationEnabled,
                     onRequest = { request -> navigation { onRequest(request) } },
                     onOpenBody = node?.note?.let { { navigation { onOpen(node) } } })
-                KnowledgeLegalExclusionAction(workspace, parentId,
-                    node?.title?.ifBlank { "无标题" } ?: "整个知识模块", index)
                 if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
                 if (orderMessage.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(orderMessage, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error,
@@ -1330,7 +1386,8 @@ private fun KnowledgeLegalExclusionAction(
     nodeId: String?,
     title: String,
     index: KnowledgeHierarchy,
-    compact: Boolean = false
+    compact: Boolean = false,
+    settingsLabel: String? = null
 ) {
     val context = LocalContext.current.applicationContext
     val revision = KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0
@@ -1363,7 +1420,9 @@ private fun KnowledgeLegalExclusionAction(
     if (compact) {
         Box {
             TextButton(enabled = loaded.isSuccess, onClick = { menuOpen = true },
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("⋮") }
+                modifier = Modifier.heightIn(min = 48.dp).semantics {
+                    contentDescription = settingsLabel ?: "法律风险分析设置"
+                }) { Text(settingsLabel?.plus(" ▾") ?: "⋮", maxLines = 1, softWrap = false) }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
                     text = { Text(caption) },
