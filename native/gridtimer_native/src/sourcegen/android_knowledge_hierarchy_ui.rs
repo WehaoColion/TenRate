@@ -1,3 +1,4 @@
+// v2.13.5.11 - Consistent tactile rows, hierarchy disclosure and contextual entry motion.
 // v2.13.5.10 - Prioritize knowledge creation and nest management/legal settings by intent.
 // v2.23.4 - Diagnose hierarchy save stages without changing durable write barriers.
 // v2.23.3 - Show complete, compact inline child lists in the mobile knowledge page.
@@ -536,6 +537,9 @@ pub const CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -546,6 +550,14 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -665,9 +677,21 @@ private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrows
 private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: KnowledgeHierarchy,
     modifier: Modifier = Modifier, enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null, onOpen: () -> Unit) {
-    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+    val pressSource = remember { MutableInteractionSource() }
+    val pressed by pressSource.collectIsPressedAsState()
+    val rowScale by animateFloatAsState(
+        targetValue = if (enabled && pressed) 0.988f else 1f,
+        animationSpec = tween(100, easing = FastOutSlowInEasing),
+        label = "knowledge-row-press"
+    )
+    Surface(modifier = modifier.fillMaxWidth().graphicsLayer {
+            scaleX = rowScale; scaleY = rowScale
+        }, shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, shadowElevation = 1.dp) {
-    ListItem(modifier = Modifier.fillMaxWidth().clickable(enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen),
+    ListItem(modifier = Modifier.fillMaxWidth().clickable(
+            interactionSource = pressSource, indication = LocalIndication.current,
+            enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT,
+            onClick = onOpen),
         headlineContent = { Text(node.title.ifBlank { "无标题" }, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
         leadingContent = { KnowledgeObjectGlyph(node.isFolder) },
         supportingContent = { Text(when {
@@ -691,6 +715,13 @@ private fun KnowledgeHierarchyInlineRow(
     onOpen: () -> Unit
 ) {
     val issue = index.issues[node.id]
+    val pressSource = remember { MutableInteractionSource() }
+    val pressed by pressSource.collectIsPressedAsState()
+    val rowScale by animateFloatAsState(
+        targetValue = if (enabled && pressed) 0.988f else 1f,
+        animationSpec = tween(100, easing = FastOutSlowInEasing),
+        label = "knowledge-inline-press"
+    )
     val descendantCount = index.children(node.id).size
     val supporting = when {
         issue == KnowledgeHierarchyIssue.IDENTITY_CONFLICT -> "记录编号冲突，暂不能打开"
@@ -702,10 +733,14 @@ private fun KnowledgeHierarchyInlineRow(
     }
     Row(
         modifier = Modifier.fillMaxWidth()
+            .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
             .clip(RoundedCornerShape(11.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f))
             .heightIn(min = 52.dp)
-            .clickable(enabled = enabled && issue != KnowledgeHierarchyIssue.IDENTITY_CONFLICT, onClick = onOpen)
+            .clickable(
+                interactionSource = pressSource, indication = LocalIndication.current,
+                enabled = enabled && issue != KnowledgeHierarchyIssue.IDENTITY_CONFLICT,
+                onClick = onOpen)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -815,6 +850,11 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
     val canConvert = canEdit && node?.note?.document?.knowledge?.get("database")?.let { it != kotlinx.serialization.json.JsonNull } != true
     var menu by remember(workspace, parentId) { mutableStateOf<String?>(null) }
     var expanded by rememberSaveable(workspace, parentId) { mutableStateOf(true) }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(160, easing = FastOutSlowInEasing),
+        label = "knowledge-children-chevron"
+    )
     val callbacksAlive = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicBoolean(true) }
     DisposableEffect(callbacksAlive) { onDispose { callbacksAlive.set(false) } }
     val latestIndex by rememberUpdatedState(index)
@@ -867,7 +907,12 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
             }, modifier = Modifier.heightIn(min = 48.dp).semantics {
                 contentDescription = "子项，共 ${children.size} 项"
                 stateDescription = if (expanded && children.isNotEmpty()) "已展开" else "已收起"
-            }) { Text("子项 ${children.size}" + if (children.isEmpty()) "" else if (expanded) " ▴" else " ▾", maxLines = 1, softWrap = false) }
+            }) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("子项 ${children.size}", maxLines = 1, softWrap = false)
+                    if (children.isNotEmpty()) Text("▾", modifier = Modifier.graphicsLayer { rotationZ = chevronRotation })
+                }
+            }
             Box {
                 TextButton(enabled = canInteract && canCreate, onClick = {
                     if (mayInteract() && latestIndex.mayCreateInside(parentId)) menu = "create"
@@ -902,15 +947,27 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
         }
         KnowledgeLegalExclusionAction(workspace, parentId, node?.title.orEmpty(), index,
             compact = true, settingsLabel = if (node?.isFolder != false) "文件夹设置" else "页面设置")
-        if (expanded && children.isNotEmpty()) {
-            // All direct children stay on the parent's scroll surface. No three-item preview
-            // and no second "view all" screen for the current hierarchy level.
+        val childRows: @Composable () -> Unit = {
             children.forEach { child ->
                 key(child.id) {
-                    KnowledgeHierarchyInlineRow(child, index, enabled = canInteract) {
-                        if (mayInteract()) onOpen(child)
+                    KnowledgeHierarchyInlineRow(child, index, enabled = canInteract && expanded) {
+                        if (mayInteract() && expanded) onOpen(child)
                     }
                 }
+            }
+        }
+        // Full-height layout animation is bounded for large folders to avoid jank.
+        if (children.size > 24) {
+            if (expanded) childRows()
+        } else {
+            AnimatedVisibility(
+                visible = expanded && children.isNotEmpty(),
+                enter = expandVertically(animationSpec = tween(190, easing = FastOutSlowInEasing)) +
+                    fadeIn(animationSpec = tween(130)),
+                exit = shrinkVertically(animationSpec = tween(155, easing = FastOutSlowInEasing)) +
+                    fadeOut(animationSpec = tween(100))
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { childRows() }
             }
         }
     }
@@ -936,6 +993,17 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val workerScope = rememberCoroutineScope()
+    val destinationDepth = parentId?.let { index.breadcrumbs(it).size } ?: 0
+    var previousDepth by remember(workspace) { mutableIntStateOf(destinationDepth) }
+    val browserDirection = remember(workspace, parentId) {
+        if (destinationDepth < previousDepth) -1f else 1f
+    }
+    val entry = remember(workspace, parentId) { Animatable(0f) }
+    val entryDistancePx = with(density) { 14.dp.toPx() }
+    LaunchedEffect(workspace, parentId) {
+        previousDepth = destinationDepth
+        entry.animateTo(1f, animationSpec = tween(210, easing = FastOutSlowInEasing))
+    }
     val listState = key(workspace, parentId) { rememberLazyListState() }
     val directoryScope = remember(index, workspace, parentId, active, busy) {
         knowledgeDirectoryOrderScope(index, workspace, parentId, active && !busy)
@@ -1177,7 +1245,11 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                 }
             }
         }) {
-        LazyColumn(Modifier.fillMaxSize(), state = listState, userScrollEnabled = dragging == null && !saving,
+        LazyColumn(Modifier.fillMaxSize().graphicsLayer {
+            val progress = entry.value
+            alpha = 0.94f + 0.06f * progress
+            translationX = browserDirection * entryDistancePx * (1f - progress)
+        }, state = listState, userScrollEnabled = dragging == null && !saving,
             contentPadding = PaddingValues(bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item(key = 0L) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1213,7 +1285,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                     val draggable = canSort && directoryScope.items.any { it.id == id && it.canDrag }
                     val position = displayedIds.indexOf(id)
                     DisposableEffect(id, handleBounds) { onDispose { handleBounds.remove(id) } }
-                    var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(tween(140)) else Modifier
+                    var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(tween(190, easing = FastOutSlowInEasing)) else Modifier
                     if (placeholder) rowModifier = rowModifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { }
                     else if (draggable) rowModifier = rowModifier.semantics {
                         customActions = buildList {
@@ -1246,8 +1318,9 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
         dragging?.let { visual ->
             Surface(modifier = Modifier.fillMaxWidth().height(with(density) { visual.heightPx.toDp() })
                 .offset { IntOffset(0, (visual.pointerY - visual.pointerOffsetY).roundToInt()) }
+                .graphicsLayer { scaleX = 1.015f; scaleY = 1.015f }
                 .zIndex(1f).clearAndSetSemantics { }, shape = RoundedCornerShape(12.dp),
-                tonalElevation = 3.dp, shadowElevation = 6.dp) {
+                tonalElevation = 3.dp, shadowElevation = 10.dp) {
                 KnowledgeHierarchyRow(visual.node, index, enabled = false,
                     trailing = { Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { Text("⠿") }; Text("›")
@@ -1539,7 +1612,7 @@ mod mobile_inline_children_tests {
     fn inline_children_are_complete_and_initially_expanded() {
         assert!(CONTENTS.contains("rememberSaveable(workspace, parentId) { mutableStateOf(true) }"));
         assert!(CONTENTS.contains("children.forEach { child ->"));
-        assert!(CONTENTS.contains("KnowledgeHierarchyInlineRow(child, index, enabled = canInteract)"));
+        assert!(CONTENTS.contains("KnowledgeHierarchyInlineRow(child, index, enabled = canInteract && expanded)"));
         assert!(!CONTENTS.contains("children.take(3)"));
         assert!(!CONTENTS.contains("查看全部 ${children.size} 项"));
     }

@@ -1,3 +1,4 @@
+// v2.13.5.11 Android - Knowledge motion coherence and on-device animated acceptance.
 // v2.13.5.10 Android - Compact knowledge actions without removing permissions or exclusions.
 // v2.13.5.9 Android - Preserve encrypted AI conversations and full knowledge-page exports.
 // v2.13.5.8 Android - Refine knowledge workspace visual hierarchy and contextual tools.
@@ -144,8 +145,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "2.13.5.10";
-pub const ANDROID_VERSION_CODE: i32 = 22360;
+pub const ANDROID_APP_VERSION: &str = "2.13.5.11";
+pub const ANDROID_VERSION_CODE: i32 = 22361;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
