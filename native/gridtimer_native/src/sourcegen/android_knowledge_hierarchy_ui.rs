@@ -1,3 +1,4 @@
+// v2.13.5.12 - Unified paper and archival surface design on Android knowledge screens.
 // v2.13.5.11 - Consistent tactile rows, hierarchy disclosure and contextual entry motion.
 // v2.13.5.10 - Prioritize knowledge creation and nest management/legal settings by intent.
 // v2.23.4 - Diagnose hierarchy save stages without changing durable write barriers.
@@ -543,6 +544,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
@@ -577,6 +580,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -609,64 +614,110 @@ import kotlin.math.roundToInt
 internal data class KnowledgeHierarchyRequest(val action: String, val id: String? = null, val parentId: String? = null)
 
 
-/** Decorative physical object, drawn at screen density rather than loaded as a bitmap. */
+/** One material specification for physical objects, rows, headers and actions. */
+internal data class KnowledgeArchivePalette(
+    val folder: Color,
+    val paper: Color,
+    val inline: Color,
+    val edge: Color,
+    val ink: Color,
+    val action: Color,
+    val actionInk: Color
+)
+
+@Composable
+internal fun knowledgeArchivePalette(): KnowledgeArchivePalette {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return if (dark) KnowledgeArchivePalette(
+        folder = Color(0xFF303239), paper = Color(0xFF35383E),
+        inline = Color(0xFF292C32), edge = Color(0xFF545860),
+        ink = Color(0xFFF2EEE6), action = Color(0xFFB9A17E),
+        actionInk = Color(0xFF292B31)
+    ) else KnowledgeArchivePalette(
+        folder = Color(0xFFF7F1E7), paper = Color(0xFFFFFCF5),
+        inline = Color(0xFFFAF6EE), edge = Color(0xFFD9D0C3),
+        ink = Color(0xFF35383B), action = Color(0xFF46494F),
+        actionInk = Color(0xFFFFFCF6)
+    )
+}
+
+/** Drawn at screen density; no raster textures or per-row bitmaps. */
 @Composable
 internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifier) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val rear = if (dark) Color(0xFF80694E) else Color(0xFFD7AA6E)
-    val front = if (dark) Color(0xFFAE916A) else Color(0xFFF0D19B)
-    val sheet = if (dark) Color(0xFF4D555E) else Color(0xFFFFFEFA)
-    val crease = if (dark) Color(0xFF77818B) else Color(0xFFE6E2DA)
-    val ink = if (dark) Color(0xFFADB5BD) else Color(0xFFB4ADA3)
+    val rear = if (dark) Color(0xFF927554) else Color(0xFFD6AC74)
+    val front = if (dark) Color(0xFFC7A57B) else Color(0xFFF4D7A1)
+    val foot = if (dark) Color(0xFF987951) else Color(0xFFDEC18D)
+    val sheet = if (dark) Color(0xFF626A74) else Color(0xFFFFFFFF)
+    val sheetFoot = if (dark) Color(0xFF454D58) else Color(0xFFF1EBE1)
+    val line = if (dark) Color(0xFFACB4BE) else Color(0xFFB8AFA3)
     Canvas(modifier.size(32.dp)) {
         val x = size.width / 32f
         val y = size.height / 32f
         if (isFolder) {
-            drawRoundRect(Color.Black.copy(alpha = if (dark) 0.22f else 0.10f),
-                topLeft = Offset(3f * x, 12f * y), size = Size(27f * x, 17f * y),
-                cornerRadius = CornerRadius(3f * x, 3f * y))
+            drawRoundRect(
+                Color.Black.copy(alpha = if (dark) 0.32f else 0.15f),
+                topLeft = Offset(3f*x, 13f*y), size = Size(27f*x, 17f*y),
+                cornerRadius = CornerRadius(3f*x, 3f*y)
+            )
             val tab = Path().apply {
-                moveTo(4f*x, 25f*y); lineTo(4f*x, 8f*y)
-                quadraticBezierTo(4f*x, 6f*y, 6f*x, 6f*y)
-                lineTo(12f*x, 6f*y); lineTo(15f*x, 9f*y)
+                moveTo(3f*x, 25f*y); lineTo(3f*x, 8f*y)
+                quadraticBezierTo(3f*x, 6f*y, 5.5f*x, 6f*y)
+                lineTo(12f*x, 6f*y); lineTo(15.5f*x, 9f*y)
                 lineTo(26f*x, 9f*y); quadraticBezierTo(29f*x, 9f*y, 29f*x, 12f*y)
                 lineTo(29f*x, 25f*y); close()
             }
-            drawPath(tab, rear)
-            drawRoundRect(front, topLeft = Offset(2f*x, 12f*y),
-                size = Size(28f*x, 16f*y),
-                cornerRadius = CornerRadius(3f*x, 3f*y))
-            drawLine(Color.White.copy(alpha = if (dark) 0.20f else 0.55f),
-                Offset(5f*x, 13.5f*y), Offset(27f*x, 13.5f*y), 1.2f*x)
+            drawPath(path = tab, brush = Brush.verticalGradient(listOf(front, rear)))
+            drawPath(path = tab, color = rear.copy(alpha = 0.70f),
+                style = Stroke(width = 0.75f*x))
+            drawRoundRect(
+                brush = Brush.verticalGradient(listOf(front, foot)),
+                topLeft = Offset(2f*x, 12f*y), size = Size(28f*x, 16f*y),
+                cornerRadius = CornerRadius(3.2f*x, 3.2f*y)
+            )
+            drawRoundRect(color = rear.copy(alpha = 0.75f),
+                topLeft = Offset(2f*x, 12f*y), size = Size(28f*x, 16f*y),
+                cornerRadius = CornerRadius(3.2f*x, 3.2f*y),
+                style = Stroke(width = 0.75f*x))
+            drawLine(Color.White.copy(alpha = if (dark) 0.26f else 0.65f),
+                Offset(5f*x, 13.2f*y), Offset(27f*x, 13.2f*y), 0.95f*x)
+            drawLine(Color.Black.copy(alpha = if (dark) 0.18f else 0.08f),
+                Offset(5f*x, 26.3f*y), Offset(27f*x, 26.3f*y), 0.8f*x)
         } else {
-            drawRoundRect(Color.Black.copy(alpha = if (dark) 0.23f else 0.11f),
-                topLeft = Offset(7f*x, 4f*y), size = Size(22f*x, 26f*y),
-                cornerRadius = CornerRadius(2.5f*x, 2.5f*y))
-            val paper = Path().apply {
+            drawRoundRect(
+                Color.Black.copy(alpha = if (dark) 0.29f else 0.13f),
+                topLeft = Offset(7.5f*x, 4.5f*y), size = Size(22f*x, 25f*y),
+                cornerRadius = CornerRadius(2f*x, 2f*y)
+            )
+            val page = Path().apply {
                 moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
                 lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
                 quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
                 lineTo(9f*x, 28f*y)
                 quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
             }
-            drawPath(paper, sheet)
+            drawPath(path = page, brush = Brush.verticalGradient(listOf(sheet, sheetFoot)))
+            drawPath(path = page, color = line.copy(alpha = 0.65f),
+                style = Stroke(width = 0.7f*x))
             val fold = Path().apply {
                 moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
                 lineTo(29f*x, 9f*y); close()
             }
-            drawPath(fold, crease)
+            drawPath(path = fold, brush = Brush.verticalGradient(
+                listOf(sheetFoot, line.copy(alpha = 0.72f))))
+            drawLine(line, Offset(23f*x, 9f*y), Offset(29f*x, 9f*y), 0.7f*x)
             for (i in 0..2) {
-                val h = (14f + i*4f)*y
-                drawLine(ink, Offset(11f*x,h), Offset((if(i==2) 21f else 25f)*x,h), 1.2f*x)
+                val lineY = (14f + i*4f)*y
+                drawLine(line.copy(alpha = 0.82f), Offset(11f*x, lineY),
+                    Offset((if (i == 2) 21f else 25f)*x, lineY), 0.92f*x)
             }
         }
     }
 }
-
 @Composable
 private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrowse: (String?) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        TextButton(onClick = { onBrowse(null) }) { Text("知识目录") }
+        TextButton(onClick = { onBrowse(null) }) { Text("全部资料") }
         id?.let { index.breadcrumbs(it).forEach { node ->
             TextButton(onClick = { onBrowse(node.id) }) { Text("› " + node.title.ifBlank { "无标题" }) }
         } }
@@ -677,17 +728,20 @@ private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrows
 private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: KnowledgeHierarchy,
     modifier: Modifier = Modifier, enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null, onOpen: () -> Unit) {
+    val archive = knowledgeArchivePalette()
     val pressSource = remember { MutableInteractionSource() }
     val pressed by pressSource.collectIsPressedAsState()
     val rowScale by animateFloatAsState(
-        targetValue = if (enabled && pressed) 0.988f else 1f,
+        targetValue = if (enabled && pressed) 0.992f else 1f,
         animationSpec = tween(100, easing = FastOutSlowInEasing),
         label = "knowledge-row-press"
     )
     Surface(modifier = modifier.fillMaxWidth().graphicsLayer {
             scaleX = rowScale; scaleY = rowScale
-        }, shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, shadowElevation = 1.dp) {
+        }, shape = RoundedCornerShape(13.dp),
+        color = if (node.isFolder) archive.folder else archive.paper,
+        border = BorderStroke(1.dp, archive.edge),
+        tonalElevation = 0.dp, shadowElevation = 2.dp) {
     ListItem(modifier = Modifier.fillMaxWidth().clickable(
             interactionSource = pressSource, indication = LocalIndication.current,
             enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT,
@@ -701,7 +755,7 @@ private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: Knowledge
             !node.writable -> "只读 · ${index.children(node.id).size} 个子项"
             else -> "${if (node.isFolder) "文件夹" else "页面"} · ${index.children(node.id).size} 个子项"
         }) }, trailingContent = trailing ?: { Text("›") },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface))
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent))
     }
 }
 
@@ -715,6 +769,7 @@ private fun KnowledgeHierarchyInlineRow(
     onOpen: () -> Unit
 ) {
     val issue = index.issues[node.id]
+    val archive = knowledgeArchivePalette()
     val pressSource = remember { MutableInteractionSource() }
     val pressed by pressSource.collectIsPressedAsState()
     val rowScale by animateFloatAsState(
@@ -735,7 +790,8 @@ private fun KnowledgeHierarchyInlineRow(
         modifier = Modifier.fillMaxWidth()
             .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
             .clip(RoundedCornerShape(11.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f))
+            .background(archive.inline)
+            .border(1.dp, archive.edge.copy(alpha = 0.72f), RoundedCornerShape(11.dp))
             .heightIn(min = 52.dp)
             .clickable(
                 interactionSource = pressSource, indication = LocalIndication.current,
@@ -767,6 +823,7 @@ private fun KnowledgeHierarchyActions(index: KnowledgeHierarchy, parentId: Strin
     onRequest: (KnowledgeHierarchyRequest) -> Unit, onOpenBody: (() -> Unit)? = null) {
     val node = parentId?.let(index.nodes::get)
     val workspace = LocalNoteMediaWorkspaceKey.current
+    val archive = knowledgeArchivePalette()
     val canCreate = !busy && index.mayCreateInside(parentId)
     val canEdit = !busy && node?.writable == true
     val canConvert = canEdit && node?.note?.document?.knowledge?.get("database")?.let {
@@ -782,12 +839,18 @@ private fun KnowledgeHierarchyActions(index: KnowledgeHierarchy, parentId: Strin
         verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Button(enabled = canCreate,
             onClick = { onRequest(KnowledgeHierarchyRequest("create_page", parentId = parentId)) },
-            modifier = Modifier.heightIn(min = 48.dp)) {
+            modifier = Modifier.heightIn(min = 48.dp),
+            shape = RoundedCornerShape(11.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = archive.action, contentColor = archive.actionInk)) {
             Text("新建子页面")
         }
         OutlinedButton(enabled = canCreate,
             onClick = { onRequest(KnowledgeHierarchyRequest("create_folder", parentId = parentId)) },
-            modifier = Modifier.heightIn(min = 48.dp)) {
+            modifier = Modifier.heightIn(min = 48.dp),
+            shape = RoundedCornerShape(11.dp),
+            border = BorderStroke(1.dp, archive.edge),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = archive.ink)) {
             Text("新建子文件夹")
         }
         if (node != null) {
@@ -1252,25 +1315,49 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
         }, state = listState, userScrollEnabled = dragging == null && !saving,
             contentPadding = PaddingValues(bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item(key = 0L) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    TextButton(enabled = active && !busy && !saving, onClick = { navigation(onBack) }) { Text("返回") }
-                    Text("目录", style = MaterialTheme.typography.titleLarge)
+                val archive = knowledgeArchivePalette()
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(enabled = active && !busy && !saving,
+                        onClick = { navigation(onBack) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = archive.ink)) {
+                        Text("返回")
+                    }
+                    Text("知识目录", style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.SemiBold, color = archive.ink))
                     if (busy || saving || loading) CircularProgressIndicator(Modifier.size(22.dp))
                 }
-                KnowledgeBreadcrumbs(index, parentId) { navigation { onBrowse(it) } }
-                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    KnowledgeObjectGlyph(node?.isFolder != false, Modifier.size(42.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(node?.title?.ifBlank { "无标题" } ?: "页面与文件夹",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
-                        Text("${displayedIds.size} 个子项", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (parentId != null) KnowledgeBreadcrumbs(index, parentId) {
+                    navigation { onBrowse(it) }
+                }
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = archive.paper,
+                    border = BorderStroke(1.dp, archive.edge),
+                    tonalElevation = 0.dp, shadowElevation = 3.dp
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            KnowledgeObjectGlyph(node?.isFolder != false, Modifier.size(46.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(node?.title?.ifBlank { "无标题" } ?: "全部资料",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.SemiBold, color = archive.ink))
+                                Text(displayedIds.size.toString() + " 个子项",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = archive.ink.copy(alpha = 0.70f))
+                            }
+                        }
+                        HorizontalDivider(color = archive.edge.copy(alpha = 0.85f))
+                        KnowledgeHierarchyActions(index, parentId, !navigationEnabled,
+                            onRequest = { request -> navigation { onRequest(request) } },
+                            onOpenBody = node?.note?.let { { navigation { onOpen(node) } } })
                     }
                 }
-                KnowledgeHierarchyActions(index, parentId, !navigationEnabled,
-                    onRequest = { request -> navigation { onRequest(request) } },
-                    onOpenBody = node?.note?.let { { navigation { onOpen(node) } } })
                 if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
                 if (orderMessage.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(orderMessage, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error,
@@ -1313,7 +1400,17 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                     }
                 }
             }
-            if (displayedIds.isEmpty()) item(key = 1L) { Text("此处还没有页面或文件夹") }
+            if (displayedIds.isEmpty()) item(key = 1L) {
+                val archive = knowledgeArchivePalette()
+                Column(Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 44.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    KnowledgeObjectGlyph(isFolder = true, modifier = Modifier.size(46.dp))
+                    Text("此处还没有页面或文件夹",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = archive.ink.copy(alpha = 0.76f))
+                }
+            }
         }
         dragging?.let { visual ->
             Surface(modifier = Modifier.fillMaxWidth().height(with(density) { visual.heightPx.toDp() })
@@ -1463,6 +1560,7 @@ private fun KnowledgeLegalExclusionAction(
     settingsLabel: String? = null
 ) {
     val context = LocalContext.current.applicationContext
+    val archive = knowledgeArchivePalette()
     val revision = KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0
     val loaded = remember(workspaceKey, revision) {
         KnowledgeLegalExclusionRevisions.load(context, workspaceKey, revision)
@@ -1493,6 +1591,7 @@ private fun KnowledgeLegalExclusionAction(
     if (compact) {
         Box {
             TextButton(enabled = loaded.isSuccess, onClick = { menuOpen = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = archive.ink),
                 modifier = Modifier.heightIn(min = 48.dp).semantics {
                     contentDescription = settingsLabel ?: "法律风险分析设置"
                 }) { Text(settingsLabel?.plus(" ▾") ?: "⋮", maxLines = 1, softWrap = false) }

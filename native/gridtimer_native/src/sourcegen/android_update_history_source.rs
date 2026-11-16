@@ -1,3 +1,4 @@
+// v2.13.5.12 - Unified paper and archival character for knowledge UI.
 // v2.13.5.11 - Coherent directional knowledge navigation, touch feedback and camera motion.
 // v2.13.5.10 - Clarify knowledge action hierarchy and folder legal settings.
 // v2.13.5.9 - Preserve encrypted AI conversation history and full knowledge-page exports.
@@ -75,7 +76,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.11";
+pub const LATEST_VERSION: &str = "2.13.5.12";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -105,6 +106,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.12",
+        updatedAt = "2026-11-17 02:52",
+        summary = "知识目录统一纸张与资料柜材质，优化文件夹层次及新建操作",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "文件夹增加折页、细边缘和柔和光照，纸张增加折角与渐变层次，深浅色分别适配。",
+                "目录标题、新建操作和管理入口收束为资料面板，空目录也保留完整的视觉层次。"
+            )),
+            AndroidUpdateSection("稳定性", listOf(
+                "保留知识层级、拖动、默认编辑、加密访问、法律排除确认和后台保存逻辑。",
+                "不修改同步协议、Windows 端、风控账本或客户的独立收付款数据。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.11",
         updatedAt = "2026-11-16 08:47",
