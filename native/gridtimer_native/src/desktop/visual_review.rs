@@ -71,6 +71,8 @@ fn native_window_visual_review() {
     client.sync.token.clear();
     client.sync.server_url.clear();
     client.settings.timer_bell_enabled = false;
+    client.settings.language = "zh".into();
+    ACTIVE_DESKTOP_LANGUAGE.store(desktop_language_code("zh"), AtomicOrdering::Relaxed);
     client.status = "本地数据已就绪".into();
     struct ReviewApp {
         client: TimerWindowsClient,
@@ -98,10 +100,12 @@ fn native_window_visual_review() {
         }
         let (x, y) = match scene {
             "board_light" | "board_running" => (273.0, 474.0),
-            "notes_light" => (90.0, 198.0),
-            "knowledge_light" | "canvas_customer" => (90.0, 255.0),
-            "finance_light" | "finance_cockpit" => (90.0, 310.0),
-            "account_light" => (90.0, 370.0),
+            "notes_light" => (260.0, 97.0),
+            "knowledge_light" => (282.0, 84.0),
+            "canvas_customer" => (551.0, 491.0),
+            "finance_light" => (258.0, 151.0),
+            "finance_cockpit" => (331.0, 151.0),
+            "account_light" => (900.0, 136.0),
             _ => return false,
         };
         let title = "十倍率 · 界面检查".encode_utf16().chain(std::iter::once(0)).collect::<Vec<_>>();
@@ -262,6 +266,7 @@ fn native_window_visual_review() {
                     .unwrap();
                     self.scene += 1;
                     self.frames = 0;
+                    self.last_click = None;
                     if self.scene == SCENES.len() {
                         ctx.request_repaint();
                         return;
