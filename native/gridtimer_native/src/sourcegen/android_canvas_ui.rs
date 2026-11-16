@@ -1,3 +1,4 @@
+// v2.13.5.13 - Canvas-grounded AI queries, location affordances and encrypted history.
 // v2.13.5.11 - Animate only programmed canvas camera movements; keep direct gestures immediate.
 // v2.13.5.7 - 恢复客户原始金额输入，在编辑客户中直接进入逐笔收款记录。
 // v2.13.5.6 - 独立款项项目与逐笔收款票据，历史汇总不丢失。
@@ -293,7 +294,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     let replacements = [
         ("    var knowledgeDialogVisible by remember { mutableStateOf(false) }", "    var knowledgeDialogVisible by remember { mutableStateOf(false) }\n    val canvasWorkspaceKey = LocalNoteMediaWorkspaceKey.current\n    var canvasVisible by rememberSaveable(canvasWorkspaceKey) { mutableStateOf(false) }"),
         ("    LaunchedEffect(selectedNoteId != null) {\n        onEditingStateChange(selectedNoteId != null)\n    }", "    LaunchedEffect(selectedNoteId != null, canvasVisible) {\n        onEditingStateChange(selectedNoteId != null || canvasVisible)\n    }"),
-        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            }, onCreatePage = { title, onCreated ->\n                val newPageId = java.util.UUID.randomUUID().toString()\n                viewModel.knowledgeContainerAction(\"create_page\", newPageId, \"\", title, canvasWorkspaceKey) { ok, _ ->\n                    if (viewModel.currentWorkspaceKey() == canvasWorkspaceKey) onCreated(if (ok) newPageId else null)\n                }\n            })\n        } else AnimatedContent"),
+        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, syncSession = syncSession, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            }, onCreatePage = { title, onCreated ->\n                val newPageId = java.util.UUID.randomUUID().toString()\n                viewModel.knowledgeContainerAction(\"create_page\", newPageId, \"\", title, canvasWorkspaceKey) { ok, _ ->\n                    if (viewModel.currentWorkspaceKey() == canvasWorkspaceKey) onCreated(if (ok) newPageId else null)\n                }\n            })\n        } else AnimatedContent"),
         ("                    onSelectFolder = viewModel::selectNoteFolder,", "                    onOpenCanvas = { canvasVisible = true },\n                    onSelectFolder = viewModel::selectNoteFolder,"),
         ("    onAskKnowledge: () -> Unit,\n    onSelectFolder:", "    onAskKnowledge: () -> Unit,\n    onOpenCanvas: () -> Unit,\n    onSelectFolder:"),
         ("        if (!trashMode) {\n            item {\n                KnowledgeAskEntryCard(", "        if (!trashMode) {\n            item {\n                androidx.compose.material3.OutlinedButton(onClick = onOpenCanvas, modifier = Modifier.fillMaxWidth()) {\n                    Text(\"画布\", style = MaterialTheme.typography.titleMedium)\n                    Spacer(Modifier.weight(1f))\n                    Text(\"卡片与连线\")\n                }\n            }\n            item {\n                KnowledgeAskEntryCard("),
@@ -350,6 +351,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ofairyo.gridtimer.data.*
+import com.ofairyo.gridtimer.core.NativeOptimizerBridge
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
@@ -362,6 +364,7 @@ internal object KnowledgeCanvasNative {
     external fun open(root: String, workspace: String): String
     external fun command(token: String, request: String): String
     external fun close(token: String)
+    external fun question(token: String, scope: String, focus: String, query: String): String
 }
 
 internal interface CanvasBackend {
@@ -1039,13 +1042,17 @@ private fun ClientMoneySheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit, onCreatePage: (String, (String?) -> Unit) -> Unit) {
+internal fun KnowledgeCanvasScreen(appData: AppData, syncSession: SyncAccountSession, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit, onCreatePage: (String, (String?) -> Unit) -> Unit) {
     val context = LocalContext.current
     val workspace = LocalNoteMediaWorkspaceKey.current
     val model = remember(workspace) { KnowledgeCanvasModel(context.filesDir.absolutePath, workspace) }
     val modelState by model.state.collectAsState()
     DisposableEffect(model) { onDispose { model.close() } }
     var selected by remember(workspace) { mutableStateOf<String?>(null) }
+    var focusNodeId by remember(workspace) { mutableStateOf<String?>(null) }
+    var askVisible by remember(workspace) { mutableStateOf(false) }
+    var askFocusId by remember(workspace) { mutableStateOf<String?>(null) }
+    var askInitialScope by remember(workspace) { mutableStateOf("all") }
     var paymentClientId by remember(workspace) { mutableStateOf<String?>(null) }
     var connectFrom by remember(workspace) { mutableStateOf<String?>(null) }
     var connectRelation by remember(workspace) { mutableStateOf("link") }
@@ -1091,7 +1098,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     }
     val back = { if (!showBusy) { if (paymentClientId != null) paymentClientId = null else if (connectFrom != null) connectFrom = null else if (!showLibrary) { showLibrary = true; selected = null; panel = "" } else onBack() } }
     BackHandler { back() }
-    LaunchedEffect(canvas?.id) { selected = null; paymentClientId = null; connectFrom = null; panel = ""; dialog = "" }
+    LaunchedEffect(canvas?.id) { selected = null; focusNodeId = null; askVisible = false; paymentClientId = null; connectFrom = null; panel = ""; dialog = "" }
     LaunchedEffect(model.serial) {
         if (canvas?.nodes?.any { it.id == selected } != true) selected = null
         if (canvas?.nodes?.any { it.id == paymentClientId } != true) paymentClientId = null
@@ -1179,20 +1186,40 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             }
         }
         if (canvas != null) {
-            CanvasSurface(canvas, pages, model, selected, connectFrom, Modifier.weight(1f).fillMaxWidth(),
-                onSelect = { selected = it }, onConnect = { target ->
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+            CanvasSurface(canvas, pages, model, selected, focusNodeId, connectFrom, Modifier.fillMaxSize(),
+                onSelect = { focusNodeId = null; selected = it }, onConnect = { target ->
                     val from = connectFrom
                     if (from != null && from != target) {
                         if (model.submit(canvasRequest("connect") { put("from",from); put("to",target); put("relation",connectRelation) })) connectFrom = null
                     }
                 },
                 onAddFirst = { if (canvas.template == "customer_network") { clientName = ""; clientDetails = ""; clientPaidInput = ""; clientPendingInput = ""; clientParentId = null; dialog = "clientAdd" } else { editorTitle = ""; editorText = ""; dialog = "noteAdd" } })
+            Surface(onClick = { askFocusId = null; askInitialScope = "all"; askVisible = true },
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 66.dp),
+                shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 2.dp, shadowElevation = 2.dp) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("✦", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.width(10.dp))
+                    Text("向这张画布提问…", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("↗", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            }
         } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(if (model.busy) "正在载入画布" else "画布未能载入", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     }
 
+    if (!showLibrary && askVisible && canvas != null) {
+        CanvasQuestionSheet(board = canvas, model = model, pages = pages,
+            workspaceKey = workspace, syncSession = syncSession,
+            initialScope = askInitialScope, focusId = askFocusId,
+            onDismiss = { askVisible = false },
+            onLocate = { id -> askVisible = false; focusNodeId = id; selected = null })
+    }
     if (!showLibrary && paymentClient != null) {
         ClientMoneySheet(node = paymentClient, enabled = ready, busy = showBusy,
             error = model.error, serial = model.serial, succeeded = model.lastSucceeded,
@@ -1242,6 +1269,9 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                     }, enabled = ready, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("＋ 添加此客户推荐的人") }
                 }
                 Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(enabled = ready, onClick = {
+                        askFocusId = selectedNode.id; askInitialScope = "card"; selected = null; askVisible = true
+                    }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("✦ 询问这张卡片") }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (selectedNode.kind == "page") {
                         OutlinedButton(onClick = { pages[selectedNode.pageId]?.let(onOpenPage); selected = null }, enabled = ready && pages[selectedNode.pageId] != null, modifier = Modifier.weight(1f)) { Text("打开页面") }
@@ -1518,7 +1548,7 @@ private class CanvasTextCache {
 }
 
 @Composable
-private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit, onAddFirst: () -> Unit) {
+private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, focusNodeId: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit, onAddFirst: () -> Unit) {
     val modelState by model.state.collectAsState()
     val visualReady = !modelState.busy || modelState.quietGesture
     val density = LocalDensity.current.density
@@ -1572,8 +1602,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
         dragPreview = null
     }
     // An added or list-selected card must not remain invisible off screen.
-    LaunchedEffect(selected, canvas.id, size) {
-        val node = canvas.nodes.firstOrNull { it.id == selected }
+    LaunchedEffect(selected, focusNodeId, canvas.id, size) {
+        val node = canvas.nodes.firstOrNull { it.id == (focusNodeId ?: selected) }
         if (node != null && size.width > 0 && size.height > 0) {
             val centerX = node.x + node.width / 2f
             val centerY = node.y + node.height / 2f
@@ -1700,8 +1730,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     } else {
                     paint.style=Paint.Style.FILL; paint.color=surface
                     native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
-                    paint.style=Paint.Style.STROKE; paint.strokeWidth=if(node.id==selected || node.id==connectFrom) 2.5f/viewport.zoom else 1f/viewport.zoom
-                    paint.color=if(node.id==selected || node.id==connectFrom) primary else canvasTint(node.color).copy(alpha=0.45f).toArgb()
+                    paint.style=Paint.Style.STROKE; paint.strokeWidth=if(node.id==selected || node.id==focusNodeId || node.id==connectFrom) 2.5f/viewport.zoom else 1f/viewport.zoom
+                    paint.color=if(node.id==selected || node.id==focusNodeId || node.id==connectFrom) primary else canvasTint(node.color).copy(alpha=0.45f).toArgb()
                     native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
                     paint.style=Paint.Style.FILL; paint.color=if (node.kind == "client") canvasTint("green").toArgb() else canvasTint(node.color).toArgb()
                     native.drawRoundRect(nodeX+12,nodeY+13,nodeX+16,nodeY+35,2f,2f,paint)
