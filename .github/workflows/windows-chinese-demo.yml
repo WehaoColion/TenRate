@@ -1,0 +1,88 @@
+name: Windows 中文界面操作录屏
+on:
+  pull_request:
+    paths:
+      - 'native/gridtimer_native/src/desktop/visual_review.rs'
+      - '.github/workflows/windows-chinese-demo.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-real-gui-recording:
+    name: Windows 原生窗口启动与录屏
+    runs-on: windows-latest
+    timeout-minutes: 100
+    defaults:
+      run:
+        working-directory: native/gridtimer_native
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: rustup update stable
+      - name: Compile real native GUI test
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo test --locked --features desktop --bin timer_windows_client native_window_visual_review --no-run
+          if ($LASTEXITCODE -ne 0) { throw 'Windows native GUI compilation failed' }
+      - name: Install software OpenGL for Windows runner
+        uses: f3d-app/install-mesa-windows-action@v1
+        with:
+          path: ${{ runner.temp }}/tenrate-mesa
+          version: 24.0.5
+      - name: Attach OpenGL and prepare isolated recording
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mesa = Join-Path $env:RUNNER_TEMP 'tenrate-mesa'
+          $dlls = @(Get-ChildItem $mesa -Filter '*.dll' -File)
+          if ($dlls.Count -eq 0) { throw 'Missing Mesa DLLs' }
+          $binaries = @(Get-ChildItem 'target/debug' -Recurse -Filter 'timer_windows_client-*.exe' -File)
+          if ($binaries.Count -eq 0) { throw 'Missing native test executable' }
+          foreach ($exe in $binaries) {
+            foreach ($lib in $dlls) { Copy-Item -LiteralPath $lib.FullName -Destination $exe.DirectoryName -Force }
+          }
+          New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'tenrate-visual'), (Join-Path $env:RUNNER_TEMP 'tenrate-video') | Out-Null
+      - name: Start Windows GUI, send native clicks, capture live frames with Chinese subtitles
+        env:
+          TIMER_VISUAL_REVIEW_DIR: ${{ runner.temp }}\\tenrate-visual
+          TIMER_CHINESE_VIDEO_FRAMES_DIR: ${{ runner.temp }}\\tenrate-video
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo test --locked --features desktop --bin timer_windows_client native_window_visual_review -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Real Windows GUI review failed' }
+      - name: Encode live rendered Windows frames as MP4
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $frames = Join-Path $env:RUNNER_TEMP 'tenrate-video'
+          $out = Join-Path $env:RUNNER_TEMP 'tenrate-visual'
+          $report = Get-Content (Join-Path $out 'video_receipts.json') -Raw | ConvertFrom-Json
+          $files = @(Get-ChildItem $frames -Filter '*.png' -File)
+          if ($report.scenes -lt 30 -or $files.Count -lt 300 -or $files.Count -ne $report.frames) { throw "Not enough recorded native Windows frames: $($files.Count)" }
+          $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if (!$ff) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed' }
+            $ff = Get-Command ffmpeg -ErrorAction Stop
+          }
+          $video = Join-Path $out 'Windows-中文界面-原生操作录屏.mp4'
+          & $ff.Source -hide_banner -loglevel error -y -framerate 6 -i (Join-Path $frames '%05d.png') -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p -movflags +faststart $video
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path $video) -or (Get-Item $video).Length -lt 100000) { throw 'MP4 encoding failed' }
+          $sha = (Get-FileHash $video -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  Windows-中文界面-原生操作录屏.mp4" | Set-Content -LiteralPath (Join-Path $out '录屏校验.sha256') -Encoding utf8
+          "Windows application launched with Chinese subtitles; scenes: $($report.scenes), actual native click attempts: $($report.nativeClickAttempts), received click events: $($report.nativeClickEventsObserved), video frames: $($report.frames)." >> $env:GITHUB_STEP_SUMMARY
+          if ($report.nativeClickEventsObserved -lt 5) {
+            throw 'Real mouse click evidence insufficient; do not claim interaction acceptance'
+          }
+      - name: Upload original recording and receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TenRate-Windows-Chinese-Real-GUI-Video
+          path: |
+            ${{ runner.temp }}/tenrate-visual/*.mp4
+            ${{ runner.temp }}/tenrate-visual/video_receipts.json
+            ${{ runner.temp }}/tenrate-visual/录屏校验.sha256
+          if-no-files-found: warn
+          retention-days: 30
