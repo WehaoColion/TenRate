@@ -1,3 +1,4 @@
+// v2.13.5.11 - Animate only programmed canvas camera movements; keep direct gestures immediate.
 // v2.13.5.7 - 恢复客户原始金额输入，在编辑客户中直接进入逐笔收款记录。
 // v2.13.5.6 - 独立款项项目与逐笔收款票据，历史汇总不丢失。
 // v2.13.5.5 - 客户卡片展示独立人民币收付款，旧卡片无损打开。
@@ -315,6 +316,9 @@ import android.text.TextPaint
 import android.text.Layout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
@@ -1530,9 +1534,40 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
     val currentConnect by rememberUpdatedState(connectFrom)
     val currentSelect by rememberUpdatedState(onSelect)
     val currentOnConnect by rememberUpdatedState(onConnect)
+    val cameraScope = rememberCoroutineScope()
+    var cameraJob by remember(canvas.id) { mutableStateOf<Job?>(null) }
+    var pendingProgrammaticViewport by remember(canvas.id) { mutableStateOf<CanvasViewport?>(null) }
+    fun animateCamera(target: CanvasViewport) {
+        cameraJob?.cancel()
+        cameraJob = cameraScope.launch {
+            val start = viewport
+            if (start == target) return@launch
+            Animatable(0f).animateTo(1f,
+                animationSpec = tween(240, easing = FastOutSlowInEasing)) {
+                val fraction = value
+                viewport = CanvasViewport(
+                    start.x + (target.x - start.x) * fraction,
+                    start.y + (target.y - start.y) * fraction,
+                    start.zoom * exp(ln(target.zoom / start.zoom) * fraction)
+                )
+            }
+            viewport = target
+        }
+    }
+    fun requestCamera(target: CanvasViewport): Boolean {
+        val accepted = model.submit(canvasRequest("view") {
+            put("x", target.x); put("y", target.y); put("zoom", target.zoom)
+        })
+        if (accepted) pendingProgrammaticViewport = target
+        return accepted
+    }
     LaunchedEffect(modelState.serial, canvas.id) {
         val next = CanvasViewport(canvas.centerX,canvas.centerY,canvas.zoom)
-        if (next != committedViewport) viewport = next
+        if (next != committedViewport) {
+            if (pendingProgrammaticViewport == next) animateCamera(next)
+            else { cameraJob?.cancel(); viewport = next }
+        }
+        pendingProgrammaticViewport = null
         committedViewport = next
         dragPreview = null
     }
@@ -1546,7 +1581,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             val halfHeight = size.height / (2f * viewport.zoom * density)
             if (abs(centerX - viewport.x) > halfWidth * 0.6f ||
                 abs(centerY - viewport.y) > halfHeight * 0.6f) {
-                viewport = viewport.copy(x = centerX, y = centerY)
+                animateCamera(viewport.copy(x = centerX, y = centerY))
             }
         }
     }
@@ -1563,6 +1598,9 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             .pointerInput(model,canvas.id,density) {
                 awaitEachGesture {
                     val first = awaitFirstDown(requireUnconsumed = false)
+                    // A finger immediately takes priority over every automatic camera move.
+                    cameraJob?.cancel()
+                    pendingProgrammaticViewport = null
                     if (model.busy) { do { val event = awaitPointerEvent() } while(event.changes.any { it.pressed }); return@awaitEachGesture }
                     val start = first.position
                     val hit = canvasHitAtZoom(currentCanvas.nodes,viewport.world(start,size,density),viewport.zoom)
@@ -1616,7 +1654,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                             val focused = CanvasViewport(hit.x + hit.width / 2f, hit.y + hit.height / 2f, 1f)
                             if (model.submit(canvasRequest("gesture") {
                                 put("viewX", focused.x); put("viewY", focused.y); put("zoom", focused.zoom)
-                            })) viewport = focused
+                            })) pendingProgrammaticViewport = focused
                         } else currentSelect(hit?.id)
                     }
                 }
@@ -1694,8 +1732,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     val left=nodes.minOf { it.x }; val right=nodes.maxOf { it.x+it.width }; val top=nodes.minOf { it.y }; val bottom=nodes.maxOf { it.y+it.height }
                     val fitZoom=min(size.width/density/(right-left+64),size.height/density/(bottom-top+64))
                     if (fitZoom < 0.01f) overview = true
-                    else model.submit(canvasRequest("view") { put("x",(left+right)/2); put("y",(top+bottom)/2); put("zoom",fitZoom.coerceIn(0.01f,2.5f)) })
-                } else model.submit(canvasRequest("view") { put("x",0f); put("y",0f); put("zoom",1f) })
+                    else requestCamera(CanvasViewport((left+right)/2, (top+bottom)/2, fitZoom.coerceIn(0.01f, 2.5f)))
+                } else requestCamera(CanvasViewport(0f, 0f, 1f))
             }) { Text("适应") }
             TextButton(enabled=visualReady && canvas.nodes.isNotEmpty(), onClick={ overview = true }) { Text("总览") }
             TextButton(enabled=visualReady, onClick={ pickerZoom = viewport.zoom; zoomPicker = true }) { CanvasZoomLabel(zoomPercent) }
@@ -1724,9 +1762,7 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = { zoomPicker = false }) { Text("取消") }
                         Button(enabled = visualReady, onClick = {
-                            if (model.submit(canvasRequest("view") {
-                                put("x", viewport.x); put("y", viewport.y); put("zoom", pickerZoom)
-                            })) zoomPicker = false
+                            if (requestCamera(viewport.copy(zoom = pickerZoom))) zoomPicker = false
                         }) { Text("应用") }
                     }
                 }
@@ -1754,11 +1790,9 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                             detectTapGestures { point ->
                                 if (!model.busy && overviewSize.width > 0 && overviewSize.height > 0) {
                                     val world = transform.worldAt(point)
-                                    if (model.submit(canvasRequest("view") {
-                                        put("x", world.x.coerceIn(-250000f, 250000f))
-                                        put("y", world.y.coerceIn(-250000f, 250000f))
-                                        put("zoom", 1f)
-                                    })) overview = false
+                                    if (requestCamera(CanvasViewport(
+                                        world.x.coerceIn(-250000f, 250000f),
+                                        world.y.coerceIn(-250000f, 250000f), 1f))) overview = false
                                 }
                             }
                         }) {

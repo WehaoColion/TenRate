@@ -1,3 +1,4 @@
+// v2.13.5.11 - Coherent directional knowledge navigation, touch feedback and camera motion.
 // v2.13.5.10 - Clarify knowledge action hierarchy and folder legal settings.
 // v2.13.5.9 - Preserve encrypted AI conversation history and full knowledge-page exports.
 // v2.13.5.8 - Refine Android knowledge workspace information hierarchy and contextual controls.
@@ -74,7 +75,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.10";
+pub const LATEST_VERSION: &str = "2.13.5.11";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -104,6 +105,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.13.5.11",
+        updatedAt = "2026-11-16 08:47",
+        summary = "知识模块统一轻量动效，自动画布定位不再突然跳变",
+        sections = listOf(
+            AndroidUpdateSection("目录与文档", listOf(
+                "目录条目增加克制的触摸反馈，短目录的子项展开收起带有过渡，目录前进与返回具有不同方向感。",
+                "文档进入和退出沿用原编辑器快照、加密隔离与输入保护，只调整透明度与位移。"
+            )),
+            AndroidUpdateSection("知识画布", listOf(
+                "程序触发的卡片定位、适应视图与缩放使用可中断的镜头运动，手指直接平移和缩放仍然即时响应。",
+                "画布数据、客户款项、知识保存、风控账本和同步行为均不改变。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.10",
         updatedAt = "2026-11-16 06:22",
