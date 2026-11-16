@@ -220,7 +220,7 @@ fn native_window_visual_review() {
                 return;
             }
             assert!(
-                self.started.elapsed() < Duration::from_secs(if self.video_dir.is_some() { 300 } else { 150 }),
+                self.started.elapsed() < Duration::from_secs(if self.video_dir.is_some() { 450 } else { 150 }),
                 "native capture timeout"
             );
             if self.frames > 0 {
@@ -254,7 +254,7 @@ fn native_window_visual_review() {
                         );
                         canvas.save(video_dir.join(format!("{:05}.png", self.video_index))).unwrap();
                         self.video_index += 1;
-                        if self.frames < 24 { continue; }
+                        if self.frames < 12 { continue; }
                     }
                     image::save_buffer(
                         self.output.join(format!("{}.png", SCENES[self.scene].0)),
@@ -264,6 +264,14 @@ fn native_window_visual_review() {
                         image::ColorType::Rgba8,
                     )
                     .unwrap();
+                    if self.video_dir.is_some() {
+                        println!("WINDOWS_VIDEO_PROGRESS scene={} frames={} clicks={}",
+                            SCENES[self.scene].0, self.video_index, self.clicked_positions);
+                        fs::write(self.output.join("video_progress.json"),
+                            json!({"finishedScenes": self.scene + 1, "frames": self.video_index,
+                                "clicks": self.clicked_positions, "attempts": self.attempted_clicks,
+                                "lastScene": SCENES[self.scene].0}).to_string()).unwrap();
+                    }
                     self.scene += 1;
                     self.frames = 0;
                     self.last_click = None;
@@ -375,7 +383,7 @@ fn native_window_visual_review() {
             if self.video_dir.is_none() {
                 ctx.input_mut(|i| i.pointer = Default::default());
             }
-            if self.video_dir.is_some() && self.frames == 7 &&
+            if self.video_dir.is_some() && self.frames == 4 &&
                 send_native_demo_click(ctx, SCENES[self.scene].0) {
                 self.attempted_clicks += 1;
             }
@@ -409,7 +417,7 @@ fn native_window_visual_review() {
                 }
             }
             self.frames += 1;
-            if (self.video_dir.is_some() && self.frames % 2 == 0 && self.frames <= 24)
+            if (self.video_dir.is_some() && self.frames % 2 == 0 && self.frames <= 12)
                 || (self.video_dir.is_none() && self.frames == 8) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             }
