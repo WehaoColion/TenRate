@@ -1,3 +1,4 @@
+//! v2.23.4.19 - Compact selected-image strip for the reading-first AI composer.
 //! Rust-owned Android AI image picker, preview and bounded content-URI reader.
 //! Android framework glue is generated from this Rust template. Image format
 //! verification and request serialization stay in the Rust native library.
@@ -17,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -93,6 +96,31 @@ private fun KnowledgeAiThumbnail(uri: Uri) {
         contentDescription = "已选图片缩略图",
         modifier = Modifier.size(48.dp)
     ) else Text("图片", style = MaterialTheme.typography.labelSmall)
+}
+
+@Composable
+internal fun KnowledgeAiSelectedImages(
+    selected: List<Uri>,
+    enabled: Boolean,
+    onChange: (List<Uri>) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            selected.forEachIndexed { index, uri ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    KnowledgeAiThumbnail(uri)
+                    TextButton(enabled = enabled, onClick = {
+                        onChange(selected.filterIndexed { at, _ -> at != index })
+                    }) { Text("移除 " + (index + 1), style = MaterialTheme.typography.labelSmall) }
+                }
+            }
+        }
+        Text("图片仅发送至当前 AI 服务，本机不自动归档原件。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable

@@ -1,3 +1,4 @@
+// v2.23.4.19 - Keep the existing Agent authorization/save guards anchored after the new history/reader split.
 // Android Agent interaction: actual task progress and explicit result/save states.
 fn replace_once(source: &mut String, before: &str, after: &str) -> Result<(), String> {
     let count = source.matches(before).count();
@@ -284,7 +285,8 @@ pub fn render(source: &str) -> Result<String, String> {
                     }
                 }
             }
-            if (!agentMode) {"####,
+                    } // message list or history list
+                    if (!agentMode && !showChatHistory) {"####,
         r####"                            )
                         }
                         PhysicalButton(label = if (agentSaved) "本任务已保存" else if (agentBusy) "Agent 正在执行" else "授权并开始执行",
@@ -296,7 +298,8 @@ pub fn render(source: &str) -> Result<String, String> {
                     }
                 }
             }
-            if (!agentMode) {"####,
+                    } // message list or history list
+                    if (!agentMode && !showChatHistory) {"####,
     )?;
     replace_once(
         &mut rendered,

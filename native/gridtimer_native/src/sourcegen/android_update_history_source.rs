@@ -1,3 +1,4 @@
+// v2.23.4.19 - Reading-first AI screen and restored Android version lineage.
 // v2.13.5.13 - Add read-only canvas AI questions, source navigation and encrypted history.
 // v2.13.5.12 - Unified paper and archival character for knowledge UI.
 // v2.13.5.11 - Coherent directional knowledge navigation, touch feedback and camera motion.
@@ -77,7 +78,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.13";
+pub const LATEST_VERSION: &str = "2.23.4.19";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -107,6 +108,25 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "2.23.4.19",
+        updatedAt = "2026-11-18 02:30",
+        summary = "AI 问答优先阅读与连续追问，恢复 Android 版本序列",
+        sections = listOf(
+            AndroidUpdateSection("阅读与输入", listOf(
+                "AI 会话使用完整页面视觉层次，去掉暗色弹窗边框；缩小底部输入区，留出长回答的阅读空间。",
+                "图片通过输入区加号添加，已选图片显示缩略图；发送、停止和保存失败状态保持明确。"
+            )),
+            AndroidUpdateSection("历史和知识归档", listOf(
+                "历史对话成为独立视图，整段保存为知识页移动到更多操作，避免与输入区争抢空间。",
+                "手动上滑阅读时不再强制跳到回复末尾，可通过回到最新回复返回。"
+            )),
+            AndroidUpdateSection("版本与兼容", listOf(
+                "Android versionName 恢复为 2.23.4.19，内部 versionCode 升至 22364。",
+                "保留原 2.13.5.13 签名版本的完整历史，沿用原包名、签名、AI 服务及本地加密对话格式。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.13",
         updatedAt = "2026-11-17 09:14",
@@ -1717,10 +1737,13 @@ mod tests {
         let mut previous_normalized = previous.clone();
         latest_normalized.resize(4, 0);
         previous_normalized.resize(4, 0);
-        // The explicitly requested 2.13.5.1 label is a one-off branch identity
-        // after the earlier 2.23.4.18 release. Preserve its history instead
-        // of silently renumbering or discarding the previous signed release.
-        if LATEST_VERSION == "2.13.5.1" {
+        // Restore the longstanding 2.23.4 patch sequence after the 2.13.5.*
+        // labels. Keep all shipped records intact and let versionCode continue
+        // monotonically (22363 -> 22364) without renaming signed APKs.
+        if LATEST_VERSION == "2.23.4.19" {
+            assert_eq!(previous_normalized, vec![2, 13, 5, 13]);
+            assert!(versions.contains(&"2.23.4.18"));
+        } else if LATEST_VERSION == "2.13.5.1" {
             assert_eq!(previous_normalized, vec![2, 23, 4, 18]);
         } else {
             assert_eq!(&latest_normalized[..2], &previous_normalized[..2]);

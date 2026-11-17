@@ -1,3 +1,4 @@
+// v2.23.4.19 - 全屏 AI 阅读工作台、紧凑输入与历史入口分离；恢复原 Android 版本序列。
 // v2.13.5.13 - 画布 AI 问答、证据定位及加密历史。
 // v2.13.5.12 - 知识资料柜拟物材质和目录层次统一。
 // v2.13.5.11 - 知识模块统一方向转场、触感与画布自动镜头运动。
@@ -193,8 +194,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 22363
-        versionName '2.13.5.13'
+        versionCode 22364
+        versionName '2.23.4.19'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
