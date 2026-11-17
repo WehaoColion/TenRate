@@ -48,6 +48,22 @@ fn desktop_palette(preference: ThemePreference) -> Palette {
     }
 }
 
+// Export success belongs to the note/document operation. It must not look
+// like a permanent global health state after switching to another module.
+// Never hide failures, even when their source module is no longer active.
+fn desktop_status_for_tab<'a>(status: &'a str, tab: AppTab, is_error: bool) -> &'a str {
+    if status.is_empty() {
+        return "本地数据已就绪";
+    }
+    if !is_error
+        && (status.starts_with("已导出：") || status.starts_with("长图已导出："))
+        && !matches!(tab, AppTab::Notes | AppTab::Knowledge)
+    {
+        return "本地数据已就绪";
+    }
+    status
+}
+
 fn desktop_content_margin(width: f32) -> f32 {
     if width < 1000.0 {
         18.0
