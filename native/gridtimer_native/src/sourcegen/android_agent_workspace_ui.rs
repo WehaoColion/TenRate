@@ -1,3 +1,4 @@
+// v2.23.4.19 - Inject the Agent workspace in its dedicated full-screen pane.
 // Runs after the existing request/verification transformations. The task workspace
 // owns presentation only; native authorization, cancellation and save guards stay authoritative.
 fn replace(source: &mut String, before: &str, after: &str) -> Result<(), String> {
@@ -47,52 +48,66 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         .map(|n| start + n)
         .ok_or("Agent workspace dialog end missing")?;
     let mut dialog = source[start..end].to_owned();
+    // A reader-first dialog has three mutually exclusive panes. Project the
+    // existing Agent workspace into its dedicated slot; do not cut into the
+    // ordinary chat/history panes or resurrect the old footer.
+    const READER_AGENT_SLOT: &str =
+        "                    if (agentMode) {\n                        // Agent workspace is projected by the Rust renderer.\n                    } else if (showChatHistory) {";
+    if dialog.contains(READER_AGENT_SLOT) {
+        replace(
+            &mut dialog,
+            READER_AGENT_SLOT,
+            &format!("{WORKSPACE}                    else if (showChatHistory) {{"),
+        )?;
+    } else {
     // Remove the old interleaved Agent controls from the ordinary chat list.
-    cut(
-        &mut dialog,
-        "                if (agentMode) item {",
-        "                if (question.isBlank() && conversation.isEmpty()) item {",
-        "",
-    )?;
-    cut(
-        &mut dialog,
-        "                    if (agentMode) {\n                    val launchAction",
-        "                if (busy) item {",
-        "                }\n",
-    )?;
-    cut(
-        &mut dialog,
-        "                if (agentBusy) item {",
-        "                if (statusText.isNotBlank()) item {",
-        "",
-    )?;
-    cut(
-        &mut dialog,
-        "                if (agentMode && (agentBusy",
-        "                if (showSendingContent) {",
-        "",
-    )?;
-    cut(
-        &mut dialog,
-        "                if (showSendingContent) {",
-        "            if (!agentMode) {",
-        CHAT_PREVIEW,
-    )?;
-    replace(
-        &mut dialog,
-        "            LazyColumn(state = messageListState",
-        "            if (!agentMode) {\n            LazyColumn(state = messageListState",
-    )?;
-    replace(
-        &mut dialog,
-        "            if (!agentMode) {\n                if (busy)",
-        "            }\n            if (!agentMode) {\n                if (busy)",
-    )?;
-    replace(
-        &mut dialog,
-        "            if (!agentMode) {\n            LazyColumn",
-        &format!("{WORKSPACE}\n            if (!agentMode) {{\n            LazyColumn"),
-    )?;
+        cut(
+            &mut dialog,
+            "                if (agentMode) item {",
+            "                if (question.isBlank() && conversation.isEmpty()) item {",
+            "",
+        )?;
+        cut(
+            &mut dialog,
+            "                    if (agentMode) {\n                    val launchAction",
+            "                if (busy) item {",
+            "                }\n",
+        )?;
+        cut(
+            &mut dialog,
+            "                if (agentBusy) item {",
+            "                if (statusText.isNotBlank()) item {",
+            "",
+        )?;
+        cut(
+            &mut dialog,
+            "                if (agentMode && (agentBusy",
+            "                if (showSendingContent) {",
+            "",
+        )?;
+        cut(
+            &mut dialog,
+            "                if (showSendingContent) {",
+            "            if (!agentMode) {",
+            CHAT_PREVIEW,
+        )?;
+        replace(
+            &mut dialog,
+            "            LazyColumn(state = messageListState",
+            "            if (!agentMode) {\n            LazyColumn(state = messageListState",
+        )?;
+        replace(
+            &mut dialog,
+            "            if (!agentMode) {\n                if (busy)",
+            "            }\n            if (!agentMode) {\n                if (busy)",
+        )?;
+        replace(
+            &mut dialog,
+            "            if (!agentMode) {\n            LazyColumn",
+            &format!("{WORKSPACE}\n            if (!agentMode) {{\n            LazyColumn"),
+        )?;
+    
+    }
     dialog = dialog.replace(
         "Text(if (agentMode) \"AI Agent\" else \"AI 问答\"",
         "Text(if (agentMode) \"任务助手\" else \"AI 问答\"",
