@@ -143,19 +143,19 @@ impl TimerWindowsClient {
             }
             // Keep the save action next to daily entry, never in the last
             // position of a wrapping multi-report navigation strip.
-                if (self.finance_workbench.tab != 5 || self.finance_dirty)
-                    && ui
-                        .add_enabled_ui(!self.finance_workbench.money_drafts.has_invalid(), |ui| {
-                            action_button(ui, "保存", ButtonTone::Primary)
-                        })
-                        .inner
-                        .clicked()
-                {
-                    save_now = true;
-                }
-                if self.finance_dirty {
-                    ui.label(egui::RichText::new("未保存").color(palette().warn));
-                }
+            if (self.finance_workbench.tab != 5 || self.finance_dirty)
+                && ui
+                    .add_enabled_ui(!self.finance_workbench.money_drafts.has_invalid(), |ui| {
+                        action_button(ui, "保存", ButtonTone::Primary)
+                    })
+                    .inner
+                    .clicked()
+            {
+                save_now = true;
+            }
+            if self.finance_dirty {
+                ui.label(egui::RichText::new("未保存").color(palette().warn));
+            }
         });
         card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -191,7 +191,6 @@ impl TimerWindowsClient {
                         }
                     }
                 });
-
             });
             if let Some(field) = self.finance_workbench.money_drafts.first_invalid() {
                 ui.colored_label(
