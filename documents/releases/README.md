@@ -1,3 +1,4 @@
+Windows 1.1.0.15 画布空间、风控工具和状态反馈优化候选：[说明](windows/release_notes_windows_v1.1.0.15.md)。
 Windows 1.1.0.14 画布安全与目录功能候选：[说明](windows/release_notes_windows_v1.1.0.14.md)。
 Windows 1.1.0.13 客户款项更正、AI 选图预览与画布总览候选：[说明](windows/release_notes_windows_v1.1.0.13.md)。
 Windows 1.1.0.12 客户网络画布及收付款 Rust 追赶候选：[说明](windows/release_notes_windows_v1.1.0.12.md)。
