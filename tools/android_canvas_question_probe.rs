@@ -142,7 +142,7 @@ fn main(){
     fs::create_dir_all(&dir).expect("evidence directory");
     let mut report=String::from("# Android 2.13.5.13 canvas question emulator acceptance\n\n");
     let result=acceptance(&dir,&mut report);
-    if let Err(error)=result{
+    if let Err(ref error)=result{
         report.push_str(&format!("FAIL: {error}\n"));
         evidence(&dir,"failure");
     }
