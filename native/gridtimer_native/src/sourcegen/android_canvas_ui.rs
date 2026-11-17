@@ -2055,10 +2055,10 @@ private fun CanvasQuestionSheet(
                         sourceExcerpts = excerpts.toTypedArray(),
                         historyJson = historyJson
                     )
-                    if (result.getOrNull(0)?.toBooleanStrictOrNull() != true) {
-                        throw IllegalStateException(result.getOrNull(1).orEmpty().ifBlank { "模型未能完成回答" })
+                    if (result?.getOrNull(0)?.toBooleanStrictOrNull() != true) {
+                        throw IllegalStateException(result?.getOrNull(1).orEmpty().ifBlank { "模型未能完成回答" })
                     }
-                    val response = result.getOrNull(2).orEmpty().trim()
+                    val response = result?.getOrNull(2).orEmpty().trim()
                     if (response.isBlank()) throw IllegalStateException("模型没有返回可读内容")
                     val cited = Regex("""\[(\d+)]""").findAll(response)
                         .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
