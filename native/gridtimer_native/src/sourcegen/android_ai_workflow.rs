@@ -1994,57 +1994,107 @@ private fun KnowledgeAiDialog(
                     }
                 }
             }
-            if (!agentMode) {
-                if (busy) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("正在回答…", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                        TextButton(enabled = !cancelling, onClick = { boundary.invalidate(); cancelling = true; statusText = "已取消，结束前不能发起重复请求。" }) { Text(if (cancelling) "正在停止" else "停止回答") }
-                    }
-                } else {
-                    KnowledgeQuestionField(question = question,
-                        hint = if (conversation.isEmpty()) "输入问题" else "继续追问，AI 会参考最近的对话",
-                        onQuestionChange = { if (!busy) { question = it; statusText = "" } })
-                    KnowledgeAiImagePicker(
-                        selected = selectedImageUris,
-                        enabled = !busy && !agentBusy,
-                        onChange = { images ->
-                            if (!busy && !agentBusy) {
-                                invalidateAnswer()
-                                selectedImageUris = images
-                                if (question.isBlank() && images.isNotEmpty()) question = "请分析这些图片"
+                    } // message list or history list
+                    if (!agentMode && !showChatHistory) {
+                        if (!followNewest && conversation.isNotEmpty()) {
+                            TextButton(modifier = Modifier.align(Alignment.End),
+                                onClick = {
+                                    followNewest = true
+                                    scope.launch {
+                                        val last = messageListState.layoutInfo.totalItemsCount - 1
+                                        if (last >= 0) messageListState.animateScrollToItem(last)
+                                    }
+                                }) { Text("↓ 回到最新回复") }
+                        }
+                        Surface(modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, flowusBorderColor()),
+                            tonalElevation = 2.dp) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                if (busy) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
+                                        Text("正在回答…", style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.weight(1f))
+                                        TextButton(enabled = !cancelling, onClick = {
+                                            boundary.invalidate(); cancelling = true
+                                            statusText = "已取消，等待本次请求结束。"
+                                        }) { Text(if (cancelling) "正在停止" else "停止") }
+                                    }
+                                }
+                                if (selectedImageUris.isNotEmpty()) {
+                                    KnowledgeAiSelectedImages(selected = selectedImageUris,
+                                        enabled = !busy && !agentBusy,
+                                        onChange = { images ->
+                                            if (!busy && !agentBusy) {
+                                                invalidateAnswer()
+                                                selectedImageUris = images
+                                            }
+                                        })
+                                }
+                                Row(Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    TextButton(enabled = !busy && !agentBusy && selectedImageUris.size < 5,
+                                        onClick = { addQuestionImages.launch("image/*") }) {
+                                        Text("＋", style = MaterialTheme.typography.titleLarge)
+                                    }
+                                    OutlinedTextField(
+                                        value = question,
+                                        onValueChange = { typed ->
+                                            if (!busy) {
+                                                question = typed.take(1000)
+                                                statusText = ""
+                                            }
+                                        },
+                                        enabled = !busy && !savingConversation && pendingTurn == null,
+                                        placeholder = {
+                                            Text(if (conversation.isEmpty()) "输入问题…"
+                                                else "继续追问…")
+                                        },
+                                        minLines = 1, maxLines = 3,
+                                        shape = RoundedCornerShape(17.dp),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    val canSend = historyReady && historyError.isBlank() &&
+                                        pendingTurn == null && !savingConversation && !busy &&
+                                        !agentBusy && configuration.testable && !imageModelUnsupported &&
+                                        question.isNotBlank() &&
+                                        (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty())
+                                    Button(enabled = canSend, onClick = ::requestAnswer,
+                                        shape = RoundedCornerShape(16.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp)) {
+                                        Text("发送")
+                                    }
+                                }
+                                if (imageModelUnsupported) {
+                                    TextButton(onClick = onOpenAiSettings) {
+                                        Text("当前模型不支持图片，点此更换模型")
+                                    }
+                                }
+                                if (!configuration.testable) {
+                                    TextButton(onClick = onOpenAiSettings) { Text("请先配置 AI 模型") }
+                                }
+                                if (!historyReady) Text("正在读取本机加密历史…",
+                                    style = MaterialTheme.typography.labelSmall)
+                                if (historyError.isNotBlank()) {
+                                    Text(historyError, color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.labelSmall)
+                                }
+                                if (pendingTurn != null) {
+                                    TextButton(onClick = ::retrySavingTurn,
+                                        enabled = !busy && !savingConversation) {
+                                        Text("回答尚未保存 · 重试保存")
+                                    }
+                                }
                             }
                         }
-                    )
-                    if (imageModelUnsupported) {
-                        TextButton(enabled = !busy, onClick = onOpenAiSettings) {
-                            Text("当前 DeepSeek 模型不支持图片，点此切换到 deepseek-flash")
-                        }
                     }
                 }
-                if (!historyReady) Text("正在恢复本机加密对话记录…", style = MaterialTheme.typography.bodySmall)
-                if (historyError.isNotBlank()) Text(historyError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                if (pendingTurn != null) TextButton(onClick = ::retrySavingTurn, enabled = !busy && !savingConversation) {
-                    Text("重试保存尚未写入的回答")
-                }
-                PhysicalButton(label = if (busy) "正在回答" else if (conversation.isEmpty()) "发送" else "继续提问",
-                    icon = Icons.Rounded.Title, accent = notesAccentColor, filled = true,
-                    enabled = historyReady && historyError.isBlank() && pendingTurn == null &&
-                        !savingConversation && !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() &&
-                        (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
-                    modifier = Modifier.fillMaxWidth(), onClick = ::requestAnswer)
-                if (conversation.isNotEmpty()) {
-                    TextButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = historyReady && historyError.isBlank() && pendingTurn == null &&
-                            !savingConversation && !busy && !agentBusy,
-                        onClick = ::saveWholeConversation
-                    ) { Text("保存全部 " + conversation.size + " 轮到一个知识页") }
-                }
-                Text("模型上下文最多取最近 8 轮、24,000 字符；本机保留全部文字问答。图片原件不自动归档，须手动再次引用。", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
             }
-          }
-        }
         }
     }
 }
