@@ -1,0 +1,94 @@
+name: Android canvas AI question emulator acceptance
+
+on:
+  push:
+    branches: [feat/android-canvas-ai-question-v2.13.5.13]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: canvas-question-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    name: Install signed APK and exercise canvas question UI on API 35
+    runs-on: ubuntu-22.04
+    timeout-minutes: 145
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Rust-only Android UI acceptance probe
+        run: |
+          rustc --edition=2021 -D warnings -O tools/android_canvas_question_probe.rs -o android_canvas_question_probe
+      - name: Wait for signed APK built from the exact same commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-canvas-ai-question-v2.13.5.13&per_page=30")"
+            match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
+            if test -n "$match"; then
+              read -r run_id status conclusion <<< "$match"
+              if test "$status" = "completed"; then
+                if test "$conclusion" != "success"; then
+                  echo "Signed Android build $run_id failed: $conclusion" >&2
+                  exit 1
+                fi
+                echo "$run_id" > signed_build_run_id.txt
+                break
+              fi
+            fi
+            sleep 30
+          done
+          test -s signed_build_run_id.txt
+          gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
+          cd signed_apk
+          test -f tenfold_v2.13.5.13.apk
+          test -f tenfold_v2.13.5.13.apk.sha256
+          tr -d '\r' < tenfold_v2.13.5.13.apk.sha256 | sha256sum -c -
+      - name: Enable KVM acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Start Android app, tap question entry, verify empty submit and return
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v2.13.5.13.apk
+            ./android_canvas_question_probe canvas_question_evidence
+      - name: Attach the actual acceptance result
+        if: always()
+        shell: bash
+        run: |
+          if test -f canvas_question_evidence/report.md; then
+            cat canvas_question_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Emulator did not finish; inspect job logs.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload screenshots, hierarchies and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-canvas-ai-v2.13.5.13-emulator-evidence
+          path: |
+            canvas_question_evidence/
+            signed_build_run_id.txt
+          if-no-files-found: warn
+          retention-days: 21

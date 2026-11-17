@@ -1,3 +1,4 @@
+// v2.13.5.13 - Canvas-grounded AI queries, location affordances and encrypted history.
 // v2.13.5.11 - Animate only programmed canvas camera movements; keep direct gestures immediate.
 // v2.13.5.7 - 恢复客户原始金额输入，在编辑客户中直接进入逐笔收款记录。
 // v2.13.5.6 - 独立款项项目与逐笔收款票据，历史汇总不丢失。
@@ -293,7 +294,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     let replacements = [
         ("    var knowledgeDialogVisible by remember { mutableStateOf(false) }", "    var knowledgeDialogVisible by remember { mutableStateOf(false) }\n    val canvasWorkspaceKey = LocalNoteMediaWorkspaceKey.current\n    var canvasVisible by rememberSaveable(canvasWorkspaceKey) { mutableStateOf(false) }"),
         ("    LaunchedEffect(selectedNoteId != null) {\n        onEditingStateChange(selectedNoteId != null)\n    }", "    LaunchedEffect(selectedNoteId != null, canvasVisible) {\n        onEditingStateChange(selectedNoteId != null || canvasVisible)\n    }"),
-        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            }, onCreatePage = { title, onCreated ->\n                val newPageId = java.util.UUID.randomUUID().toString()\n                viewModel.knowledgeContainerAction(\"create_page\", newPageId, \"\", title, canvasWorkspaceKey) { ok, _ ->\n                    if (viewModel.currentWorkspaceKey() == canvasWorkspaceKey) onCreated(if (ok) newPageId else null)\n                }\n            })\n        } else AnimatedContent"),
+        ("    val noteStudioContent: @Composable () -> Unit = {\n        AnimatedContent", "    val noteStudioContent: @Composable () -> Unit = {\n        if (canvasVisible && selectedNoteId == null) {\n            KnowledgeCanvasScreen(appData = appData, syncSession = syncSession, onBack = { canvasVisible = false }, onOpenPage = { note ->\n                pendingCreatedNote = null\n                if (note.isEncryptionLocked()) { unlockTarget = note; unlockError = \"\" }\n                else { unlockedNote = null; selectedNoteId = note.id; searchLocateQuery = null }\n            }, onCreatePage = { title, onCreated ->\n                val newPageId = java.util.UUID.randomUUID().toString()\n                viewModel.knowledgeContainerAction(\"create_page\", newPageId, \"\", title, canvasWorkspaceKey) { ok, _ ->\n                    if (viewModel.currentWorkspaceKey() == canvasWorkspaceKey) onCreated(if (ok) newPageId else null)\n                }\n            })\n        } else AnimatedContent"),
         ("                    onSelectFolder = viewModel::selectNoteFolder,", "                    onOpenCanvas = { canvasVisible = true },\n                    onSelectFolder = viewModel::selectNoteFolder,"),
         ("    onAskKnowledge: () -> Unit,\n    onSelectFolder:", "    onAskKnowledge: () -> Unit,\n    onOpenCanvas: () -> Unit,\n    onSelectFolder:"),
         ("        if (!trashMode) {\n            item {\n                KnowledgeAskEntryCard(", "        if (!trashMode) {\n            item {\n                androidx.compose.material3.OutlinedButton(onClick = onOpenCanvas, modifier = Modifier.fillMaxWidth()) {\n                    Text(\"画布\", style = MaterialTheme.typography.titleMedium)\n                    Spacer(Modifier.weight(1f))\n                    Text(\"卡片与连线\")\n                }\n            }\n            item {\n                KnowledgeAskEntryCard("),
@@ -350,6 +351,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ofairyo.gridtimer.data.*
+import com.ofairyo.gridtimer.core.NativeOptimizerBridge
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
@@ -362,6 +364,7 @@ internal object KnowledgeCanvasNative {
     external fun open(root: String, workspace: String): String
     external fun command(token: String, request: String): String
     external fun close(token: String)
+    external fun question(token: String, scope: String, focus: String, query: String): String
 }
 
 internal interface CanvasBackend {
@@ -1039,13 +1042,17 @@ private fun ClientMoneySheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit, onCreatePage: (String, (String?) -> Unit) -> Unit) {
+internal fun KnowledgeCanvasScreen(appData: AppData, syncSession: SyncAccountSession, onBack: () -> Unit, onOpenPage: (NoteEntry) -> Unit, onCreatePage: (String, (String?) -> Unit) -> Unit) {
     val context = LocalContext.current
     val workspace = LocalNoteMediaWorkspaceKey.current
     val model = remember(workspace) { KnowledgeCanvasModel(context.filesDir.absolutePath, workspace) }
     val modelState by model.state.collectAsState()
     DisposableEffect(model) { onDispose { model.close() } }
     var selected by remember(workspace) { mutableStateOf<String?>(null) }
+    var focusNodeId by remember(workspace) { mutableStateOf<String?>(null) }
+    var askVisible by remember(workspace) { mutableStateOf(false) }
+    var askFocusId by remember(workspace) { mutableStateOf<String?>(null) }
+    var askInitialScope by remember(workspace) { mutableStateOf("all") }
     var paymentClientId by remember(workspace) { mutableStateOf<String?>(null) }
     var connectFrom by remember(workspace) { mutableStateOf<String?>(null) }
     var connectRelation by remember(workspace) { mutableStateOf("link") }
@@ -1091,7 +1098,7 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
     }
     val back = { if (!showBusy) { if (paymentClientId != null) paymentClientId = null else if (connectFrom != null) connectFrom = null else if (!showLibrary) { showLibrary = true; selected = null; panel = "" } else onBack() } }
     BackHandler { back() }
-    LaunchedEffect(canvas?.id) { selected = null; paymentClientId = null; connectFrom = null; panel = ""; dialog = "" }
+    LaunchedEffect(canvas?.id) { selected = null; focusNodeId = null; askVisible = false; paymentClientId = null; connectFrom = null; panel = ""; dialog = "" }
     LaunchedEffect(model.serial) {
         if (canvas?.nodes?.any { it.id == selected } != true) selected = null
         if (canvas?.nodes?.any { it.id == paymentClientId } != true) paymentClientId = null
@@ -1179,20 +1186,40 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
             }
         }
         if (canvas != null) {
-            CanvasSurface(canvas, pages, model, selected, connectFrom, Modifier.weight(1f).fillMaxWidth(),
-                onSelect = { selected = it }, onConnect = { target ->
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+            CanvasSurface(canvas, pages, model, selected, focusNodeId, connectFrom, Modifier.fillMaxSize(),
+                onSelect = { focusNodeId = null; selected = it }, onConnect = { target ->
                     val from = connectFrom
                     if (from != null && from != target) {
                         if (model.submit(canvasRequest("connect") { put("from",from); put("to",target); put("relation",connectRelation) })) connectFrom = null
                     }
                 },
                 onAddFirst = { if (canvas.template == "customer_network") { clientName = ""; clientDetails = ""; clientPaidInput = ""; clientPendingInput = ""; clientParentId = null; dialog = "clientAdd" } else { editorTitle = ""; editorText = ""; dialog = "noteAdd" } })
+            Surface(onClick = { askFocusId = null; askInitialScope = "all"; askVisible = true },
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 66.dp),
+                shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 2.dp, shadowElevation = 2.dp) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("✦", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.width(10.dp))
+                    Text("向这张画布提问…", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("↗", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            }
         } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(if (model.busy) "正在载入画布" else "画布未能载入", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     }
 
+    if (!showLibrary && askVisible && canvas != null) {
+        CanvasQuestionSheet(board = canvas, model = model, pages = pages,
+            workspaceKey = workspace, syncSession = syncSession,
+            initialScope = askInitialScope, focusId = askFocusId,
+            onDismiss = { askVisible = false },
+            onLocate = { id -> askVisible = false; focusNodeId = id; selected = null })
+    }
     if (!showLibrary && paymentClient != null) {
         ClientMoneySheet(node = paymentClient, enabled = ready, busy = showBusy,
             error = model.error, serial = model.serial, succeeded = model.lastSucceeded,
@@ -1242,6 +1269,9 @@ internal fun KnowledgeCanvasScreen(appData: AppData, onBack: () -> Unit, onOpenP
                     }, enabled = ready, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("＋ 添加此客户推荐的人") }
                 }
                 Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(enabled = ready, onClick = {
+                        askFocusId = selectedNode.id; askInitialScope = "card"; selected = null; askVisible = true
+                    }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("✦ 询问这张卡片") }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (selectedNode.kind == "page") {
                         OutlinedButton(onClick = { pages[selectedNode.pageId]?.let(onOpenPage); selected = null }, enabled = ready && pages[selectedNode.pageId] != null, modifier = Modifier.weight(1f)) { Text("打开页面") }
@@ -1518,7 +1548,7 @@ private class CanvasTextCache {
 }
 
 @Composable
-private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit, onAddFirst: () -> Unit) {
+private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, model: KnowledgeCanvasModel, selected: String?, focusNodeId: String?, connectFrom: String?, modifier: Modifier, onSelect: (String?) -> Unit, onConnect: (String) -> Unit, onAddFirst: () -> Unit) {
     val modelState by model.state.collectAsState()
     val visualReady = !modelState.busy || modelState.quietGesture
     val density = LocalDensity.current.density
@@ -1572,8 +1602,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
         dragPreview = null
     }
     // An added or list-selected card must not remain invisible off screen.
-    LaunchedEffect(selected, canvas.id, size) {
-        val node = canvas.nodes.firstOrNull { it.id == selected }
+    LaunchedEffect(selected, focusNodeId, canvas.id, size) {
+        val node = canvas.nodes.firstOrNull { it.id == (focusNodeId ?: selected) }
         if (node != null && size.width > 0 && size.height > 0) {
             val centerX = node.x + node.width / 2f
             val centerY = node.y + node.height / 2f
@@ -1700,8 +1730,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     } else {
                     paint.style=Paint.Style.FILL; paint.color=surface
                     native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
-                    paint.style=Paint.Style.STROKE; paint.strokeWidth=if(node.id==selected || node.id==connectFrom) 2.5f/viewport.zoom else 1f/viewport.zoom
-                    paint.color=if(node.id==selected || node.id==connectFrom) primary else canvasTint(node.color).copy(alpha=0.45f).toArgb()
+                    paint.style=Paint.Style.STROKE; paint.strokeWidth=if(node.id==selected || node.id==focusNodeId || node.id==connectFrom) 2.5f/viewport.zoom else 1f/viewport.zoom
+                    paint.color=if(node.id==selected || node.id==focusNodeId || node.id==connectFrom) primary else canvasTint(node.color).copy(alpha=0.45f).toArgb()
                     native.drawRoundRect(nodeX,nodeY,nodeX+node.width,nodeY+node.height,16f,16f,paint)
                     paint.style=Paint.Style.FILL; paint.color=if (node.kind == "client") canvasTint("green").toArgb() else canvasTint(node.color).toArgb()
                     native.drawRoundRect(nodeX+12,nodeY+13,nodeX+16,nodeY+35,2f,2f,paint)
@@ -1836,6 +1866,315 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
                     }
                 }
             }
+        }
+    }
+}
+
+
+@Serializable
+private data class CanvasAskTurn(
+    val question: String, val answer: String, val sourceIds: List<String>,
+    val revision: Long
+)
+
+// Dedicated account/board-separated encrypted history. A failed decrypt never becomes an empty archive.
+private object CanvasQuestionHistory {
+    private const val KEY_ALIAS = "tenrate_canvas_question_v1"
+    private fun file(context: android.content.Context, owner: String): android.util.AtomicFile {
+        val hash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(owner.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        val dir = java.io.File(context.noBackupFilesDir, "canvas_questions").apply { mkdirs() }
+        return android.util.AtomicFile(java.io.File(dir, hash + ".enc"))
+    }
+    private fun key(): javax.crypto.SecretKey {
+        val store = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (store.getKey(KEY_ALIAS, null) as? javax.crypto.SecretKey)?.let { return it }
+        val generator = javax.crypto.KeyGenerator.getInstance("AES", "AndroidKeyStore")
+        generator.init(android.security.keystore.KeyGenParameterSpec.Builder(KEY_ALIAS,
+            android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or
+                android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true).build())
+        return generator.generateKey()
+    }
+    @Synchronized fun read(context: android.content.Context, owner: String): List<CanvasAskTurn> {
+        val target = file(context, owner)
+        if (!target.baseFile.exists() &&
+            !java.io.File(target.baseFile.path + ".bak").exists()) return emptyList()
+        val data = target.openRead().use { it.readBytes() }
+        require(data.size in 29..2500000) { "画布问答历史文件异常" }
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key(),
+            javax.crypto.spec.GCMParameterSpec(128, data.copyOfRange(0, 12)))
+        val clear = cipher.doFinal(data.copyOfRange(12, data.size))
+        return Json.decodeFromString<List<CanvasAskTurn>>(String(clear, Charsets.UTF_8))
+    }
+    @Synchronized fun append(context: android.content.Context, owner: String, turn: CanvasAskTurn): List<CanvasAskTurn> {
+        val previous = read(context, owner)
+        val next = previous + turn
+        val clear = Json.encodeToString(kotlinx.serialization.builtins.ListSerializer(CanvasAskTurn.serializer()), next)
+            .toByteArray(Charsets.UTF_8)
+        require(clear.size <= 2200000) { "画布问答历史空间已满，请先导出历史" }
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key())
+        val sealed = cipher.iv + cipher.doFinal(clear)
+        val target = file(context, owner)
+        val output = target.startWrite()
+        try {
+            output.write(sealed)
+            target.finishWrite(output)
+        } catch (failure: Throwable) {
+            target.failWrite(output)
+            throw failure
+        }
+        return next
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CanvasQuestionSheet(
+    board: CanvasBoard, model: KnowledgeCanvasModel, pages: Map<String,NoteEntry>,
+    workspaceKey: String, syncSession: SyncAccountSession,
+    initialScope: String, focusId: String?,
+    onDismiss: () -> Unit, onLocate: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val config = AiConfiguration(syncSession.aiApiKey, syncSession.aiBaseUrl, syncSession.aiModel)
+    val owner = remember(workspaceKey, syncSession.userId, syncSession.serverInstanceId,
+        syncSession.accountNamespace, board.id) {
+        listOf(workspaceKey, syncSession.userId, syncSession.serverInstanceId,
+            syncSession.accountNamespace, board.id).joinToString("|")
+    }
+    var questionText by remember(board.id) { mutableStateOf("") }
+    var queryScope by remember(board.id, initialScope) { mutableStateOf(initialScope) }
+    var history by remember(owner) { mutableStateOf<List<CanvasAskTurn>>(emptyList()) }
+    var historyReady by remember(owner) { mutableStateOf(false) }
+    var historyError by remember(owner) { mutableStateOf("") }
+    var busy by remember(board.id) { mutableStateOf(false) }
+    var error by remember(board.id) { mutableStateOf("") }
+    var pendingSave by remember(board.id) { mutableStateOf<CanvasAskTurn?>(null) }
+    val currentBoardId by rememberUpdatedState(model.reply?.canvas?.id)
+    val currentOwner by rememberUpdatedState(owner)
+
+    LaunchedEffect(owner) {
+        historyReady = false
+        try {
+            history = withContext(Dispatchers.IO) { CanvasQuestionHistory.read(context, owner) }
+            historyError = ""
+        } catch (failure: Exception) {
+            historyError = "加密历史读取失败。为保护原记录，本次禁止覆盖，请检查本机数据。"
+        } finally { historyReady = true }
+    }
+
+    fun persistPending() {
+        val item = pendingSave ?: return
+        if (busy) return
+        busy = true; error = ""
+        scope.launch {
+            try {
+                val stored = withContext(Dispatchers.IO) { CanvasQuestionHistory.append(context, owner, item) }
+                if (currentBoardId == board.id && currentOwner == owner) {
+                    history = stored
+                    pendingSave = null
+                    questionText = ""
+                }
+            } catch (failure: Exception) {
+                error = "本轮回答未能保存。请重试保存，成功前不要关闭。"
+            } finally { busy = false }
+        }
+    }
+
+    fun ask() {
+        val typed = questionText.trim()
+        val focus = focusId.orEmpty()
+        if (!historyReady || historyError.isNotBlank() || pendingSave != null || busy ||
+            typed.isBlank() || typed.length > 1000 || !config.testable ||
+            model.reply?.canvas?.id != board.id || model.reply?.token.isNullOrEmpty() ||
+            (queryScope != "all" && focus.isEmpty())) return
+        val requestScope = queryScope
+        val requestToken = model.reply!!.token
+        val requestConfiguration = config
+        busy = true; error = ""
+        scope.launch {
+            try {
+                val answer = withContext(Dispatchers.IO) {
+                    val snapshot = org.json.JSONObject(
+                        KnowledgeCanvasNative.question(requestToken, requestScope, focus, typed))
+                    if (!snapshot.optBoolean("ok", false)) {
+                        throw IllegalStateException(snapshot.optString("error", "无法读取画布资料"))
+                    }
+                    if (snapshot.optString("canvasId") != board.id) {
+                        throw IllegalStateException("画布已切换，请重新提问")
+                    }
+                    val titles = mutableListOf("画布本地精确统计")
+                    val folders = mutableListOf("当前画布")
+                    val excerpts = mutableListOf(snapshot.getString("summary").take(4000))
+                    val sourceIds = mutableListOf("")
+                    val nodes = snapshot.optJSONArray("sources") ?: org.json.JSONArray()
+                    for (index in 0 until nodes.length()) {
+                        val item = nodes.getJSONObject(index)
+                        val nodeId = item.optString("nodeId")
+                        val kind = item.optString("kind")
+                        var excerpt = item.optString("excerpt")
+                        var title = item.optString("title")
+                        if (kind == "page") {
+                            val note = pages[item.optString("pageId")]
+                            // Unlocking a page for display never authorizes transmission.
+                            if (note == null || note.isDeleted() || note.encryption != null) continue
+                            val plaintext = runCatching {
+                                note.resolvedDocument().plainText(preserveStructure = true)
+                            }.getOrNull().orEmpty()
+                            if (plaintext.isBlank()) continue
+                            title = note.displayTitle()
+                            excerpt = plaintext
+                        }
+                        if (excerpt.isBlank()) continue
+                        titles.add(title.take(100))
+                        folders.add(if (kind == "client") "客户卡片" else if (kind == "page") "已授权知识页面" else "画布便签")
+                        excerpts.add(excerpt.take(1300))
+                        sourceIds.add(nodeId)
+                    }
+                    val historyJson = org.json.JSONArray().apply {
+                        knowledgeConversationContext(history.map {
+                            KnowledgeConversationTurn(it.question, it.answer)
+                        }).forEach {
+                            put(org.json.JSONObject().put("question", it.question).put("answer", it.answer))
+                        }
+                    }.toString()
+                    val result = NativeOptimizerBridge.completeAndroidAiQuery(
+                        apiKey = requestConfiguration.apiKey.trim(),
+                        baseUrl = requestConfiguration.baseUrl.trim(),
+                        model = requestConfiguration.model.trim(),
+                        mode = "canvas",
+                        question = typed,
+                        sourceTitles = titles.toTypedArray(),
+                        sourceFolders = folders.toTypedArray(),
+                        sourceExcerpts = excerpts.toTypedArray(),
+                        historyJson = historyJson
+                    )
+                    if (result?.getOrNull(0)?.toBooleanStrictOrNull() != true) {
+                        throw IllegalStateException(result?.getOrNull(1).orEmpty().ifBlank { "模型未能完成回答" })
+                    }
+                    val response = result?.getOrNull(2).orEmpty().trim()
+                    if (response.isBlank()) throw IllegalStateException("模型没有返回可读内容")
+                    val cited = Regex("""\[(\d+)]""").findAll(response)
+                        .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
+                        .distinct().mapNotNull { sourceIds.getOrNull(it - 1) }
+                        .filter(String::isNotBlank).distinct().toList()
+                    val candidateIds = sourceIds.drop(1).filter(String::isNotBlank).take(6)
+                    CanvasAskTurn(typed, response, if (cited.isEmpty()) candidateIds else cited,
+                        snapshot.getLong("revision"))
+                }
+                if (currentBoardId != board.id || currentOwner != owner) return@launch
+                pendingSave = answer
+                try {
+                    history = withContext(Dispatchers.IO) {
+                        CanvasQuestionHistory.append(context, owner, answer)
+                    }
+                    pendingSave = null
+                    questionText = ""
+                } catch (failure: Exception) {
+                    error = "回答已生成，但本机加密保存失败。请先点击重试保存。"
+                }
+            } catch (failure: Exception) {
+                if (currentBoardId == board.id && currentOwner == owner) {
+                    error = failure.message.orEmpty().ifBlank { "本轮提问失败，请重试" }.take(180)
+                }
+            } finally { busy = false }
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.78f).padding(horizontal = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("✦ 画布问答", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                TextButton(onClick = onDismiss) { Text("返回画布") }
+            }
+            Text(board.title + " · " + board.nodes.size + " 张卡片 · " + board.edges.size + " 条关系",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = queryScope == "all", enabled = !busy, onClick = { queryScope = "all" },
+                    label = { Text("当前画布") })
+                if (focusId != null) {
+                    FilterChip(selected = queryScope == "card", enabled = !busy,
+                        onClick = { queryScope = "card" }, label = { Text("这张卡片") })
+                    FilterChip(selected = queryScope == "network", enabled = !busy,
+                        onClick = { queryScope = "network" }, label = { Text("关联网络") })
+                }
+            }
+            Text("将把选定范围内的卡片资料、关系与必要知识页节选发送至已配置的 AI 服务。"
+                    + "加密页面不会上传；客户金额与风控账本始终分开。",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (history.isEmpty() && pendingSave == null && historyReady && historyError.isBlank()) {
+                    item {
+                        Text("试着问：哪些客户还有待收款项？谁推荐了谁？这张画布记录了什么？",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                items(history) { turn ->
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(14.dp)) {
+                            Text(turn.question, Modifier.fillMaxWidth().padding(12.dp),
+                                style = MaterialTheme.typography.bodyMedium)
+                        }
+                        AndroidRenderedMarkdown(turn.answer, modifier = Modifier.fillMaxWidth())
+                        if (turn.revision != model.reply?.revision) {
+                            Text("依据提问时的画布快照，内容可能已发生变化",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall)
+                        }
+                        val uniqueIds = turn.sourceIds.distinct().take(8)
+                        uniqueIds.forEach { id ->
+                            val node = board.nodes.firstOrNull { it.id == id }
+                            if (node != null) {
+                                TextButton(onClick = { onLocate(id) }) {
+                                    Text("定位来源 · " + (if (node.kind == "page")
+                                        pages[node.pageId]?.displayTitle() ?: "知识页面"
+                                        else node.text.substringBefore("\n").ifBlank { "卡片" }).take(48))
+                                }
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+                if (pendingSave != null) {
+                    item {
+                        Text("这轮回答尚未保存", color = MaterialTheme.colorScheme.error)
+                        AndroidRenderedMarkdown(pendingSave!!.answer, modifier = Modifier.fillMaxWidth())
+                        TextButton(onClick = ::persistPending, enabled = !busy) { Text("重试保存本轮回答") }
+                    }
+                }
+                if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            }
+            if (!historyReady) {
+                Text("正在读取本机问答记录", style = MaterialTheme.typography.bodySmall)
+            }
+            if (historyError.isNotBlank()) Text(historyError, color = MaterialTheme.colorScheme.error)
+            if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+            if (!config.testable) {
+                Text("尚未配置可用的 AI 服务，请先在知识模块设置中完成配置。",
+                    color = MaterialTheme.colorScheme.error)
+            }
+            OutlinedTextField(value = questionText, onValueChange = { questionText = it.take(1000) },
+                enabled = !busy && pendingSave == null && historyError.isBlank(),
+                placeholder = { Text("向这张画布提问…") }, minLines = 1, maxLines = 3,
+                modifier = Modifier.fillMaxWidth())
+            Button(onClick = ::ask, modifier = Modifier.fillMaxWidth(),
+                enabled = !busy && historyReady && historyError.isBlank() && pendingSave == null
+                    && config.testable && questionText.isNotBlank() && model.reply?.canvas?.id == board.id) {
+                Text(if (busy) "正在分析画布" else "发送问题")
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

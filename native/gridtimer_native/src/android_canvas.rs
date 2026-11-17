@@ -1,4 +1,5 @@
 // v2.13.5.7 - 历史已付与待付可一次性原子整理为逐笔明细。
+// v2.13.5.13 - Canvas question snapshot is strictly read-only and scoped.
 // v2.13.5.6 - 客户逐笔收款与历史汇总并存，不接入风控账本。
 // v2.13.5.5 - 客户收付款以独立分字段存储，不接入风控账本。
 // v2.22.49.5 Android - Encode borrowed replies and send only viewport deltas for pan/zoom.
@@ -14,6 +15,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 #[path = "android_referral_layout.rs"]
 mod referral_layout;
+#[path = "android_canvas_question.rs"]
+mod question;
 #[path = "android_canvas_money.rs"]
 mod money;
 pub use money::{ClientCharge, ClientReceipt};
@@ -988,6 +991,34 @@ fn command_with<R>(
         }
     }
     encode(token, session, viewport_only, base_revision)
+}
+
+/// Builds a bounded, stable read-only projection of the active canvas. AI cannot mutate it.
+pub fn question_json(token: &str, scope: &str, focus: &str, query: &str) -> Result<String, String> {
+    let map = sessions().lock().map_err(|_| "画布服务暂不可用")?;
+    let session = map.get(token).ok_or("画布已关闭，请重新打开")?;
+    let canvas = &session.store.canvases[session.store.active_index()];
+    let projection = question::build(canvas, session.store.revision, query, scope, focus)?;
+    serde_json::to_string(&projection).map_err(|_| "画布问答资料整理失败".into())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_ofairyo_gridtimer_ui_KnowledgeCanvasNative_question(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    token: jni::objects::JString,
+    scope: jni::objects::JString,
+    focus: jni::objects::JString,
+    query: jni::objects::JString,
+) -> jni::sys::jstring {
+    let result = (|| {
+        let token: String = env.get_string(&token).map_err(|_| "画布会话无效")?.into();
+        let scope: String = env.get_string(&scope).map_err(|_| "提问范围无效")?.into();
+        let focus: String = env.get_string(&focus).map_err(|_| "卡片范围无效")?.into();
+        let query: String = env.get_string(&query).map_err(|_| "问题无效")?.into();
+        question_json(&token, &scope, &focus, &query)
+    })();
+    jni_result(&env, result)
 }
 
 #[no_mangle]
