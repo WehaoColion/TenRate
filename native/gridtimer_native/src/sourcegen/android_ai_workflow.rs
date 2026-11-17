@@ -1767,7 +1767,9 @@ private fun KnowledgeAiDialog(
                                 maxLines = 1)
                         }
                     }
-                    if (showChatHistory && !agentMode) {
+                    if (agentMode) {
+                        // Agent workspace is projected by the Rust renderer.
+                    } else if (showChatHistory) {
                         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             item {
