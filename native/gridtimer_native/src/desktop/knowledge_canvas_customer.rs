@@ -231,7 +231,7 @@ impl TimerWindowsClient {
         });
     }
 
-    fn ui_knowledge_canvas_customer_inspector(&mut self, ctx: &egui::Context) {
+    fn ui_knowledge_canvas_customer_inspector(&mut self, ctx: &egui::Context, canvas_top: f32) {
         let selected = self.desktop_ui.knowledge_canvas.selected_nodes.first().cloned();
         let Some(node) = selected.and_then(|id| self.desktop_ui.knowledge_canvas.store
             .active().and_then(|canvas| canvas.nodes.iter().find(|n| n.id == id)).cloned())
@@ -251,7 +251,15 @@ impl TimerWindowsClient {
         let mut action: Option<Value> = None;
         let mut new_child: Option<String> = None;
         let compact = ctx.screen_rect().width() < 900.0;
-        let inspector_y = if ctx.screen_rect().height() < 650.0 { 72.0 } else { 212.0 };
+        // A compact inspector must begin below the entire wrapping canvas
+        // toolbar. Anchoring it to the canvas top prevents tool occlusion.
+        let inspector_y = if compact {
+            canvas_top.max(155.0)
+        } else if ctx.screen_rect().height() < 650.0 {
+            72.0
+        } else {
+            212.0
+        };
         let inspector_height = (ctx.screen_rect().height() - inspector_y - 52.0).max(160.0);
         let inspector = egui::Window::new("客户资料与收付款")
             .id(egui::Id::new(("knowledge_canvas_customer_inspector", &node.id)))
