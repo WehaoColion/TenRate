@@ -175,22 +175,30 @@ impl TimerWindowsClient {
                         self.finance_workbench.pending_delete = None;
                     }
                 }
-                ui.menu_button("更多报表", |ui| {
+                let more_reports = ui.menu_button("更多报表", |ui| {
                     for (tab, title) in [
                         (3, "季度汇总"),
                         (4, "年度汇总"),
                         (6, "月度参数"),
                     ] {
-                        if ui
-                            .selectable_label(self.finance_workbench.tab == tab, title)
-                            .clicked()
-                        {
+                        let option = ui.selectable_label(self.finance_workbench.tab == tab, title);
+                        #[cfg(test)]
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(egui::Id::new(("finance_tab", tab)), option.rect);
+                        });
+                        if option.clicked() {
                             self.finance_workbench.tab = tab;
                             self.finance_workbench.pending_delete = None;
                             ui.close_menu();
                         }
                     }
                 });
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(egui::Id::new("finance_more_reports"), more_reports.response.rect);
+                });
+                #[cfg(not(test))]
+                let _ = more_reports;
             });
             if let Some(field) = self.finance_workbench.money_drafts.first_invalid() {
                 ui.colored_label(
