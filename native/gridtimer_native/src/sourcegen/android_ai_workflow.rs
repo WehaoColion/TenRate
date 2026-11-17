@@ -1,3 +1,4 @@
+// v2.23.4.19 - Reading-first full-screen AI workspace; separate history and compact composer.
 // v2.23.2.24 - Bind document sources to a fresh readable target and isolate projection failures.
 // v2.23.2.23 - Bind review mode and verified draft state to the save boundary.
 // v2.23.2.20 - Show every sticky note and preserve complete legacy-note previews.
@@ -780,6 +781,17 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
                 "org.json.JSONObject",
                 "androidx.compose.material3.Checkbox",
                 "androidx.compose.material3.OutlinedTextField",
+                "androidx.compose.material3.DropdownMenu",
+                "androidx.compose.material3.DropdownMenuItem",
+                "androidx.compose.material3.Button",
+                "androidx.compose.material3.IconButton",
+                "androidx.compose.ui.graphics.RectangleShape",
+                "androidx.compose.ui.window.DialogWindowProvider",
+                "androidx.compose.ui.platform.LocalView",
+                "androidx.compose.runtime.SideEffect",
+                "androidx.compose.runtime.snapshotFlow",
+                "androidx.activity.compose.rememberLauncherForActivityResult",
+                "androidx.activity.result.contract.ActivityResultContracts",
                 "androidx.compose.runtime.mutableStateMapOf",
             ] {
                 let statement = format!("import {import}\n");
@@ -1155,6 +1167,9 @@ private fun KnowledgeAiDialog(
         mutableStateMapOf<String, List<android.net.Uri>>()
     }
     var showChatHistory by remember(workspaceKey, historyOwner) { mutableStateOf(false) }
+    var showAiActions by remember(workspaceKey, historyOwner) { mutableStateOf(false) }
+    var showAiModes by remember(workspaceKey, historyOwner) { mutableStateOf(false) }
+    var followNewest by remember(workspaceKey, historyOwner) { mutableStateOf(true) }
     var savingConversation by remember(workspaceKey, historyOwner) { mutableStateOf(false) }
     LaunchedEffect(historyOwner) {
         val restored = withContext(Dispatchers.IO) {
@@ -1199,10 +1214,24 @@ private fun KnowledgeAiDialog(
     var answerSources by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf<List<KnowledgeSourceCandidate>>(emptyList()) }
     var statusText by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf("") }
     var busy by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
-    LaunchedEffect(conversation.size, busy) {
+    // A manual upward scroll pauses following new replies. Only a user-initiated
+    // return to the end re-enables follow mode; rendering must not steal reading position.
+    LaunchedEffect(messageListState) {
+        snapshotFlow {
+            messageListState.isScrollInProgress to
+                (messageListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) to
+                messageListState.layoutInfo.totalItemsCount
+        }.collect { (movingAndLast, count) ->
+            val (moving, lastVisible) = movingAndLast
+            if (moving && count > 0) followNewest = lastVisible >= count - 2
+        }
+    }
+    LaunchedEffect(conversation.size, busy, showChatHistory, agentMode) {
         withFrameNanos { }
         val last = messageListState.layoutInfo.totalItemsCount - 1
-        if (!agentMode && last >= 0) messageListState.animateScrollToItem(last)
+        if (!agentMode && !showChatHistory && followNewest && last >= 0) {
+            messageListState.animateScrollToItem(last)
+        }
     }
     var cancelling by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
     var agentBusy by remember(workspaceKey, identity, priorityNoteId) { mutableStateOf(false) }
@@ -1448,6 +1477,7 @@ private fun KnowledgeAiDialog(
         activeChatId = UUID.randomUUID().toString()
         question = ""; selectedImageUris = emptyList()
         showChatHistory = false
+        followNewest = true
         invalidateAnswer()
         statusText = "新对话已开始，旧对话仍在历史记录中。"
     }
@@ -1461,6 +1491,7 @@ private fun KnowledgeAiDialog(
         activeChatId = chat.id
         question = ""; selectedImageUris = emptyList()
         showChatHistory = false
+        followNewest = true
         invalidateAnswer()
         statusText = "已恢复 " + chat.turns.size + " 轮完整对话。"
     }
@@ -1643,59 +1674,130 @@ private fun KnowledgeAiDialog(
         }
     }
 
-    Dialog(onDismissRequest = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Box(modifier = Modifier.fillMaxSize().padding(8.dp).imePadding().navigationBarsPadding()
+    val addQuestionImages = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        if (!busy && !agentBusy && uris.isNotEmpty()) {
+            invalidateAnswer()
+            selectedImageUris = (selectedImageUris + uris).distinct().take(5)
+            if (question.isBlank()) question = "请分析这些图片"
+        }
+    }
+    Dialog(onDismissRequest = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect { dialogWindow?.setDimAmount(0f) }
+        Box(modifier = Modifier.fillMaxSize().imePadding().navigationBarsPadding()
             .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))) {
-        Surface(modifier = Modifier.fillMaxWidth().fillMaxHeight(), shape = RoundedCornerShape(24.dp), color = flowusPanelBackground(), border = BorderStroke(1.dp, flowusBorderColor())) {
-          Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (agentMode) "AI Agent" else "AI 问答", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (!agentMode) {
-                                TextButton(enabled = !busy && !savingConversation && pendingTurn == null,
-                                    onClick = { showChatHistory = !showChatHistory }) { Text("历史") }
-                                TextButton(enabled = !busy && !savingConversation && pendingTurn == null,
-                                    onClick = ::beginNewConversation) { Text("新对话") }
+            Surface(modifier = Modifier.fillMaxSize(), shape = RectangleShape,
+                color = flowusPanelBackground()) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = {
+                            if (showChatHistory) showChatHistory = false
+                            else { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() }
+                        }) { Text("‹ 返回") }
+                        Text(if (showChatHistory && !agentMode) "历史对话"
+                            else if (agentMode) "任务 Agent" else "AI 问答",
+                            style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f), maxLines = 1)
+                        if (!agentMode && !showChatHistory) {
+                            TextButton(enabled = !busy && !savingConversation && pendingTurn == null,
+                                onClick = { showChatHistory = true }) { Text("历史") }
+                            TextButton(enabled = !busy && !savingConversation && pendingTurn == null,
+                                onClick = ::beginNewConversation) { Text("新建") }
+                        }
+                        Box {
+                            TextButton(onClick = { showAiActions = true }) { Text("⋯") }
+                            DropdownMenu(expanded = showAiActions,
+                                onDismissRequest = { showAiActions = false }) {
+                                DropdownMenuItem(text = { Text("保存整段对话为知识页") },
+                                    enabled = !agentMode && currentChat != null &&
+                                        historyReady && historyError.isBlank() &&
+                                        !busy && !savingConversation && pendingTurn == null,
+                                    onClick = { showAiActions = false; saveWholeConversation() })
+                                DropdownMenuItem(text = { Text("打开关联知识页") },
+                                    enabled = !agentMode && currentChat?.pageId != null &&
+                                        !savingConversation && pendingTurn == null,
+                                    onClick = {
+                                        showAiActions = false
+                                        currentChat?.pageId?.let(onOpenConversationPage)
+                                    })
+                                DropdownMenuItem(text = { Text(if (showSendingContent) "隐藏发送资料" else "查看发送资料") },
+                                    enabled = !agentBusy,
+                                    onClick = { showAiActions = false; showSendingContent = !showSendingContent })
+                                DropdownMenuItem(text = { Text("AI 设置") }, onClick = {
+                                    showAiActions = false; boundary.invalidate()
+                                    onDismiss(); onOpenAiSettings()
+                                })
                             }
-                            CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { if (agentBusy) stopAgent("已关闭 Agent 面板"); onDismiss() })
                         }
                     }
+                    if (!showChatHistory) {
+                        Row(modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                TextButton(onClick = { showAiModes = true },
+                                    enabled = !busy && !agentBusy && !savingConversation && pendingTurn == null) {
+                                    Text((if (agentMode) "任务 Agent" else if (queryMode == KnowledgeAiMode.KNOWLEDGE)
+                                        "问知识库" else "直接问 AI") + " ⌄")
+                                }
+                                DropdownMenu(expanded = showAiModes,
+                                    onDismissRequest = { showAiModes = false }) {
+                                    DropdownMenuItem(text = { Text("直接问 AI") }, onClick = {
+                                        showAiModes = false; setAgentMode(false)
+                                        changeMode(KnowledgeAiMode.DIRECT)
+                                    })
+                                    DropdownMenuItem(text = { Text("问知识库") }, onClick = {
+                                        showAiModes = false; setAgentMode(false)
+                                        changeMode(KnowledgeAiMode.KNOWLEDGE)
+                                    })
+                                    DropdownMenuItem(text = { Text("任务 Agent") }, onClick = {
+                                        showAiModes = false; setAgentMode(true)
+                                    })
+                                }
+                            }
+                            Text(configuration.model.ifBlank { "未配置模型" }.take(20),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1)
+                        }
+                    }
+                    if (showChatHistory && !agentMode) {
+                        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item {
+                                Text("本机加密保存的对话", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 8.dp))
+                            }
+                            if (chatSessions.isEmpty()) {
+                                item { Text("暂无历史对话", style = MaterialTheme.typography.bodyMedium) }
+                            }
+                            items(chatSessions, key = { "history-" + it.id }) { chat ->
+                                Surface(shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                    modifier = Modifier.fillMaxWidth().clickable(
+                                        enabled = !busy && !savingConversation && pendingTurn == null) {
+                                        openHistoricalConversation(chat)
+                                    }) {
+                                    Column(Modifier.fillMaxWidth().padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Text(chat.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                            fontWeight = FontWeight.Medium)
+                                        Text(chat.turns.size.toString() + " 轮" +
+                                            if (chat.pageId != null) " · 已关联知识页" else "",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
             LazyColumn(state = messageListState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (!agentMode && showChatHistory) {
-                    item { Text("历史对话 · 本机加密保存", fontWeight = FontWeight.SemiBold) }
-                    items(chatSessions, key = { "history-" + it.id }) { chat ->
-                        TextButton(
-                            enabled = !busy && !savingConversation && pendingTurn == null,
-                            onClick = { openHistoricalConversation(chat) }
-                        ) {
-                            Column {
-                                Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(chat.turns.size.toString() + " 轮" +
-                                    if (chat.pageId != null) " · 已关联知识页" else "",
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                    if (chatSessions.isEmpty()) item { Text("暂无历史对话。") }
-                }
-                item {
-                    TextButton(
-                        enabled = !busy && !savingConversation && pendingTurn == null,
-                        onClick = { boundary.invalidate(); onDismiss(); onOpenAiSettings() }
-                    ) {
-                        Text(if (configuration.testable) "${configuration.model} · ${configuration.recipientHost} · 设置" else "配置 DeepSeek / 其他 AI", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                item {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ChoicePill(text = "直接问 AI", selected = !agentMode && queryMode == KnowledgeAiMode.DIRECT, accent = notesAccentColor,
-                            onClick = { setAgentMode(false); changeMode(KnowledgeAiMode.DIRECT) })
-                        ChoicePill(text = "问知识库", selected = !agentMode && queryMode == KnowledgeAiMode.KNOWLEDGE, accent = accentFor("blue"),
-                            onClick = { setAgentMode(false); changeMode(KnowledgeAiMode.KNOWLEDGE) })
-                        ChoicePill(text = "任务 Agent", selected = agentMode, accent = accentFor("green"),
-                            onClick = { setAgentMode(true) })
-                    }
-                }
                 if (agentMode || queryMode == KnowledgeAiMode.KNOWLEDGE) item {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (selectedFolderId != null) ChoicePill(text = selectedFolderName ?: "当前文档库", selected = searchScope == KnowledgeSearchScope.CURRENT_FOLDER, accent = notesAccentColor,
@@ -1791,22 +1893,6 @@ private fun KnowledgeAiDialog(
                 if (statusText.isNotBlank()) item {
                     Text(statusText, style = MaterialTheme.typography.bodyMedium, color = if (answer.isBlank() && !busy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
                 }
-                if (!agentMode && conversation.isNotEmpty()) item {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("本次对话共 " + conversation.size + " 轮，完整文字记录保留在本机。",
-                            style = MaterialTheme.typography.bodySmall)
-                        PhysicalButton(label = if (savingConversation) "正在核验知识页保存"
-                                else "保存整段对话为一个知识页",
-                            icon = Icons.Rounded.SaveAlt, accent = notesAccentColor, filled = true,
-                            enabled = historyReady && historyError.isBlank() && !busy &&
-                                !savingConversation && pendingTurn == null && !agentBusy,
-                            modifier = Modifier.fillMaxWidth(), onClick = ::saveWholeConversation)
-                        val linked = currentChat?.pageId
-                        if (linked != null) TextButton(
-                            onClick = { onOpenConversationPage(linked) },
-                            enabled = !savingConversation && pendingTurn == null && !busy) { Text("查看关联知识页") }
-                    }
-                }
                 if (!agentMode) {
                     items(conversation, key = { "turn-${it.id}" }) { entry ->
                         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1835,7 +1921,7 @@ private fun KnowledgeAiDialog(
                                     Toast.makeText(context, "已复制回答原文", Toast.LENGTH_SHORT).show()
                                 }) { Text("复制回答") }
                                 TextButton(enabled = !busy && !agentBusy && !savingConversation && pendingTurn == null,
-                                    onClick = { onSaveAnswer(entry.turn.question, entry.turn.answer, entry.sources) }) { Text("单独保存本轮") }
+                                    onClick = { onSaveAnswer(entry.turn.question, entry.turn.answer, entry.sources) }) { Text("存为知识页") }
                             }
                             entry.sources.forEachIndexed { index, source ->
                                 KnowledgeSourceCard(source, index + 1) {
