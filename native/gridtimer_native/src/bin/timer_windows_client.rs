@@ -7322,7 +7322,10 @@ impl TimerWindowsClient {
                         p.good
                     };
                     status_dot(ui, status_color);
-                    let status = desktop_status_for_tab(&self.status, self.tab, status_is_error);
+                    let document_open = matches!(self.tab, AppTab::Notes | AppTab::Knowledge)
+                        && self.desktop_ui.navigation.editor_visible;
+                    let status =
+                        desktop_status_for_tab(&self.status, document_open, status_is_error);
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(status)
