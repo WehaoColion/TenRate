@@ -781,6 +781,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
                 "org.json.JSONObject",
                 "androidx.compose.material3.Checkbox",
                 "androidx.compose.material3.OutlinedTextField",
+                "androidx.compose.foundation.layout.PaddingValues",
                 "androidx.compose.material3.DropdownMenu",
                 "androidx.compose.material3.DropdownMenuItem",
                 "androidx.compose.material3.Button",
