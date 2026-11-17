@@ -140,6 +140,9 @@ pub(super) fn build(
         selected.len(), client_count, total_paid, total_pending, due_count,
         referral_edges.len(), link_edges.len()
     );
+    if truncated {
+        facts.push_str("注意：仅选取前20张相关卡片提供证据，不能将该样本宣称为全部卡片；全量金额和数量仍包含选定范围内所有节点。");
+    }
     if payment_question {
         facts.push_str("待付款客户及对应金额（按金额降序；仅列示前 20 名）：");
         let mut dues: Vec<(&str, i64)> = canvas.nodes.iter()
