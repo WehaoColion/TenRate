@@ -40,9 +40,11 @@ impl TimerWindowsClient {
         let canvas_visible = !editing
             && !self.knowledge_trash_mode
             && self.knowledge_view == KnowledgeCollectionView::Canvas;
+        // Keep the canvas spacious in ordinary desktop windows. The
+        // directory remains available through its explicit drawer control.
         let navigator = !self.desktop_ui.experience.navigator_hidden
             && !self.desktop_ui.experience.focus_mode
-            && width >= 880.0;
+            && width >= if canvas_visible { 1320.0 } else { 880.0 };
         let inspector = editing && self.desktop_ui.experience.inspector.is_some();
         let docked = inspector
             && width
