@@ -118,7 +118,7 @@ fn run(dir: &Path) -> Result<String, String> {
             continue;
         }
         if matches_any(&ui, &["AI 问答", "AI Q&A", "AI chat"]) &&
-            matches_any(&ui, &["新建", "New chat"]) &&
+            matches_any(&ui, &["新建", "New chat", "New"]) &&
             matches_any(&ui, &["历史", "History"]) &&
             matches_any(&ui, &["发送", "Send"]) { break; }
         if tap_label(&["AI chat", "Start chat", "AI 问答", "AI 对话", "开始对话"])? { continue; }
@@ -133,7 +133,7 @@ fn run(dir: &Path) -> Result<String, String> {
     let opened = dump()?;
     capture(dir, "02_ai_reading");
     if !(matches_any(&opened, &["AI 问答", "AI Q&A", "AI chat"]) &&
-        matches_any(&opened, &["新建", "New chat"]) &&
+        matches_any(&opened, &["新建", "New chat", "New"]) &&
         matches_any(&opened, &["历史", "History"]) &&
         matches_any(&opened, &["发送", "Send"])) {
         return Err("Reading-first AI page, history, new-chat or composer is missing".into());
@@ -164,19 +164,19 @@ fn run(dir: &Path) -> Result<String, String> {
     let back_to_chat = dump()?;
     capture(dir, "05_back_to_reading");
     if !matches_any(&back_to_chat, &["发送", "Send"]) ||
-        !matches_any(&back_to_chat, &["新建", "New chat"]) {
+        !matches_any(&back_to_chat, &["新建", "New chat", "New"]) {
         return Err("History navigation lost the active conversation".into());
     }
     if !tap_label(&["⋯"])? { return Err("Contextual actions menu missing".into()); }
     let actions = dump()?;
     capture(dir, "06_context_menu");
-    if !matches_any(&actions, &["保存整段对话为知识页", "Save entire conversation"]) ||
+    if !matches_any(&actions, &["保存整段对话为知识页", "Save entire conversation", "Save all conversation", "Save conversation"]) ||
         !matches_any(&actions, &["AI 设置", "AI Settings"]) {
         return Err("Archive and settings were not moved to contextual actions".into());
     }
     cmd(&["shell", "input", "keyevent", "4"])?;
     sleep(Duration::from_millis(500));
-    if !tap_label(&["新建", "New chat"])? { return Err("New chat action not tappable".into()); }
+    if !tap_label(&["新建", "New chat", "New"])? { return Err("New chat action not tappable".into()); }
     capture(dir, "07_new_chat");
     if !matches_any(&dump()?, &["发送", "Send"]) {
         return Err("Creating new conversation lost the composer".into());
