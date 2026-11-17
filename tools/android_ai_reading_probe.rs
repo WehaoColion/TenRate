@@ -70,6 +70,30 @@ fn tap_label(labels: &[&str]) -> Result<bool, String> {
     }
     Ok(false)
 }
+fn matches_any(ui: &str, labels: &[&str]) -> bool {
+    labels.iter().any(|s| ui.contains(s))
+}
+fn dismiss_system_overlay(ui: &str) -> Result<bool, String> {
+    // An unresponsive emulator Pixel Launcher is not the app under test.
+    // Its modal alert blocks all accessibility navigation until dismissed.
+    if ui.contains("Pixel Launcher isn&#39;t responding") ||
+        ui.contains("Pixel Launcher isn't responding") ||
+        ui.contains("Pixel Launcher is not responding") {
+        if !tap_label(&["Close app", "关闭应用", "关闭"]) ? {
+            return Err("Pixel Launcher ANR overlay could not be dismissed".into());
+        }
+        cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
+        sleep(Duration::from_secs(2));
+        return Ok(true);
+    }
+    if ui.contains("Allow tenfold to send you notifications") {
+        if !tap_label(&["Allow", "允许"]) ? {
+            return Err("Notification permission dialog blocked navigation".into());
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
 fn capture(dir: &Path, label: &str) {
     if let Ok(xml) = dump() { let _ = fs::write(dir.join(format!("{label}.xml")), xml); }
     if let Ok(output) = adb(&["exec-out", "screencap", "-p"]) {
@@ -87,21 +111,31 @@ fn run(dir: &Path) -> Result<String, String> {
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     capture(dir, "01_app_started");
-    for _ in 0..16 {
+    for step in 0..24 {
         let ui = dump()?;
-        if (ui.contains("新建") || ui.contains("New chat")) &&
-            (ui.contains("历史") || ui.contains("History")) { break; }
+        if dismiss_system_overlay(&ui)? {
+            capture(dir, &format!("dismissed_system_{step}"));
+            continue;
+        }
+        if matches_any(&ui, &["AI 问答", "AI Q&A", "AI chat"]) &&
+            matches_any(&ui, &["新建", "New chat"]) &&
+            matches_any(&ui, &["历史", "History"]) &&
+            matches_any(&ui, &["发送", "Send"]) { break; }
         if tap_label(&["AI chat", "Start chat", "AI 问答", "AI 对话", "开始对话"])? { continue; }
         if tap_label(&["知识", "Knowledge", "Notes"])? { continue; }
-        if tap_label(&["文档库", "页面与文件夹"])? { continue; }
+        if tap_label(&["文档库", "页面与文件夹", "Document library"])? { continue; }
+        if step % 4 == 3 {
+            capture(dir, &format!("navigation_{step}"));
+        }
         cmd(&["shell", "input", "swipe", "500", "1700", "500", "650", "430"])?;
-        sleep(Duration::from_millis(500));
+        sleep(Duration::from_millis(600));
     }
     let opened = dump()?;
     capture(dir, "02_ai_reading");
-    if !((opened.contains("AI 问答") || opened.contains("AI chat")) &&
-        opened.contains("新建") && opened.contains("历史") &&
-        opened.contains("发送")) {
+    if !(matches_any(&opened, &["AI 问答", "AI Q&A", "AI chat"]) &&
+        matches_any(&opened, &["新建", "New chat"]) &&
+        matches_any(&opened, &["历史", "History"]) &&
+        matches_any(&opened, &["发送", "Send"])) {
         return Err("Reading-first AI page, history, new-chat or composer is missing".into());
     }
     if opened.contains("保存全部 ") || opened.contains("模型上下文最多取最近") {
@@ -109,17 +143,18 @@ fn run(dir: &Path) -> Result<String, String> {
     }
     // A blank prompt must be blocked, even if a child text node's accessibility
     // metadata reports enabled=true while its Material3 parent button is disabled.
-    if !tap_label(&["发送"])? { return Err("Compact send affordance is not visible".into()); }
+    if !tap_label(&["发送", "Send"])? { return Err("Compact send affordance is not visible".into()); }
     let after_empty = dump()?;
     capture(dir, "03_empty_send_blocked");
-    if !after_empty.contains("发送") || after_empty.contains("正在回答") ||
+    if !matches_any(&after_empty, &["发送", "Send"]) || after_empty.contains("正在回答") ||
         after_empty.contains("停止回答") {
         return Err("Blank question unexpectedly started a model request".into());
     }
     if !tap_label(&["历史", "History"])? { return Err("History action is not tappable".into()); }
     let in_history = dump()?;
     capture(dir, "04_history_separate");
-    if !in_history.contains("历史对话") || !in_history.contains("本机加密保存的对话") {
+    if !matches_any(&in_history, &["历史对话", "Chat history"]) ||
+        !matches_any(&in_history, &["本机加密保存的对话", "Locally encrypted conversations"]) {
         return Err("Separate history screen was not displayed".into());
     }
     if in_history.contains("继续追问…") || in_history.contains("输入问题…") {
@@ -128,20 +163,22 @@ fn run(dir: &Path) -> Result<String, String> {
     if !tap_label(&["‹ 返回", "返回"])? { return Err("Cannot return from history".into()); }
     let back_to_chat = dump()?;
     capture(dir, "05_back_to_reading");
-    if !back_to_chat.contains("发送") || !back_to_chat.contains("新建") {
+    if !matches_any(&back_to_chat, &["发送", "Send"]) ||
+        !matches_any(&back_to_chat, &["新建", "New chat"]) {
         return Err("History navigation lost the active conversation".into());
     }
     if !tap_label(&["⋯"])? { return Err("Contextual actions menu missing".into()); }
     let actions = dump()?;
     capture(dir, "06_context_menu");
-    if !actions.contains("保存整段对话为知识页") || !actions.contains("AI 设置") {
+    if !matches_any(&actions, &["保存整段对话为知识页", "Save entire conversation"]) ||
+        !matches_any(&actions, &["AI 设置", "AI Settings"]) {
         return Err("Archive and settings were not moved to contextual actions".into());
     }
     cmd(&["shell", "input", "keyevent", "4"])?;
     sleep(Duration::from_millis(500));
     if !tap_label(&["新建", "New chat"])? { return Err("New chat action not tappable".into()); }
     capture(dir, "07_new_chat");
-    if !dump()?.contains("发送") {
+    if !matches_any(&dump()?, &["发送", "Send"]) {
         return Err("Creating new conversation lost the composer".into());
     }
     if cmd(&["shell", "pidof", PACKAGE])?.trim().is_empty() {
