@@ -729,7 +729,7 @@ impl TimerWindowsClient {
         self.draw_knowledge_canvas_edges(ui, board_rect, canvas_index);
         self.draw_knowledge_canvas_nodes(ui, board_rect, canvas_index);
         self.draw_knowledge_canvas_overview(ui, board_rect, canvas_index);
-        self.ui_knowledge_canvas_customer_inspector(ui.ctx());
+        self.ui_knowledge_canvas_customer_inspector(ui.ctx(), board_rect.top());
         if ui.is_enabled() {
             self.handle_knowledge_canvas_shortcuts(ui.ctx());
         }
