@@ -3,7 +3,7 @@ use std::{env,fs,path::{Path,PathBuf},process::{Command,Output},thread,time::Dur
 
 const APP: &str = "com.ofairyo.gridtimer";
 #[derive(Clone)]
-struct Node { text:String, description:String, class:String, enabled:bool, bounds:[i32;4] }
+struct Node { text:String, description:String, class:String, bounds:[i32;4] }
 fn adb(args:&[&str])->Result<Output,String>{Command::new("adb").args(args).output().map_err(|e|e.to_string())}
 fn run(args:&[&str])->Result<String,String>{
     let out=adb(args)?;
@@ -23,7 +23,7 @@ fn nodes(xml:&str)->Vec<Node>{
             .filter(|s|!s.is_empty()).filter_map(|s|s.parse().ok()).collect();
         if ints.len()!=4{return None}
         Some(Node{text:attr(head,"text"),description:attr(head,"content-desc"),
-            class:attr(head,"class"),enabled:attr(head,"enabled")=="true",
+            class:attr(head,"class"),
             bounds:[ints[0],ints[1],ints[2],ints[3]]})
     }).collect()
 }
@@ -94,6 +94,24 @@ fn open_canvas(dir:&Path)->Result<(),String>{
     }
     Err("Unable to reach a canvas board from the main app".into())
 }
+// A Material3 button's label can report enabled=true even when the button is
+// disabled. Exercise the guarded action rather than trusting child semantics.
+fn verify_submission_blocked(question:Option<&str>)->Result<(),String>{
+    let send=find(&["发送问题"])?.ok_or("Send button missing")?;
+    tap(&send)?;
+    let tree=xml()?;
+    if !tree.contains("画布问答") || !tree.contains("发送问题") ||
+        tree.contains("正在分析画布") || tree.contains("这轮回答尚未保存") {
+        return Err("A guarded canvas question started or dismissed unexpectedly".into());
+    }
+    match question {
+        Some(value) if !tree.contains(value) =>
+            Err("Blocked submission cleared the unsent question".into()),
+        None if !tree.contains("向这张画布提问") =>
+            Err("Blank submission unexpectedly changed the input".into()),
+        _ => Ok(())
+    }
+}
 fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
     run(&["shell","am","start","-W","-n","com.ofairyo.gridtimer/.MainActivity"])?;
     thread::sleep(Duration::from_secs(7));
@@ -110,8 +128,7 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
         return Err("Question sheet title or scope is missing".into());
     }
     report.push_str("PASS: signed APK opens canvas and displays a scoped question sheet.\n\n");
-    let send=find(&["发送问题"])?.ok_or("Send button missing")?;
-    if send.enabled {return Err("Blank canvas question must never be submittable".into())}
+    verify_submission_blocked(None)?;
     report.push_str("PASS: empty question cannot be sent.\n\n");
     if !tap_label(&["返回画布"])?{return Err("Return to canvas action missing".into())}
     evidence(dir,"04_back_to_canvas");
@@ -127,9 +144,10 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
         evidence(dir,"05_question_entered");
         let current=xml()?;
         if current.contains("尚未配置可用的 AI 服务"){
-            if let Some(send)=find(&["发送问题"])?{
-                if send.enabled{return Err("AI send button enabled without configured service".into())}
-            }
+            // Hide IME before tapping the guarded button.
+            run(&["shell","input","keyevent","4"])?;
+            thread::sleep(Duration::from_millis(500));
+            verify_submission_blocked(Some("HowMuchPending"))?;
             report.push_str("PASS: unconfigured AI connection blocks network submission.\n\n");
         } else {
             report.push_str("INFO: service configuration present or not exposed in this emulator; no paid model calls executed.\n\n");
