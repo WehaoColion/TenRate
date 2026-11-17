@@ -7301,6 +7301,7 @@ impl TimerWindowsClient {
                     let status_lower = self.status.to_ascii_lowercase();
                     let status_is_error = !self.workspace_persistence_ready
                         || self.status.contains("失败")
+                        || self.status.contains("未导出")
                         || self.status.contains("拒绝")
                         || self.status.contains("只读")
                         || self.status.contains("中断")
