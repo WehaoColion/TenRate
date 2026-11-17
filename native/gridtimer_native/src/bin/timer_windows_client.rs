@@ -7321,11 +7321,7 @@ impl TimerWindowsClient {
                         p.good
                     };
                     status_dot(ui, status_color);
-                    let status = if self.status.is_empty() {
-                        "本地数据已就绪"
-                    } else {
-                        &self.status
-                    };
+                    let status = desktop_status_for_tab(&self.status, self.tab, status_is_error);
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(status)
