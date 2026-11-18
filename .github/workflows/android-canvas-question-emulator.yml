@@ -1,4 +1,4 @@
-name: Android 3.0 canvas QA UI emulator acceptance
+name: Android 3.0.1 canvas QA UI emulator acceptance
 
 on:
   push:
@@ -48,9 +48,9 @@ jobs:
           test -s signed_build_run_id.txt
           gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
           cd signed_apk
-          test -f tenfold_v3.0.apk
-          test -f tenfold_v3.0.apk.sha256
-          tr -d '\r' < tenfold_v3.0.apk.sha256 | sha256sum -c -
+          test -f tenfold_v3.0.1.apk
+          test -f tenfold_v3.0.1.apk.sha256
+          tr -d '\r' < tenfold_v3.0.1.apk.sha256 | sha256sum -c -
       - name: Enable KVM acceleration
         shell: bash
         run: |
@@ -71,7 +71,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r signed_apk/tenfold_v3.0.apk
+            adb install -r signed_apk/tenfold_v3.0.1.apk
             ./android_canvas_question_probe canvas_question_evidence
       - name: Attach the actual acceptance result
         if: always()
@@ -86,7 +86,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-canvas-qa-v3.0-emulator-evidence
+          name: android-canvas-qa-v3.0.1-emulator-evidence
           path: |
             canvas_question_evidence/
             signed_build_run_id.txt
