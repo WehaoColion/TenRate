@@ -1,3 +1,4 @@
+// v3.0.2 - Verify result-first route still supports safe canvas navigation.
 // v3.0.1 - Verify visible query scope and mandatory Android editor, not just button text.
 // v3.0 - Full-screen canvas QA, draft restoration and guarded requests on API 35.
 // v2.13.5.13 - API 35 emulator smoke acceptance for canvas AI entry and request guards.
@@ -181,6 +182,9 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
         return Err("Query scope disappeared after collapsing the privacy disclosure".into());
     }
     report.push_str("PASS: query scope remains visible independently of privacy disclosure.\n\n");
+    if find(&["画布问答"])?.is_none() || find(&["发送问题"])?.is_none() {
+        return Err("Compact chat header or accessible send control missing".into());
+    }
     if !tap_label(&["返回画布"])?{return Err("Return to canvas action missing".into())}
     evidence(dir,"04_back_to_canvas");
     if find(&["向这张画布提问"])?.is_none(){
@@ -239,7 +243,7 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
 fn main(){
     let dir=env::args().nth(1).map(PathBuf::from).unwrap_or_else(||PathBuf::from("canvas_question_evidence"));
     fs::create_dir_all(&dir).expect("evidence directory");
-    let mut report=String::from("# Android 3.0.1 canvas question emulator acceptance\n\n");
+    let mut report=String::from("# Android 3.0.2 canvas question emulator acceptance\n\n");
     let result=acceptance(&dir,&mut report);
     if let Err(ref error)=result{
         report.push_str(&format!("FAIL: {error}\n"));
