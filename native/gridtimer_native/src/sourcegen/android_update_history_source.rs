@@ -1,3 +1,4 @@
+// v3.0.1 - Fix explicit scope, safe back handling and new-answer positioning.
 // v3.0 - Compact canvas conversation, provenance and precise money dashboard.
 // v2.13.5.13 - Add read-only canvas AI questions, source navigation and encrypted history.
 // v2.13.5.12 - Unified paper and archival character for knowledge UI.
@@ -78,7 +79,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0";
+pub const LATEST_VERSION: &str = "3.0.1";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -108,6 +109,22 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.1",
+        updatedAt = "2026-11-19 03:03",
+        summary = "修复画布问答重要交互回归，让范围、返回和最新回答更可靠",
+        sections = listOf(
+            AndroidUpdateSection("交互修复", listOf(
+                "提问范围始终可见，不再需要展开隐私说明才能确认是整张画布、当前卡片或关联网络。",
+                "正在分析或回答尚未保存时，返回画布不再没有反应，而会说明风险并提供明确的继续或离开选项。",
+                "提交后正确定位最新回答，缩短待收金额提示，减少对长文本阅读的占用。"
+            )),
+            AndroidUpdateSection("准确性与验收", listOf(
+                "普通的剩余卡片、时间等问题不再误显示待收款金额；本机精确统计与原有历史加密逻辑保留。",
+                "增加真实安卓模拟器对范围选择、输入草稿、系统返回、禁发状态及版本一致性的验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0",
         updatedAt = "2026-11-18 10:01",
@@ -1728,7 +1745,7 @@ mod tests {
         // A requested three-segment milestone denotes its .0 patch release.
         // Compare numerically so 2.23.3 correctly succeeds 2.23.2.59.
         assert!((2..=4).contains(&latest.len()));
-        assert!((3..=4).contains(&previous.len()));
+        assert!((2..=4).contains(&previous.len()));
         let mut latest_normalized = latest.clone();
         let mut previous_normalized = previous.clone();
         latest_normalized.resize(4, 0);
