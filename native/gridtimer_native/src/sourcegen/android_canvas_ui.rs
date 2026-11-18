@@ -2017,6 +2017,7 @@ private fun CanvasQuestionSheet(
         val focus = focusId.orEmpty()
         if (!historyReady || historyError.isNotBlank() || pendingSave != null || busy ||
             typed.isBlank() || typed.length > 1000 || !config.testable ||
+            board.nodes.isEmpty() ||
             model.reply?.canvas?.id != board.id || model.reply?.token.isNullOrEmpty() ||
             (queryScope != "all" && focus.isEmpty())) return
         val requestScope = queryScope
@@ -2130,6 +2131,7 @@ private fun CanvasQuestionSheet(
     var scopeExpanded by remember(board.id) { mutableStateOf(false) }
     val canSend = !busy && historyReady && historyError.isBlank() &&
         pendingSave == null && config.testable && questionText.isNotBlank() &&
+        board.nodes.isNotEmpty() &&
         model.reply?.canvas?.id == board.id && model.reply?.token?.isNotEmpty() == true &&
         (queryScope == "all" || focusId != null)
 
@@ -2192,18 +2194,40 @@ private fun CanvasQuestionSheet(
                     if (history.isEmpty() && pendingSave == null &&
                         historyReady && historyError.isBlank()) {
                         item {
-                            Column(Modifier.fillMaxWidth().padding(top = 28.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Text("✦ 从画布中寻找答案",
-                                    style = MaterialTheme.typography.titleLarge)
-                                Text("提问时会结合当前画布的卡片、关系与允许读取的资料。",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                listOf("还有哪些客户未付款？", "谁推荐了谁？",
-                                    "这张画布记录了什么？").forEach { suggestion ->
-                                    AssistChip(onClick = { onQuestionTextChange(suggestion) },
-                                        enabled = !busy && pendingSave == null,
-                                        label = { Text(suggestion) })
+                            Column(Modifier.fillMaxWidth().fillParentMaxHeight(0.76f)
+                                .padding(horizontal = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center) {
+                                Text("✦", style = MaterialTheme.typography.displaySmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(12.dp))
+                                if (board.nodes.isEmpty()) {
+                                    Text("画布还没有内容",
+                                        style = MaterialTheme.typography.titleLarge)
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("先在画布中添加卡片或知识页面，才能根据实际资料提问。",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(Modifier.height(18.dp))
+                                    OutlinedButton(onClick = onDismiss) { Text("返回画布添加内容") }
+                                } else {
+                                    Text("从画布中寻找答案",
+                                        style = MaterialTheme.typography.titleLarge)
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("根据卡片、关系与允许读取的资料回答，附有来源可定位。",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(Modifier.height(12.dp))
+                                    val suggestions = if (board.template == "customer_network")
+                                        listOf("哪些客户还有待收款项？", "谁推荐了谁？", "概括客户关系网络")
+                                    else listOf("概括这张画布的重点", "哪些卡片之间有关联？", "有哪些事项需要跟进？")
+                                    suggestions.forEach { suggestion ->
+                                        AssistChip(onClick = { onQuestionTextChange(suggestion) },
+                                            enabled = !busy && pendingSave == null,
+                                            label = { Text(suggestion) })
+                                    }
                                 }
                             }
                         }
@@ -2337,8 +2361,9 @@ private fun CanvasQuestionSheet(
                     verticalAlignment = Alignment.Bottom) {
                     OutlinedTextField(value = questionText,
                         onValueChange = { onQuestionTextChange(it.take(1000)) },
-                        enabled = !busy && pendingSave == null && historyError.isBlank(),
-                        placeholder = { Text("继续向画布提问…") },
+                        enabled = !busy && pendingSave == null &&
+                            historyError.isBlank() && board.nodes.isNotEmpty(),
+                        placeholder = { Text(if (board.nodes.isEmpty()) "先添加卡片，再向画布提问" else "继续向画布提问…") },
                         minLines = 1, maxLines = 4,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(20.dp))
