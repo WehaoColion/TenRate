@@ -1,3 +1,4 @@
+// v3.0.2 - Return exact, bounded per-client receivables for a navigable result view.
 // v2.13.5.13 - Read-only, provenance-bearing canvas facts for AI questions.
 // Customer money is computed locally in cents; nothing here edits the board or risk ledger.
 use super::*;
@@ -165,11 +166,31 @@ pub(super) fn build(
         }
         if referral_edges.len() > 20 { facts.push_str("还有其他关系未展开。"); }
     }
+    // A view can show the authoritative clients without parsing AI prose.
+    // This remains local and read-only. Cap the detail list, never the totals.
+    let mut pending_clients: Vec<(&Node, i64)> = canvas.nodes.iter()
+        .filter(|n| selected.contains(&n.id) && n.kind == "client")
+        .map(|n| (n, money::totals(n).1))
+        .filter(|(_, due)| *due > 0)
+        .collect();
+    pending_clients.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.id.cmp(&b.0.id)));
+    const MAX_PENDING_DETAILS: usize = 12;
+    let pending_clients_truncated = pending_clients.len() > MAX_PENDING_DETAILS;
+    let pending_clients: Vec<Value> = pending_clients.into_iter()
+        .take(MAX_PENDING_DETAILS)
+        .map(|(node, due)| json!({
+            "nodeId": node.id,
+            "title": label(node),
+            "pendingCents": due
+        }))
+        .collect();
     Ok(json!({
         "ok":true, "canvasId":canvas.id, "revision":revision, "scope":scope,
         "nodeCount":selected.len(), "clientCount":client_count,
         "totalPaidCents":total_paid, "totalPendingCents":total_pending,
         "pendingClientCount":due_count,
+        "pendingClients":pending_clients,
+        "pendingClientsTruncated":pending_clients_truncated,
         "summary":short(&facts, 4000), "sources":sources, "truncated":truncated
     }))
 }
@@ -195,6 +216,10 @@ mod tests {
         assert_eq!(all["totalPendingCents"], 132000);
         assert_eq!(all["totalPaidCents"], 250000);
         assert_eq!(all["pendingClientCount"], 2);
+        let pending = all["pendingClients"].as_array().expect("client breakdown");
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending.iter().map(|v| v["pendingCents"].as_i64().unwrap()).sum::<i64>(), 132000);
+        assert_eq!(all["pendingClientsTruncated"], false);
         let network = build(&board, 7, "推荐和待收", "network", "甲").unwrap();
         assert_eq!(network["nodeCount"], 2);
         assert_eq!(network["totalPendingCents"], 132000);
@@ -211,5 +236,8 @@ mod tests {
         assert_eq!(all["pendingClientCount"], 60);
         assert_eq!(all["sources"].as_array().unwrap().len(), 20);
         assert_eq!(all["truncated"], true);
+        assert_eq!(all["totalPendingCents"], 6000);
+        assert_eq!(all["pendingClients"].as_array().unwrap().len(), 12);
+        assert_eq!(all["pendingClientsTruncated"], true);
     }
 }
