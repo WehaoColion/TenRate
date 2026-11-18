@@ -1,3 +1,4 @@
+// v3.0.2 - Readable DeepSeek answers, exact local result cards and source-first navigation.
 // v3.0.1 - Render canvas QA as a real full-screen route for reliable IME layout and safe interactions.
 // v3.0.1 - Recover explicit question scope, safe exit, reliable new-answer position, and precise payment intent.
 // v3.0 - Full-screen canvas conversation, compact composer, evidence navigation and exact-money summaries.
@@ -1889,13 +1890,28 @@ private data class CanvasAskReference(
 )
 
 @Serializable
+private data class CanvasAskPendingClient(
+    val nodeId: String, val title: String, val pendingCents: Long
+)
+
+// Raw AI answers stay intact in encrypted history; only their visual
+// presentation suppresses distracting numeric reference markers.
+private fun canvasReadableAnswer(answer: String): String =
+    answer.replace(Regex("""[（(]\s*(?:即\s*)?[0-9,]+(?:\.[0-9]+)?\s*分\s*[）)]"""), "")
+        .replace(Regex("""\[[0-9]{1,3}]"""), "")
+        .replace(Regex("""[ \t]+([，。；、！？])"""), "$1")
+        .trim()
+
+@Serializable
 private data class CanvasAskTurn(
     val question: String, val answer: String, val sourceIds: List<String>,
     val revision: Long,
     // Defaults retain compatibility with encrypted conversations saved before 3.0.
     val references: List<CanvasAskReference> = emptyList(),
     val pendingCents: Long? = null,
-    val pendingClientCount: Int? = null
+    val pendingClientCount: Int? = null,
+    val pendingClients: List<CanvasAskPendingClient> = emptyList(),
+    val pendingClientsTruncated: Boolean = false
 )
 
 // Dedicated account/board-separated encrypted history. A failed decrypt never becomes an empty archive.
@@ -2102,10 +2118,23 @@ private fun CanvasQuestionSheet(
                     // receivables when it is asking about cards, tasks or time.
                     val pendingQuery = Regex("""待付|待收|欠款|欠多少|待付款|未付款|未付金额|未收款|应收款|还剩多少钱|还剩多少款|剩余款项|剩余金额""")
                         .containsMatchIn(typed)
+                    val pendingClients = if (pendingQuery) {
+                        val clients = snapshot.optJSONArray("pendingClients") ?: org.json.JSONArray()
+                        (0 until clients.length()).mapNotNull { index ->
+                            clients.optJSONObject(index)?.let { item ->
+                                val nodeId = item.optString("nodeId")
+                                val amount = item.optLong("pendingCents")
+                                if (nodeId.isBlank() || amount <= 0L) null
+                                else CanvasAskPendingClient(nodeId, item.optString("title"), amount)
+                            }
+                        }
+                    } else emptyList()
                     CanvasAskTurn(typed, response, citedNodeIds,
                         snapshot.getLong("revision"), references,
                         if (pendingQuery) snapshot.getLong("totalPendingCents") else null,
-                        if (pendingQuery) snapshot.getInt("pendingClientCount") else null)
+                        if (pendingQuery) snapshot.getInt("pendingClientCount") else null,
+                        pendingClients,
+                        if (pendingQuery) snapshot.optBoolean("pendingClientsTruncated") else false)
                 }
                 if (currentBoardId != board.id || currentOwner != owner) return@launch
                 pendingSave = answer
