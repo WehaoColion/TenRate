@@ -109,7 +109,7 @@ fn verify_submission_blocked(question:Option<&str>)->Result<(),String>{
     match question {
         Some(value) if !tree.contains(value) =>
             Err("Blocked submission cleared the unsent question".into()),
-        None if !tree.contains("继续向画布提问") =>
+        None if !tree.contains("继续向画布提问") && !tree.contains("先添加卡片") =>
             Err("Blank submission unexpectedly changed the input".into()),
         _ => Ok(())
     }
@@ -122,6 +122,37 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
     if run(&["shell","pidof",APP])?.trim().is_empty(){return Err("App process not running".into())}
     open_canvas(dir)?;
     evidence(dir,"02_canvas");
+    // An untouched blank board must not offer misleading customer questions.
+    if find(&["0 张卡片"])?.is_some() {
+        if !tap_label(&["向这张画布提问"])?{
+            return Err("Canvas ask entry is missing".into());
+        }
+        if find(&["画布还没有内容"])?.is_none() ||
+            find(&["返回画布添加内容"])?.is_none() {
+            return Err("Empty board displays misleading AI suggestions".into());
+        }
+        verify_submission_blocked(None)?;
+        evidence(dir,"02_empty_question");
+        if !tap_label(&["返回画布添加内容"])? {
+            return Err("Empty board cannot return to edit canvas".into());
+        }
+        if !tap_label(&["添加第一张便签"])? {
+            return Err("Cannot create a card to exercise the populated canvas question flow".into());
+        }
+        if !tap_label(&["标题"])? { return Err("New note title field missing".into()); }
+        run(&["shell","input","text","QAProbeCard"])?;
+        run(&["shell","input","keyevent","4"])?;
+        thread::sleep(Duration::from_millis(350));
+        if !tap_label(&["创建"])? { return Err("Create note action missing".into()); }
+        let mut created=false;
+        for _ in 0..10 {
+            if find(&["1 张卡片"])?.is_some() { created=true; break; }
+            thread::sleep(Duration::from_millis(500));
+        }
+        if !created { return Err("Creating a canvas card did not update the board".into()); }
+        report.push_str("PASS: empty board blocks queries and adding a card unlocks the relevant UI.\n\n");
+        evidence(dir,"02_card_created");
+    }
     if !tap_label(&["向这张画布提问"])?{return Err("Canvas ask entry is missing".into())}
     thread::sleep(Duration::from_millis(600));
     evidence(dir,"03_question_sheet");
@@ -155,7 +186,20 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
     tap(&field)?;
         run(&["shell","input","text","HowMuchPending"])?;
         thread::sleep(Duration::from_millis(500));
+        // 3.0's full-screen Dialog pan caused the toolbar and title to
+        // collapse to [0,0][0,0] when the IME appeared.
+        let visibleTitle=find(&["画布问答"])?
+            .ok_or("Keyboard panned the full-screen chat header off-screen")?;
+        let visibleBack=find(&["返回画布"])?
+            .ok_or("Keyboard removed the canvas return control from the viewport")?;
+        let visibleSend=find(&["发送问题"])?
+            .ok_or("Keyboard obscured the send control")?;
+        if visibleTitle.bounds[3] <= visibleBack.bounds[1] ||
+            visibleSend.bounds[1] <= visibleTitle.bounds[3] {
+            return Err("Keyboard collapsed or overlapped the conversation layout".into());
+        }
         evidence(dir,"05_question_entered");
+        report.push_str("PASS: opening the keyboard keeps the header, return and composer visible.\n\n");
         run(&["shell","input","keyevent","4"])?;
         thread::sleep(Duration::from_millis(450));
         if !tap_label(&["返回画布"])?{return Err("Cannot close QA with unsent draft".into())}
