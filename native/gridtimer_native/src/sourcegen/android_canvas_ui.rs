@@ -2293,7 +2293,7 @@ private fun CanvasQuestionSheet(
                                     modifier = Modifier.fillMaxWidth()) {
                                     Column(Modifier.fillMaxWidth().padding(16.dp),
                                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("当前画布 · 待收款合计",
+                                        Text("本次查询范围 · 待收款合计",
                                             style = MaterialTheme.typography.labelMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Text(canvasYuan(cents),
@@ -2337,6 +2337,7 @@ private fun CanvasQuestionSheet(
                                                 TextButton(onClick = { showAllClients = !showAllClients },
                                                     contentPadding = PaddingValues(0.dp)) {
                                                     Text(if (showAllClients) "收起明细"
+                                                        else if (turn.pendingClientsTruncated) "查看前 ${turn.pendingClients.size} 位客户明细"
                                                         else "查看 ${turn.pendingClients.size} 位客户的明细")
                                                 }
                                             }
