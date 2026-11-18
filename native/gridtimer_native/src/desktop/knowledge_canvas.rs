@@ -729,7 +729,7 @@ impl TimerWindowsClient {
         self.draw_knowledge_canvas_edges(ui, board_rect, canvas_index);
         self.draw_knowledge_canvas_nodes(ui, board_rect, canvas_index);
         self.draw_knowledge_canvas_overview(ui, board_rect, canvas_index);
-        self.ui_knowledge_canvas_customer_inspector(ui.ctx());
+        self.ui_knowledge_canvas_customer_inspector(ui.ctx(), board_rect.top());
         if ui.is_enabled() {
             self.handle_knowledge_canvas_shortcuts(ui.ctx());
         }
@@ -790,6 +790,9 @@ impl TimerWindowsClient {
     fn ui_knowledge_canvas_toolbar(&mut self, ui: &mut egui::Ui) {
         let p = palette();
         ui.horizontal(|ui| {
+            if ui.button("目录").on_hover_text("展开知识目录").clicked() {
+                self.toggle_knowledge_navigator(ui.ctx().screen_rect().width());
+            }
             for view in [
                 KnowledgeCollectionView::Recent,
                 KnowledgeCollectionView::Board,
@@ -1038,41 +1041,49 @@ impl TimerWindowsClient {
                 state.referral_mode = false;
                 state.connect_from = None;
             }
-            if ui.button(if self.desktop_ui.knowledge_canvas.referral_mode {
-                "推荐连接中"
-            } else {
-                "推荐连接"
-            }).on_hover_text("先点推荐人，再点被推荐客户；只允许唯一上级且不能成环").clicked() {
-                let state = &mut self.desktop_ui.knowledge_canvas;
-                state.referral_mode = !state.referral_mode;
-                state.connect_mode = state.referral_mode;
-                state.connect_from = None;
-            }
-            if ui.button("推荐层级排布").clicked() {
-                self.knowledge_canvas_arrange_referrals();
-                ui.ctx().data_mut(|data| {
-                    data.insert_temp(egui::Id::new("knowledge_canvas_fit_requested"), true)
-                });
-            }
-            if ui.button("新客户画布").clicked() {
-                if self.desktop_ui.knowledge_canvas.store.new_canvas("客户网络") {
-                    if let Some(canvas) = self.desktop_ui.knowledge_canvas.store.active_mut() {
-                        canvas.template = "customer_network".into();
-                    }
-                    self.reset_knowledge_canvas_interaction();
-                    self.mark_knowledge_canvas_dirty();
+            // Advanced customer relations and layout commands should not
+            // compete with everyday editing, selection and zooming.
+            ui.menu_button("关系与排布", |ui| {
+                if ui.button(if self.desktop_ui.knowledge_canvas.referral_mode {
+                    "推荐连接中"
+                } else {
+                    "推荐连接"
+                }).on_hover_text("先点推荐人，再点被推荐客户；只允许唯一上级且不能成环").clicked() {
+                    let state = &mut self.desktop_ui.knowledge_canvas;
+                    state.referral_mode = !state.referral_mode;
+                    state.connect_mode = state.referral_mode;
+                    state.connect_from = None;
+                    ui.close_menu();
                 }
-            }
-            if ui
-                .button("自动排布")
-                .on_hover_text("按阅读顺序整理卡片")
-                .clicked()
-            {
-                self.knowledge_canvas_auto_layout();
-                ui.ctx().data_mut(|data| {
-                    data.insert_temp(egui::Id::new("knowledge_canvas_fit_requested"), true)
-                });
-            }
+                if ui.button("推荐层级排布").clicked() {
+                    self.knowledge_canvas_arrange_referrals();
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("knowledge_canvas_fit_requested"), true)
+                    });
+                    ui.close_menu();
+                }
+                if ui.button("新客户画布").clicked() {
+                    if self.desktop_ui.knowledge_canvas.store.new_canvas("客户网络") {
+                        if let Some(canvas) = self.desktop_ui.knowledge_canvas.store.active_mut() {
+                            canvas.template = "customer_network".into();
+                        }
+                        self.reset_knowledge_canvas_interaction();
+                        self.mark_knowledge_canvas_dirty();
+                    }
+                    ui.close_menu();
+                }
+                if ui
+                    .button("自动排布")
+                    .on_hover_text("按阅读顺序整理卡片")
+                    .clicked()
+                {
+                    self.knowledge_canvas_auto_layout();
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("knowledge_canvas_fit_requested"), true)
+                    });
+                    ui.close_menu();
+                }
+            });
             if ui
                 .button("适应画布")
                 .on_hover_text("缩放并居中显示所有内容")
@@ -1137,7 +1148,7 @@ impl TimerWindowsClient {
             let save_label = if self.desktop_ui.knowledge_canvas.save_error.is_some() {
                 "保存失败"
             } else if self.desktop_ui.knowledge_canvas.dirty {
-                "保存中"
+                "待保存"
             } else {
                 "已保存"
             };

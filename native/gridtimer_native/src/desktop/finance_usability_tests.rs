@@ -40,12 +40,27 @@ fn finance_views_are_reachable_without_losing_unsaved_entries() {
             for _ in 0..3 {
                 workspace_test_frame(&mut client, &ctx, size, vec![]);
             }
+            if matches!(tab, 3 | 4 | 6) {
+                // Reproduce the real menu interaction instead of setting the
+                // selected tab directly: unsaved entries must survive both.
+                let menu_rect = ctx
+                    .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("finance_more_reports")))
+                    .expect("more reports trigger must remain visible");
+                assert!(menu_rect.right() <= size.x);
+                workspace_click(&mut client, &ctx, size, menu_rect.center());
+                workspace_test_frame(&mut client, &ctx, size, vec![]);
+            }
             let rect = ctx
                 .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("finance_tab", tab))))
                 .unwrap();
             assert!(
-                rect.top() >= 76.0 && rect.bottom() < 360.0 && rect.right() <= size.x,
-                "tab {tab}: {rect:?}"
+                rect.width() >= 24.0
+                    && rect.height() >= 20.0
+                    && rect.left() >= 0.0
+                    && rect.top() >= 0.0
+                    && rect.right() <= size.x
+                    && rect.bottom() <= size.y,
+                "tab {tab} must be a clickable on-screen target: {rect:?}"
             );
             workspace_click(&mut client, &ctx, size, rect.center());
             assert_eq!(tab, client.finance_workbench.tab);

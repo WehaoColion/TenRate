@@ -7301,6 +7301,7 @@ impl TimerWindowsClient {
                     let status_lower = self.status.to_ascii_lowercase();
                     let status_is_error = !self.workspace_persistence_ready
                         || self.status.contains("失败")
+                        || self.status.contains("未导出")
                         || self.status.contains("拒绝")
                         || self.status.contains("只读")
                         || self.status.contains("中断")
@@ -7321,11 +7322,10 @@ impl TimerWindowsClient {
                         p.good
                     };
                     status_dot(ui, status_color);
-                    let status = if self.status.is_empty() {
-                        "本地数据已就绪"
-                    } else {
-                        &self.status
-                    };
+                    let document_open = matches!(self.tab, AppTab::Notes | AppTab::Knowledge)
+                        && self.desktop_ui.navigation.editor_visible;
+                    let status =
+                        desktop_status_for_tab(&self.status, document_open, status_is_error);
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(status)
@@ -7368,6 +7368,10 @@ impl TimerWindowsClient {
                         self.tab.title(),
                         self.desktop_ui.navigation.editor_visible,
                         self.selected_note_id.clone(),
+                        // Each finance report keeps its own scroll position.
+                        // Switching views must not inherit a deep scroll offset
+                        // that hides the navigation and primary save action.
+                        (self.tab == AppTab::Finance).then_some(self.finance_workbench.tab),
                     ))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {

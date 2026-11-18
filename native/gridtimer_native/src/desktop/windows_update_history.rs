@@ -5,8 +5,10 @@
 // v1.1.0.6 Windows - Require valid visible money drafts before saving or reviewing finance.
 // v1.1.0.5 Windows - Preserve exact finance amounts during editing and sync.
 // v1.1.0.4 Windows - Repair automatic desktop entry maintenance.
-const WINDOWS_UPDATE_HISTORY_CURRENT_VERSION: &str = "1.1.0.14";
-const WINDOWS_UPDATE_HISTORY_CURRENT_TEXT: &str = "版本 1.1.0.14\n更新时间：2026-11-15（Windows 预览候选）\n\n知识画布新增本地撤销和重做能力，按保存后的内容状态汇总历史，不对平移缩放反复创建大量历史快照。画布修订号随变更递增；保存前核对现有文件是否被其他窗口修改，检测到冲突时停止覆盖。\n\n知识目录可以调用共享 Rust 核心复制完整的同级页面及其有效子页面，不破坏原文；法律扫描增加本机知识根目录、页面及文件夹的持久排除策略，失效或损坏时禁止使用旧授权发送。知识目录还支持常用移动位置推荐；回收站复用共享 Rust 规则，在无未保存修改或同步任务的安全时点清理超过 100 天的已删除记录。\n\n此版本是独立 Windows 未签名预览，不代替正式同步服务，画布跨设备双向同步仍未实现。";
+// v1.1.0.15 Windows - Keep the new release first and retain 1.1.0.14 in history.
+const WINDOWS_UPDATE_HISTORY_CURRENT_VERSION: &str = "1.1.0.15";
+const WINDOWS_UPDATE_HISTORY_CURRENT_TEXT: &str = "版本 1.1.0.15\n更新时间：2026-11-18（Windows 预览候选）\n\n知识画布优先获得桌面空间，目录可在较窄窗口中按需展开；顶部保留常用页面、客户、便签、连接、撤销与缩放，将推荐关系和自动排布收进次级菜单。窄窗口下客户资料面板从画布正文区域开始显示，不再遮挡顶部操作工具。\n\n风控的保存按钮与每日记收入、记支出入口同处首排，季度、年度与月度参数收纳进更多报表。切换视图仍保留未保存金额与原有校验。底部导出完成反馈只在相关文档编辑工作区显示，切换页面后不再把旧路径误作全局状态；失败信息继续显著显示。\n\n此版本是独立 Windows 未签名预览，账户、财务数据格式、同步协议和 Android 客户端不变；仍需真实账户与覆盖安装专项验收。";
+const WINDOWS_UPDATE_HISTORY_V11014_TEXT: &str = "版本 1.1.0.14\n更新时间：2026-11-15（Windows 预览候选）\n\n知识画布新增本地撤销和重做能力，按保存后的内容状态汇总历史，不对平移缩放反复创建大量历史快照。画布修订号随变更递增；保存前核对现有文件是否被其他窗口修改，检测到冲突时停止覆盖。\n\n知识目录可以调用共享 Rust 核心复制完整的同级页面及其有效子页面，不破坏原文；法律扫描增加本机知识根目录、页面及文件夹的持久排除策略，失效或损坏时禁止使用旧授权发送。知识目录还支持常用移动位置推荐；回收站复用共享 Rust 规则，在无未保存修改或同步任务的安全时点清理超过 100 天的已删除记录。\n\n此版本是独立 Windows 未签名预览，不代替正式同步服务，画布跨设备双向同步仍未实现。";
 const WINDOWS_UPDATE_HISTORY_V11013_TEXT: &str = "版本 1.1.0.13\n更新时间：2026-11-14（Windows 预览候选）\n\n客户款项现在可以修改名称、金额、服务地点、预计日期及备注。逐笔收款支持更正金额、日期、地点、方式和备注，也可以经过二次确认删除。已有收款的款项不可直接删除，所有金额仍使用共享 Rust 整数分校验并独立于风控账本。\n\n知识画布增加空间总览图，点击定位到指定区域，原有卡片和推荐关系不改变。AI 选图增加可用格式的缩略图、逐张移除和发送授权失效处理，不会自动上传未确认图片。\n\n此版本仍是 Windows 预览，画布跨设备同步、安卓法律排除规则的跨设备一致性以及真正的多机部署尚未验收；不能替代正式同步服务。";
 const WINDOWS_UPDATE_HISTORY_V11012_TEXT: &str = "版本 1.1.0.12\n更新时间：2026-11-14（Windows 源码候选）\n\n知识画布新增客户卡片、独立客户网络模板、客户资料与已付待付金额。款项名称、应收金额、服务地点和逐笔实收日期、地点、方式使用 Android 共用 Rust 校验，历史金额可以安全整理为收款项目；客户金额不进入风控账本。\n\n客户引荐只能有一位直接推荐人，拒绝形成循环，支持独立的推荐层级排列。画布缩放扩展到 1%～250%，低倍率仍可定位卡片。原有 Windows 画布和知识资料保持原位，发行候选不替换正式同步服务。";
 const WINDOWS_UPDATE_HISTORY_V11011_TEXT: &str = "版本 1.1.0.11\n更新时间：2026-11-01（源码候选）\n\n同步服务在历史空间达到配额而拒绝写入时，新增可核对的历史压缩快照、历史媒体与引用元数据分项用量，以及版本与附件引用数量。检测与统计为只读，不会删除历史或覆盖客户端现有资料。\n\n此更新修正 Windows、同步服务、守护程序和预览安装包的版本标识。原有 24 MiB 历史限额暂未提高，历史增量压缩与媒体去重尚待后续更新；本版通过构建和部署后，才会在实际服务器上生效。";
@@ -33,7 +35,7 @@ impl TimerWindowsClient {
             egui::CollapsingHeader::new(format!("更新记录 · v{}", WINDOWS_CLIENT_VERSION))
                 .default_open(false)
                 .show(ui, |ui| {
-                    egui::CollapsingHeader::new("1.1.0.14 · Windows 画布操作安全与知识目录")
+                    egui::CollapsingHeader::new("1.1.0.15 · Windows 画布空间与交互优化")
                         .default_open(true)
                         .show(ui, |ui| {
                             if ui.button("复制本版完整更新说明").clicked() { ui.output_mut(|output| output.copied_text = WINDOWS_UPDATE_HISTORY_CURRENT_TEXT.to_owned()); }
@@ -42,6 +44,12 @@ impl TimerWindowsClient {
                     egui::CollapsingHeader::new("历史版本")
                         .default_open(false)
                         .show(ui, |ui| {
+                    egui::CollapsingHeader::new("1.1.0.14 · 画布操作安全与知识目录")
+                        .default_open(false).show(ui, |ui| {
+                            for paragraph in WINDOWS_UPDATE_HISTORY_V11014_TEXT.split("\n\n") {
+                                windows_update_note(ui, paragraph);
+                            }
+                        });
                     egui::CollapsingHeader::new("1.1.0.13 · 客户收付款、AI 图片预览与总览")
                         .default_open(false).show(ui, |ui| {
                             for paragraph in WINDOWS_UPDATE_HISTORY_V11013_TEXT.split("\n\n") {

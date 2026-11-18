@@ -141,6 +141,21 @@ impl TimerWindowsClient {
                 self.finance_workbench.tab = 5;
                 self.finance_workbench.quick_add = None;
             }
+            // Keep the save action next to daily entry, never in the last
+            // position of a wrapping multi-report navigation strip.
+            if (self.finance_workbench.tab != 5 || self.finance_dirty)
+                && ui
+                    .add_enabled_ui(!self.finance_workbench.money_drafts.has_invalid(), |ui| {
+                        action_button(ui, "保存", ButtonTone::Primary)
+                    })
+                    .inner
+                    .clicked()
+            {
+                save_now = true;
+            }
+            if self.finance_dirty {
+                ui.label(egui::RichText::new("未保存").color(palette().warn));
+            }
         });
         card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -149,10 +164,7 @@ impl TimerWindowsClient {
                     (5, "总览"),
                     (0, "每日收支"),
                     (1, "月度资产"),
-                    (3, "季度汇总"),
-                    (4, "年度汇总"),
                     (2, "分类与目标"),
-                    (6, "月度参数"),
                 ] {
                     let response = desktop_segment(ui, &mut self.finance_workbench.tab, tab, title);
                     #[cfg(test)]
@@ -163,20 +175,30 @@ impl TimerWindowsClient {
                         self.finance_workbench.pending_delete = None;
                     }
                 }
-
-                if (self.finance_workbench.tab != 5 || self.finance_dirty)
-                    && ui
-                        .add_enabled_ui(!self.finance_workbench.money_drafts.has_invalid(), |ui| {
-                            action_button(ui, "保存", ButtonTone::Primary)
-                        })
-                        .inner
-                        .clicked()
-                {
-                    save_now = true;
-                }
-                if self.finance_dirty {
-                    ui.label(egui::RichText::new("未保存").color(palette().warn));
-                }
+                let more_reports = ui.menu_button("更多报表", |ui| {
+                    for (tab, title) in [
+                        (3, "季度汇总"),
+                        (4, "年度汇总"),
+                        (6, "月度参数"),
+                    ] {
+                        let option = ui.selectable_label(self.finance_workbench.tab == tab, title);
+                        #[cfg(test)]
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(egui::Id::new(("finance_tab", tab)), option.rect);
+                        });
+                        if option.clicked() {
+                            self.finance_workbench.tab = tab;
+                            self.finance_workbench.pending_delete = None;
+                            ui.close_menu();
+                        }
+                    }
+                });
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(egui::Id::new("finance_more_reports"), more_reports.response.rect);
+                });
+                #[cfg(not(test))]
+                let _ = more_reports;
             });
             if let Some(field) = self.finance_workbench.money_drafts.first_invalid() {
                 ui.colored_label(

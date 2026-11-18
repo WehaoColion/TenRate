@@ -630,7 +630,11 @@ impl TimerWindowsClient {
 
 impl TimerWindowsClient {
     fn toggle_knowledge_navigator(&mut self, width: f32) {
-        if width < 970.0 {
+        if width < 970.0
+            || (self.knowledge_view == KnowledgeCollectionView::Canvas
+                && !self.desktop_ui.navigation.editor_visible
+                && width < 1380.0)
+        {
             self.desktop_ui.experience.navigator_drawer_open =
                 !self.desktop_ui.experience.navigator_drawer_open;
         } else {
