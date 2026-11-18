@@ -1727,7 +1727,7 @@ mod tests {
             .collect::<Vec<_>>();
         // A requested three-segment milestone denotes its .0 patch release.
         // Compare numerically so 2.23.3 correctly succeeds 2.23.2.59.
-        assert!((3..=4).contains(&latest.len()));
+        assert!((2..=4).contains(&latest.len()));
         assert!((3..=4).contains(&previous.len()));
         let mut latest_normalized = latest.clone();
         let mut previous_normalized = previous.clone();
@@ -1739,7 +1739,14 @@ mod tests {
         if LATEST_VERSION == "2.13.5.1" {
             assert_eq!(previous_normalized, vec![2, 23, 4, 18]);
         } else {
-            assert_eq!(&latest_normalized[..2], &previous_normalized[..2]);
+            // Minor/patch releases stay in their minor lane; an explicit major
+            // release such as Android 3.0 may advance beyond the 2.x series.
+            if latest_normalized[0] == previous_normalized[0] {
+                assert_eq!(&latest_normalized[..2], &previous_normalized[..2]);
+            } else {
+                assert!(latest_normalized[0] > previous_normalized[0],
+                    "major release must advance the Android major version");
+            }
             assert!(latest_normalized > previous_normalized,
                 "previous merged release must be older than the current candidate");
         }
