@@ -1,3 +1,4 @@
+// v3.0.1 - Render canvas QA as a real full-screen route for reliable IME layout and safe interactions.
 // v3.0.1 - Recover explicit question scope, safe exit, reliable new-answer position, and precise payment intent.
 // v3.0 - Full-screen canvas conversation, compact composer, evidence navigation and exact-money summaries.
 // v2.13.5.13 - Canvas-grounded AI queries, location affordances and encrypted history.
@@ -1112,6 +1113,19 @@ internal fun KnowledgeCanvasScreen(appData: AppData, syncSession: SyncAccountSes
             dialogRequestPending = false
         }
     }
+    // A real route, not a full-screen Dialog: the IME must resize the canvas
+    // conversation without panning the title, scope and composer off-screen.
+    if (!showLibrary && askVisible && canvas != null) {
+        CanvasQuestionSheet(board = canvas, model = model, pages = pages,
+            workspaceKey = workspace, syncSession = syncSession,
+            initialScope = askInitialScope, focusId = askFocusId,
+            questionText = questionDraft, onQuestionTextChange = { questionDraft = it },
+            listState = questionListState,
+            onDismiss = { askVisible = false },
+            onLocate = { id -> askVisible = false; focusNodeId = id; selected = null })
+        return
+    }
+
     if (showLibrary) {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1218,15 +1232,6 @@ internal fun KnowledgeCanvasScreen(appData: AppData, syncSession: SyncAccountSes
     }
     }
 
-    if (!showLibrary && askVisible && canvas != null) {
-        CanvasQuestionSheet(board = canvas, model = model, pages = pages,
-            workspaceKey = workspace, syncSession = syncSession,
-            initialScope = askInitialScope, focusId = askFocusId,
-            questionText = questionDraft, onQuestionTextChange = { questionDraft = it },
-            listState = questionListState,
-            onDismiss = { askVisible = false },
-            onLocate = { id -> askVisible = false; focusNodeId = id; selected = null })
-    }
     if (!showLibrary && paymentClient != null) {
         ClientMoneySheet(node = paymentClient, enabled = ready, busy = showBusy,
             error = model.error, serial = model.serial, succeeded = model.lastSucceeded,
@@ -2134,10 +2139,8 @@ private fun CanvasQuestionSheet(
         if (busy || pendingSave != null) confirmLeave = true else onDismiss()
     }
 
-    Dialog(onDismissRequest = requestClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false,
-            dismissOnClickOutside = false, decorFitsSystemWindows = false)) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+    BackHandler { requestClose() }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
                 .imePadding().padding(horizontal = 16.dp)) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp),
@@ -2349,7 +2352,6 @@ private fun CanvasQuestionSheet(
                 }
                 Spacer(Modifier.height(10.dp))
             }
-        }
     }
     if (confirmLeave) {
         AlertDialog(onDismissRequest = { confirmLeave = false },
