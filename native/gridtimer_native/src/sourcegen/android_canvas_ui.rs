@@ -1,3 +1,4 @@
+// v3.0.1 - Recover explicit question scope, safe exit, reliable new-answer position, and precise payment intent.
 // v3.0 - Full-screen canvas conversation, compact composer, evidence navigation and exact-money summaries.
 // v2.13.5.13 - Canvas-grounded AI queries, location affordances and encrypted history.
 // v2.13.5.11 - Animate only programmed canvas camera movements; keep direct gestures immediate.
@@ -1972,6 +1973,7 @@ private fun CanvasQuestionSheet(
     var busy by remember(board.id) { mutableStateOf(false) }
     var error by remember(board.id) { mutableStateOf("") }
     var pendingSave by remember(board.id) { mutableStateOf<CanvasAskTurn?>(null) }
+    var confirmLeave by remember(board.id) { mutableStateOf(false) }
     val currentBoardId by rememberUpdatedState(model.reply?.canvas?.id)
     val currentOwner by rememberUpdatedState(owner)
 
@@ -1996,6 +1998,8 @@ private fun CanvasQuestionSheet(
                     history = stored
                     pendingSave = null
                     onQuestionTextChange("")
+                    withFrameNanos { }
+                    if (history.isNotEmpty()) listState.scrollToItem(history.lastIndex)
                 }
             } catch (failure: Exception) {
                 error = "本轮回答未能保存。请重试保存，成功前不要关闭。"
@@ -2088,7 +2092,9 @@ private fun CanvasQuestionSheet(
                     }
                     val citedNodeIds = references.map { it.nodeId }
                         .filter(String::isNotBlank).distinct()
-                    val pendingQuery = Regex("""待付|待收|欠款|欠多少|还剩|剩余|未付|未收|应收""")
+                    // A generic "remaining" question must not show customer
+                    // receivables when it is asking about cards, tasks or time.
+                    val pendingQuery = Regex("""待付|待收|欠款|欠多少|待付款|未付款|未付金额|未收款|应收款|还剩多少钱|还剩多少款|剩余款项|剩余金额""")
                         .containsMatchIn(typed)
                     CanvasAskTurn(typed, response, citedNodeIds,
                         snapshot.getLong("revision"), references,
@@ -2103,6 +2109,8 @@ private fun CanvasQuestionSheet(
                     }
                     pendingSave = null
                     onQuestionTextChange("")
+                    withFrameNanos { }
+                    if (history.isNotEmpty()) listState.scrollToItem(history.lastIndex)
                 } catch (failure: Exception) {
                     error = "回答已生成，但本机加密保存失败。请先点击重试保存。"
                 }
@@ -2120,13 +2128,13 @@ private fun CanvasQuestionSheet(
         model.reply?.canvas?.id == board.id && model.reply?.token?.isNotEmpty() == true &&
         (queryScope == "all" || focusId != null)
 
-    LaunchedEffect(history.size) {
-        if (history.isNotEmpty() && !listState.canScrollForward) {
-            listState.animateScrollToItem(history.size - 1)
-        }
+    // Returning to the canvas is always discoverable. A current request or
+    // uncommitted encrypted answer requires explicit confirmation to abandon.
+    val requestClose: () -> Unit = {
+        if (busy || pendingSave != null) confirmLeave = true else onDismiss()
     }
 
-    Dialog(onDismissRequest = { if (!busy && pendingSave == null) onDismiss() },
+    Dialog(onDismissRequest = requestClose,
         properties = DialogProperties(usePlatformDefaultWidth = false,
             dismissOnClickOutside = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -2134,13 +2142,13 @@ private fun CanvasQuestionSheet(
                 .imePadding().padding(horizontal = 16.dp)) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onDismiss, enabled = !busy && pendingSave == null) {
+                    TextButton(onClick = requestClose) {
                         Text("返回画布")
                     }
                     Text("画布问答", Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium)
                     TextButton(onClick = { scopeExpanded = !scopeExpanded }) {
-                        Text(if (scopeExpanded) "收起范围" else "范围与隐私")
+                        Text(if (scopeExpanded) "收起说明" else "隐私说明")
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(bottom = 10.dp),
@@ -2153,20 +2161,22 @@ private fun CanvasQuestionSheet(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (scopeExpanded) {
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = queryScope == "all", enabled = !busy,
-                            onClick = { queryScope = "all" }, label = { Text("整张画布") })
-                        if (focusId != null) {
-                            FilterChip(selected = queryScope == "card", enabled = !busy,
-                                onClick = { queryScope = "card" },
-                                label = { Text("当前卡片") })
-                            FilterChip(selected = queryScope == "network", enabled = !busy,
-                                onClick = { queryScope = "network" },
-                                label = { Text("关联网络") })
-                        }
+                // Scope selection must never be hidden behind a disclosure.
+                // The selected scope is a permission boundary, not a decorative option.
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = queryScope == "all", enabled = !busy,
+                        onClick = { queryScope = "all" }, label = { Text("整张画布") })
+                    if (focusId != null) {
+                        FilterChip(selected = queryScope == "card", enabled = !busy,
+                            onClick = { queryScope = "card" },
+                            label = { Text("当前卡片") })
+                        FilterChip(selected = queryScope == "network", enabled = !busy,
+                            onClick = { queryScope = "network" },
+                            label = { Text("关联网络") })
                     }
+                }
+                if (scopeExpanded) {
                     Text("仅发送选定范围内可授权的卡片与知识节选；加密页面不上传。客户款项与风控账本严格分离。",
                         Modifier.padding(bottom = 10.dp),
                         style = MaterialTheme.typography.bodySmall,
@@ -2212,23 +2222,26 @@ private fun CanvasQuestionSheet(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary)
                             turn.pendingCents?.let { cents ->
-                                Surface(shape = RoundedCornerShape(16.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                Surface(shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
                                     modifier = Modifier.fillMaxWidth()) {
-                                    Column(Modifier.padding(16.dp),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text("待收款合计 · 本地精确统计",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("本地核算 · 待收款",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            turn.pendingClientCount?.let { count ->
+                                                Text("$count 位客户尚未结清",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
                                         Text(java.text.NumberFormat.getCurrencyInstance(
                                             java.util.Locale.CHINA).format(
                                             java.math.BigDecimal.valueOf(cents, 2)),
-                                            style = MaterialTheme.typography.headlineMedium)
-                                        turn.pendingClientCount?.let { count ->
-                                            Text("涉及 $count 位待付款客户",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
+                                            style = MaterialTheme.typography.titleLarge)
                                     }
                                 }
                             }
@@ -2243,7 +2256,7 @@ private fun CanvasQuestionSheet(
                                     CanvasAskReference(0, oldId, "相关卡片")
                                 }
                             if (evidence.isNotEmpty()) {
-                                Text("回答依据 · 点击查看画布卡片",
+                                Text("回答依据 · 点击卡片来源可在画布中定位",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 evidence.take(8).forEach { ref ->
@@ -2337,6 +2350,25 @@ private fun CanvasQuestionSheet(
                 Spacer(Modifier.height(10.dp))
             }
         }
+    }
+    if (confirmLeave) {
+        AlertDialog(onDismissRequest = { confirmLeave = false },
+            title = { Text(if (pendingSave != null) "回答还未安全保存" else "分析正在进行") },
+            text = {
+                Text(if (pendingSave != null)
+                    "离开会放弃本轮未保存的回答，已有加密历史不会删除。建议先返回并重试保存。"
+                    else "离开将停止显示本轮分析；未发送的问题会保留在画布中。")
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmLeave = false; onDismiss() }) {
+                    Text("仍要返回画布")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLeave = false }) {
+                    Text("继续处理")
+                }
+            })
     }
 }
 
