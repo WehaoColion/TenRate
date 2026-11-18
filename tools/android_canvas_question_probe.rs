@@ -115,6 +115,9 @@ fn verify_submission_blocked(question:Option<&str>)->Result<(),String>{
     }
 }
 fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
+    // The simulator is configured to an English default. Pin the app to
+    // Chinese for this acceptance, while locating input fields by semantics.
+    let _=run(&["shell","cmd","locale","set-app-locales",APP,"--locales","zh-CN"]);
     run(&["shell","am","start","-W","-n","com.ofairyo.gridtimer/.MainActivity"])?;
     thread::sleep(Duration::from_secs(7));
     dismiss_system()?;
@@ -139,11 +142,16 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
         if !tap_label(&["添加第一张便签"])? {
             return Err("Cannot create a card to exercise the populated canvas question flow".into());
         }
-        if !tap_label(&["标题"])? { return Err("New note title field missing".into()); }
+        // Do not depend on the translated "Title/标题" label text: the
+        // first accessible editor in this two-field note dialog is its title.
+        let title_editor=nodes(&xml()?).into_iter()
+            .find(|n|n.class.ends_with("EditText") && n.bounds[2]>n.bounds[0])
+            .ok_or("New note title editor missing")?;
+        tap(&title_editor)?;
         run(&["shell","input","text","QAProbeCard"])?;
         run(&["shell","input","keyevent","4"])?;
         thread::sleep(Duration::from_millis(350));
-        if !tap_label(&["创建"])? { return Err("Create note action missing".into()); }
+        if !tap_label(&["创建","Create"])? { return Err("Create note action missing".into()); }
         let mut created=false;
         for _ in 0..10 {
             if find(&["1 张卡片"])?.is_some() { created=true; break; }
