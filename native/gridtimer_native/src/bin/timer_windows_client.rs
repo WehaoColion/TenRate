@@ -7368,6 +7368,10 @@ impl TimerWindowsClient {
                         self.tab.title(),
                         self.desktop_ui.navigation.editor_visible,
                         self.selected_note_id.clone(),
+                        // Each finance report keeps its own scroll position.
+                        // Switching views must not inherit a deep scroll offset
+                        // that hides the navigation and primary save action.
+                        (self.tab == AppTab::Finance).then_some(self.finance_workbench.tab),
                     ))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
