@@ -1,3 +1,4 @@
+Android 3.0.1 画布问答交互严重回归修复候选：[说明](android/release_notes_v3.0.1.md)。
 Android 3.0 画布问答全屏阅读、来源追溯与模拟器验收候选：[说明](android/release_notes_v3.0.md)。
 Android 2.13.5.13 画布智能问答、证据定位与加密历史候选：[说明](android/release_notes_v2.13.5.13.md)。
 Android 2.13.5.12 知识模块拟物材质、资料柜视觉与模拟器验收候选：[说明](android/release_notes_v2.13.5.12.md)。
