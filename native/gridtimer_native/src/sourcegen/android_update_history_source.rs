@@ -1,3 +1,4 @@
+// v3.0 - Compact canvas conversation, provenance and precise money dashboard.
 // v2.13.5.13 - Add read-only canvas AI questions, source navigation and encrypted history.
 // v2.13.5.12 - Unified paper and archival character for knowledge UI.
 // v2.13.5.11 - Coherent directional knowledge navigation, touch feedback and camera motion.
@@ -77,7 +78,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "2.13.5.13";
+pub const LATEST_VERSION: &str = "3.0";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -107,6 +108,21 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0",
+        updatedAt = "2026-11-18 10:01",
+        summary = "重构画布问答为全屏阅读工作台，强化金额答案与来源定位",
+        sections = listOf(
+            AndroidUpdateSection("画布问答", listOf(
+                "以全屏阅读替代占高的底部弹窗，缩短顶部信息与发送操作，问题和回答分层阅读。",
+                "支持重新进入时保留未发送草稿和阅读位置，资料范围与隐私说明按需展开。"
+            )),
+            AndroidUpdateSection("准确性与隐私", listOf(
+                "待收款总额由 Rust 在本地精确计算并以人民币元显示，证据编号按实际发送资料顺序对应。",
+                "沿用按账户与画布分隔的本机加密问答历史；加密知识页面不上传，客户金额不进入风控账本。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "2.13.5.13",
         updatedAt = "2026-11-17 09:14",
