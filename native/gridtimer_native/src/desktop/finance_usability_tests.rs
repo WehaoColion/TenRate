@@ -54,8 +54,13 @@ fn finance_views_are_reachable_without_losing_unsaved_entries() {
                 .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("finance_tab", tab))))
                 .unwrap();
             assert!(
-                rect.top() >= 76.0 && rect.bottom() < 360.0 && rect.right() <= size.x,
-                "tab {tab}: {rect:?}"
+                rect.width() >= 24.0
+                    && rect.height() >= 20.0
+                    && rect.left() >= 0.0
+                    && rect.top() >= 0.0
+                    && rect.right() <= size.x
+                    && rect.bottom() <= size.y,
+                "tab {tab} must be a clickable on-screen target: {rect:?}"
             );
             workspace_click(&mut client, &ctx, size, rect.center());
             assert_eq!(tab, client.finance_workbench.tab);
