@@ -1,3 +1,4 @@
+// v3.0.1 - 画布问答修复范围选择、返回确认和聊天滚动。
 // v3.0 - 画布问答全屏阅读、证据溯源、金额摘要和输入体验升级。
 // v2.13.5.13 - 画布 AI 问答、证据定位及加密历史。
 // v2.13.5.12 - 知识资料柜拟物材质和目录层次统一。
@@ -194,8 +195,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30000
-        versionName '3.0'
+        versionCode 30001
+        versionName '3.0.1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
