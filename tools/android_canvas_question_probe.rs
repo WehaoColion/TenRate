@@ -1,3 +1,4 @@
+// v3.0 - Full-screen canvas QA, draft restoration and guarded requests on API 35.
 // v2.13.5.13 - API 35 emulator smoke acceptance for canvas AI entry and request guards.
 use std::{env,fs,path::{Path,PathBuf},process::{Command,Output},thread,time::Duration};
 
@@ -107,7 +108,7 @@ fn verify_submission_blocked(question:Option<&str>)->Result<(),String>{
     match question {
         Some(value) if !tree.contains(value) =>
             Err("Blocked submission cleared the unsent question".into()),
-        None if !tree.contains("向这张画布提问") =>
+        None if !tree.contains("继续向画布提问") =>
             Err("Blank submission unexpectedly changed the input".into()),
         _ => Ok(())
     }
@@ -124,12 +125,18 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
     thread::sleep(Duration::from_millis(600));
     evidence(dir,"03_question_sheet");
     let tree=xml()?;
-    if !tree.contains("画布问答") || !tree.contains("当前画布"){
+    if !tree.contains("画布问答") || !tree.contains("范围与隐私"){
         return Err("Question sheet title or scope is missing".into());
     }
-    report.push_str("PASS: signed APK opens canvas and displays a scoped question sheet.\n\n");
+    report.push_str("PASS: signed APK opens canvas in the full-screen conversation workspace.\n\n");
     verify_submission_blocked(None)?;
     report.push_str("PASS: empty question cannot be sent.\n\n");
+    if !tap_label(&["范围与隐私"])?{return Err("Scope disclosure is missing".into())}
+    if find(&["整张画布"])?.is_none() || find(&["加密页面不上传"])?.is_none(){
+        return Err("Scoped send and privacy rules were not disclosed".into());
+    }
+    if !tap_label(&["收起范围"])?{return Err("Scope cannot collapse".into())}
+    report.push_str("PASS: scope and privacy details expand and collapse.\n\n");
     if !tap_label(&["返回画布"])?{return Err("Return to canvas action missing".into())}
     evidence(dir,"04_back_to_canvas");
     if find(&["向这张画布提问"])?.is_none(){
@@ -142,15 +149,24 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
         run(&["shell","input","text","HowMuchPending"])?;
         thread::sleep(Duration::from_millis(500));
         evidence(dir,"05_question_entered");
+        run(&["shell","input","keyevent","4"])?;
+        thread::sleep(Duration::from_millis(450));
+        if !tap_label(&["返回画布"])?{return Err("Cannot close QA with unsent draft".into())}
+        if find(&["向这张画布提问"])?.is_none(){
+            return Err("Canvas not restored after typing an unsent draft".into());
+        }
+        if !tap_label(&["向这张画布提问"])?{return Err("Cannot reopen QA after draft".into())}
         let current=xml()?;
-        if current.contains("尚未配置可用的 AI 服务"){
-            // Hide IME before tapping the guarded button.
-            run(&["shell","input","keyevent","4"])?;
-            thread::sleep(Duration::from_millis(500));
+        if !current.contains("HowMuchPending") {
+            return Err("Unsent canvas question draft was discarded on return".into());
+        }
+        evidence(dir,"06_draft_restored");
+        report.push_str("PASS: unsent draft survives canvas navigation.\n\n");
+        if current.contains("尚未配置 AI 服务"){
             verify_submission_blocked(Some("HowMuchPending"))?;
             report.push_str("PASS: unconfigured AI connection blocks network submission.\n\n");
         } else {
-            report.push_str("INFO: service configuration present or not exposed in this emulator; no paid model calls executed.\n\n");
+            report.push_str("INFO: live AI calls excluded; empty submission guard tested.\n\n");
         }
     }
     Ok(())
@@ -158,7 +174,7 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
 fn main(){
     let dir=env::args().nth(1).map(PathBuf::from).unwrap_or_else(||PathBuf::from("canvas_question_evidence"));
     fs::create_dir_all(&dir).expect("evidence directory");
-    let mut report=String::from("# Android 2.13.5.13 canvas question emulator acceptance\n\n");
+    let mut report=String::from("# Android 3.0 canvas question emulator acceptance\n\n");
     let result=acceptance(&dir,&mut report);
     if let Err(ref error)=result{
         report.push_str(&format!("FAIL: {error}\n"));
