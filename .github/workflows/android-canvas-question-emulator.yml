@@ -1,8 +1,8 @@
-name: Android canvas AI question emulator acceptance
+name: Android 3.0 canvas QA UI emulator acceptance
 
 on:
   push:
-    branches: [feat/android-canvas-ai-question-v2.13.5.13]
+    branches: [feat/android-canvas-qa-redesign-v3.0]
   workflow_dispatch:
 
 permissions:
@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 180); do
-            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-canvas-ai-question-v2.13.5.13&per_page=30")"
+            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=feat/android-canvas-qa-redesign-v3.0&per_page=30")"
             match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
             if test -n "$match"; then
               read -r run_id status conclusion <<< "$match"
@@ -48,9 +48,9 @@ jobs:
           test -s signed_build_run_id.txt
           gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
           cd signed_apk
-          test -f tenfold_v2.13.5.13.apk
-          test -f tenfold_v2.13.5.13.apk.sha256
-          tr -d '\r' < tenfold_v2.13.5.13.apk.sha256 | sha256sum -c -
+          test -f tenfold_v3.0.apk
+          test -f tenfold_v3.0.apk.sha256
+          tr -d '\r' < tenfold_v3.0.apk.sha256 | sha256sum -c -
       - name: Enable KVM acceleration
         shell: bash
         run: |
@@ -71,7 +71,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r signed_apk/tenfold_v2.13.5.13.apk
+            adb install -r signed_apk/tenfold_v3.0.apk
             ./android_canvas_question_probe canvas_question_evidence
       - name: Attach the actual acceptance result
         if: always()
@@ -86,7 +86,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-canvas-ai-v2.13.5.13-emulator-evidence
+          name: android-canvas-qa-v3.0-emulator-evidence
           path: |
             canvas_question_evidence/
             signed_build_run_id.txt
