@@ -188,14 +188,14 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
         thread::sleep(Duration::from_millis(500));
         // 3.0's full-screen Dialog pan caused the toolbar and title to
         // collapse to [0,0][0,0] when the IME appeared.
-        let visibleTitle=find(&["画布问答"])?
+        let visible_title=find(&["画布问答"])?
             .ok_or("Keyboard panned the full-screen chat header off-screen")?;
-        let visibleBack=find(&["返回画布"])?
+        let visible_back=find(&["返回画布"])?
             .ok_or("Keyboard removed the canvas return control from the viewport")?;
-        let visibleSend=find(&["发送问题"])?
+        let visible_send=find(&["发送问题"])?
             .ok_or("Keyboard obscured the send control")?;
-        if visibleTitle.bounds[3] <= visibleBack.bounds[1] ||
-            visibleSend.bounds[1] <= visibleTitle.bounds[3] {
+        if visible_title.bounds[3] <= visible_back.bounds[1] ||
+            visible_send.bounds[1] <= visible_title.bounds[3] {
             return Err("Keyboard collapsed or overlapped the conversation layout".into());
         }
         evidence(dir,"05_question_entered");
