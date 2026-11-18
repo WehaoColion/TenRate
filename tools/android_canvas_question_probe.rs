@@ -1,3 +1,4 @@
+// v3.0.1 - Verify visible query scope and mandatory Android editor, not just button text.
 // v3.0 - Full-screen canvas QA, draft restoration and guarded requests on API 35.
 // v2.13.5.13 - API 35 emulator smoke acceptance for canvas AI entry and request guards.
 use std::{env,fs,path::{Path,PathBuf},process::{Command,Output},thread,time::Duration};
@@ -125,27 +126,33 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
     thread::sleep(Duration::from_millis(600));
     evidence(dir,"03_question_sheet");
     let tree=xml()?;
-    if !tree.contains("画布问答") || !tree.contains("范围与隐私"){
-        return Err("Question sheet title or scope is missing".into());
+    if !tree.contains("画布问答") || !tree.contains("整张画布") ||
+        !tree.contains("隐私说明") {
+        return Err("Question scope must be directly visible without opening a disclosure".into());
     }
     report.push_str("PASS: signed APK opens canvas in the full-screen conversation workspace.\n\n");
     verify_submission_blocked(None)?;
     report.push_str("PASS: empty question cannot be sent.\n\n");
-    if !tap_label(&["范围与隐私"])?{return Err("Scope disclosure is missing".into())}
+    if !tap_label(&["隐私说明"])?{return Err("Privacy disclosure is missing".into())}
     if find(&["整张画布"])?.is_none() || find(&["加密页面不上传"])?.is_none(){
-        return Err("Scoped send and privacy rules were not disclosed".into());
+        return Err("Visible scope was lost or privacy disclosure not shown".into());
     }
-    if !tap_label(&["收起范围"])?{return Err("Scope cannot collapse".into())}
-    report.push_str("PASS: scope and privacy details expand and collapse.\n\n");
+    if !tap_label(&["收起说明"])?{return Err("Privacy disclosure cannot collapse".into())}
+    if find(&["整张画布"])?.is_none(){
+        return Err("Query scope disappeared after collapsing the privacy disclosure".into());
+    }
+    report.push_str("PASS: query scope remains visible independently of privacy disclosure.\n\n");
     if !tap_label(&["返回画布"])?{return Err("Return to canvas action missing".into())}
     evidence(dir,"04_back_to_canvas");
     if find(&["向这张画布提问"])?.is_none(){
         return Err("Returning from canvas chat lost the canvas surface".into())
     }
     report.push_str("PASS: dismissing the question sheet restores canvas without a graph mutation.\n\n");
-    let _=tap_label(&["向这张画布提问"])?;
-    if let Some(field)=nodes(&xml()?).into_iter().find(|n|n.class.ends_with("EditText")){
-        tap(&field)?;
+    if !tap_label(&["向这张画布提问"])?{return Err("Cannot reopen QA".into())}
+    // A missing text editor must fail acceptance, not silently skip the draft test.
+    let field=nodes(&xml()?).into_iter().find(|n|n.class.ends_with("EditText"))
+        .ok_or("Question composer is missing or not accessible")?;
+    tap(&field)?;
         run(&["shell","input","text","HowMuchPending"])?;
         thread::sleep(Duration::from_millis(500));
         evidence(dir,"05_question_entered");
@@ -168,13 +175,19 @@ fn acceptance(dir:&Path, report:&mut String)->Result<(),String>{
         } else {
             report.push_str("INFO: live AI calls excluded; empty submission guard tested.\n\n");
         }
+    // Back gesture should close QA without navigating out of the board.
+    run(&["shell","input","keyevent","4"])?;
+    thread::sleep(Duration::from_millis(500));
+    if find(&["向这张画布提问"])?.is_none(){
+        return Err("Hardware Back did not return to the canvas board".into());
     }
+    report.push_str("PASS: hardware Back returns to the same board.\n\n");
     Ok(())
 }
 fn main(){
     let dir=env::args().nth(1).map(PathBuf::from).unwrap_or_else(||PathBuf::from("canvas_question_evidence"));
     fs::create_dir_all(&dir).expect("evidence directory");
-    let mut report=String::from("# Android 3.0 canvas question emulator acceptance\n\n");
+    let mut report=String::from("# Android 3.0.1 canvas question emulator acceptance\n\n");
     let result=acceptance(&dir,&mut report);
     if let Err(ref error)=result{
         report.push_str(&format!("FAIL: {error}\n"));
