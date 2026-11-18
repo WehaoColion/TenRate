@@ -1,3 +1,4 @@
+// v3.0 - Permit exact two-part Android 3.0 version labels in immutable candidates.
 // Publish a signed Android candidate to a commit-scoped immutable prerelease.
 // This prevents later CI runs for the same Android version from replacing
 // artifacts that were signed and published by an earlier commit.
@@ -48,7 +49,7 @@ fn publish() -> Result<(), String> {
     let version = filename.strip_prefix("tenfold_v")
         .and_then(|rest| rest.strip_suffix(".apk"))
         .ok_or("unexpected APK filename")?;
-    if !(3..=4).contains(&version.split('.').count())
+    if !(2..=4).contains(&version.split('.').count())
         || version.split('.').any(|segment| segment.is_empty() || !segment.bytes().all(|b| b.is_ascii_digit())) {
         return Err("invalid APK version".into());
     }
