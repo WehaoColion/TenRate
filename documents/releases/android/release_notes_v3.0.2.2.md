@@ -23,3 +23,7 @@
 Rust 源码生成器测试与已有节点创建规格测试，连同 Android Release 正式签名、JVM 回归和 Android 35 模拟器安装、启动、新建、等待各保存状态消失、强制终止与重启后持久化复查一起运行。验收必须以 PR 本提交的签名 APK 为准。
 
 模拟器没有真实数千页面和成百历史快照，也不代表用户实际设备的存储性能。后续真机应重点采集 `explicit.queue_wait`、`hierarchy_write_lock`、`hierarchy_normalize`、`snapshot_preflight`、`preflight_native_verification`、`sqlite_commit` 和 `recovery_mirror` 的耗时。
+
+## 大型 SQLite 快照的历史读取
+
+`SnapshotPayloadCursor` 对大于 CursorWindow 容量的数据分块读取，过去每次只读取 128 KiB。改为严格受限的 512 KiB 块，在不改变同一事务、行标识、长度核对和哈希/信封验证的前提下减少每条历史快照的 SQLite 子查询数。普通 8 MiB 历史载荷的 SQL 取块次数理论上由 64 降到 16，仍以真机时间为准。Rust 原生 SQLite 大 UTF-8 载荷测试及 Android JVM 分块边界测试同步更新。

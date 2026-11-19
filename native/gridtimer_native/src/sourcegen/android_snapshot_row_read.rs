@@ -1,3 +1,4 @@
+// v3.0.2.2 - Use bounded 512-KiB verified SQLite payload chunks to reduce round-trips.
 // v2.23.2.36 - Read large snapshot payloads outside Android's bounded CursorWindow.
 const DATABASE: &str = "com/ofairyo/gridtimer/data/AppStateDatabase.kt";
 
@@ -253,7 +254,7 @@ private class SnapshotPayloadCursor(
 // character offsets or silently accept partial/oversized/missing chunks.
 pub const CHUNKS: &str = r####"
 
-internal const val SNAPSHOT_PAYLOAD_CHUNK_BYTES = 128 * 1024
+internal const val SNAPSHOT_PAYLOAD_CHUNK_BYTES = 512 * 1024
 
 internal fun readSnapshotPayloadChunks(
     byteCount: Long,
@@ -293,7 +294,7 @@ class SnapshotPayloadChunksTest {
             calls++
             bytes.copyOfRange(offset, offset + count)
         }
-        assertTrue(calls > 16)
+        assertTrue(calls >= 4)
         assertEquals(bytes.size, next)
         assertArrayEquals(bytes, actual)
         assertEquals(text, actual.toString(Charsets.UTF_8))
@@ -399,7 +400,7 @@ mod tests {
         assert_eq!(byte_count, raw.len());
         let mut result = Vec::with_capacity(byte_count);
         while result.len() < byte_count {
-            let expected = (128 * 1024).min(byte_count - result.len());
+            let expected = (512 * 1024).min(byte_count - result.len());
             let chunk: Vec<u8> = database
                 .query_row(
                     &chunk_sql,
