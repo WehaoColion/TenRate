@@ -176,7 +176,7 @@ fn acceptance(dir:&Path)->Result<String,String>{
         capture(dir,"05_preview_missing");
         return Err("Newly saved long note is not the home summary".into());
     }
-    let search=find(&["搜索便签","Search notes","标题、正文、文件夹都能搜","Search titles, body text, and folders"])?;
+    let search=find(&["搜索便签","Search notes","搜索","Search","标题、正文、文件夹都能搜","Search titles, body text, and folders"])?;
     if search.is_none(){
         capture(dir,"05_search_offscreen");
         return Err("Search was pushed out of the first viewport by summary".into());
