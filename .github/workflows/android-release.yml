@@ -2,7 +2,7 @@ name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11, feat/android-legal-knowledge-exclusions-20261108, feat/android-startup-shell-refresh-v2.23.4.14, feat/android-customer-network-canvas-ux-20261111, feat/android-universal-canvas-entry-20261111, feat/android-canvas-zoom-1percent-20261111, feat/android-document-block-drag-v2.23.4.18, feat/android-referral-forest-layout-v2.13.5.1, feat/android-knowledge-skeuomorphic-ui-v2.13.5.2, fix/android-home-today-badge-v2.13.5.3, feat/android-customer-payment-v2.13.5.5, feat/android-client-payment-ledger-v2.13.5.6, feat/android-knowledge-workspace-design-v2.13.5.8, feat/android-ai-durable-conversation-v2.13.5.9, feat/android-knowledge-actions-v2.13.5.10, feat/android-knowledge-motion-v2.13.5.11, feat/android-knowledge-atelier-v2.13.5.12, feat/android-canvas-ai-question-v2.13.5.13, feat/android-canvas-qa-redesign-v3.0, feat/android-canvas-answer-ux-v3.0.2]
+    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11, feat/android-legal-knowledge-exclusions-20261108, feat/android-startup-shell-refresh-v2.23.4.14, feat/android-customer-network-canvas-ux-20261111, feat/android-universal-canvas-entry-20261111, feat/android-canvas-zoom-1percent-20261111, feat/android-document-block-drag-v2.23.4.18, feat/android-referral-forest-layout-v2.13.5.1, feat/android-knowledge-skeuomorphic-ui-v2.13.5.2, fix/android-home-today-badge-v2.13.5.3, feat/android-customer-payment-v2.13.5.5, feat/android-client-payment-ledger-v2.13.5.6, feat/android-knowledge-workspace-design-v2.13.5.8, feat/android-ai-durable-conversation-v2.13.5.9, feat/android-knowledge-actions-v2.13.5.10, feat/android-knowledge-motion-v2.13.5.11, feat/android-knowledge-atelier-v2.13.5.12, feat/android-canvas-ai-question-v2.13.5.13, feat/android-canvas-qa-redesign-v3.0, feat/android-canvas-answer-ux-v3.0.2, perf/android-knowledge-create-delta-v3.0.2.1]
   workflow_dispatch:
 
 permissions:
@@ -187,23 +187,87 @@ jobs:
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.jks')
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.der')
 
+  knowledge-save-emulator:
+    name: Boot Android 35 and verify knowledge page save survives restart
+    if: github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1'
+    needs: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the exact signed APK from this commit
+        uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: signed_apk
+      - name: Check APK SHA256 and compile the Rust UI probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd signed_apk
+          tr -d '\r' < tenfold_v3.0.2.1.apk.sha256 | sha256sum -c -
+          cd ..
+          rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
+      - name: Enable hardware-assisted Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Install, launch, create a page, force-stop and verify on device
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v3.0.2.1.apk
+            ./knowledge_save_probe knowledge_save_evidence
+      - name: Summarize actual simulator acceptance
+        if: always()
+        shell: bash
+        run: |
+          if test -f knowledge_save_evidence/report.md; then
+            cat knowledge_save_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Emulator acceptance did not complete; inspect logs.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload screenshots, accessibility tree and save report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-knowledge-save-v3.0.2.1-evidence
+          path: knowledge_save_evidence/
+          if-no-files-found: warn
+          retention-days: 21
+
   publish-candidate:
     name: Publish signed prerelease
     needs: release
-    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57' || github.ref == 'refs/heads/fix/android-empty-document-exit-v2.23.2.59' || github.ref == 'refs/heads/feat/android-inline-children-v2.23.3' || github.ref == 'refs/heads/perf/android-rust-hierarchy-create-save-2.23.4' || github.ref == 'refs/heads/release/android-2.23.4.6-integrated-20261103' || github.ref == 'refs/heads/feat/android-move-frequent-destinations-20261104' || github.ref == 'refs/heads/feat/android-canvas-usability-safety-20261104' || github.ref == 'refs/heads/fix/android-header-archive-single-row-v2.23.4.9' || github.ref == 'refs/heads/feat/android-home-header-refine-v2.23.4.10' || github.ref == 'refs/heads/fix/android-canvas-gesture-flicker-v2.23.4.11' || github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2'
+    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57' || github.ref == 'refs/heads/fix/android-empty-document-exit-v2.23.2.59' || github.ref == 'refs/heads/feat/android-inline-children-v2.23.3' || github.ref == 'refs/heads/perf/android-rust-hierarchy-create-save-2.23.4' || github.ref == 'refs/heads/release/android-2.23.4.6-integrated-20261103' || github.ref == 'refs/heads/feat/android-move-frequent-destinations-20261104' || github.ref == 'refs/heads/feat/android-canvas-usability-safety-20261104' || github.ref == 'refs/heads/fix/android-header-archive-single-row-v2.23.4.9' || github.ref == 'refs/heads/feat/android-home-header-refine-v2.23.4.10' || github.ref == 'refs/heads/fix/android-canvas-gesture-flicker-v2.23.4.11' || github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1'
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: write
     steps:
       - uses: actions/checkout@v4
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2'
+        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1'
       - uses: actions/download-artifact@v4
         with:
           name: tenrate-signed-apk
           path: package
       - name: Verify checksum and push immutable GitHub Release assets
-        if: github.ref != 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' && github.ref != 'refs/heads/fix/android-home-today-badge-v2.13.5.3' && github.ref != 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' && github.ref != 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' && github.ref != 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' && github.ref != 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' && github.ref != 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' && github.ref != 'refs/heads/feat/android-canvas-qa-redesign-v3.0' && github.ref != 'refs/heads/feat/android-canvas-answer-ux-v3.0.2'
+        if: github.ref != 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' && github.ref != 'refs/heads/fix/android-home-today-badge-v2.13.5.3' && github.ref != 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' && github.ref != 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' && github.ref != 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' && github.ref != 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' && github.ref != 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' && github.ref != 'refs/heads/feat/android-canvas-qa-redesign-v3.0' && github.ref != 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' && github.ref != 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -247,7 +311,7 @@ jobs:
           print(f'Published {apk.name} SHA256 {digest}')
           PY
       - name: Publish immutable commit-scoped candidate with Rust
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2'
+        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
