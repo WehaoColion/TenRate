@@ -158,7 +158,10 @@ const MIRROR_CACHE_FIELD: &str = r####"    private var verifiedWritePreflight: P
         val primaryRevision: Long,
         val backupRevision: Long?
     )
-    private var verifiedMirrorCache: java.lang.ref.WeakReference<VerifiedMirrorCache>? = null"####;
+    private var verifiedMirrorCache: java.lang.ref.WeakReference<VerifiedMirrorCache>? = null
+    // Bounded strong retention avoids repeated decode of frequently saved small
+    // mirrors. Larger workspaces keep the existing weak-reference memory policy.
+    private var retainedMirrorCache: VerifiedMirrorCache? = null"####;
 
 const MIRROR_REFRESH_OLD: &str = r####"                val primary = readPersistedCandidate(files.state)
                 val backup = readPersistedCandidate(files.backup)
@@ -178,11 +181,12 @@ const MIRROR_REFRESH_OLD: &str = r####"                val primary = readPersist
                     committedStamp, persistFileStamp(files.state), persistFileStamp(files.backup)
                 )"####;
 
-const MIRROR_REFRESH_NEW: &str = r####"                val mirrorCache = verifiedMirrorCache?.get()?.takeIf { cache ->
+const MIRROR_REFRESH_NEW: &str = r####"                val mirrorCache = (retainedMirrorCache ?: verifiedMirrorCache?.get())?.takeIf { cache ->
                     cache.workspaceKey == workspaceKey &&
                         cache.primaryStamp == persistFileStamp(files.state) &&
                         cache.backupStamp == persistFileStamp(files.backup)
                 }
+                retainedMirrorCache = null
                 verifiedMirrorCache = null
                 val primary = if (mirrorCache == null) readPersistedCandidate(files.state) else null
                 val backup = if (mirrorCache == null) readPersistedCandidate(files.backup) else null
@@ -209,9 +213,11 @@ const MIRROR_REFRESH_NEW: &str = r####"                val mirrorCache = verifie
                 }
                 val primaryStamp = persistFileStamp(files.state)
                 val backupStamp = persistFileStamp(files.backup)
-                verifiedMirrorCache = java.lang.ref.WeakReference(VerifiedMirrorCache(
+                val nextMirrorCache = VerifiedMirrorCache(
                     workspaceKey, primaryStamp, backupStamp, encoded, snapshotRevision, backupRevision
-                ))
+                )
+                verifiedMirrorCache = java.lang.ref.WeakReference(nextMirrorCache)
+                retainedMirrorCache = nextMirrorCache.takeIf { encoded.length <= 1_000_000 }
                 verifiedWritePreflight = workspaceKey to PersistPreflightStamp(
                     committedStamp, primaryStamp, backupStamp
                 )"####;

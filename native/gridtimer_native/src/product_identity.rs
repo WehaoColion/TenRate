@@ -1,3 +1,4 @@
+// v3.0.2.2 - Scoped creation and durable-save diagnostics.
 // v3.0.2.1 - Knowledge create-node delta with safe full fallback.
 // v3.0.2 - Source-backed canvas result cards and concise AI reading UX.
 // v3.0.1 Android - Canvas conversation safety fixes and versionCode 30001.
@@ -151,8 +152,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.1";
-pub const ANDROID_VERSION_CODE: i32 = 30003;
+pub const ANDROID_APP_VERSION: &str = "3.0.2.2";
+pub const ANDROID_VERSION_CODE: i32 = 30004;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

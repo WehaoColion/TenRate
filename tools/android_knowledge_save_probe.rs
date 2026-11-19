@@ -4,7 +4,7 @@ use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sl
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "3.0.2.1";
+const VERSION: &str = "3.0.2.2";
 const CREATED: &str = "KnowledgeSaveProbe";
 
 #[derive(Clone)]
@@ -126,7 +126,7 @@ fn directory(root: &Path) -> Result<(), String> {
     capture(root, "02_directory_not_found");
     Err("Could not reach the Android knowledge hierarchy and its create actions".into())
 }
-fn create_page(root: &Path) -> Result<(), String> {
+fn create_page(root: &Path) -> Result<u128, String> {
     if !tap_any(&["新建子页面", "新建页面", "New subpage"])? {
         capture(root, "03_no_create_action");
         return Err("Knowledge directory has no accessible create-page control".into());
@@ -156,7 +156,8 @@ fn create_page(root: &Path) -> Result<(), String> {
     for tick in 0..28 {
         let current = dump()?;
         if tick == 2 || tick == 10 { capture(root, &format!("05_saving_{tick}")); }
-        if current.contains(CREATED) && !current.contains("正在保存") {
+        if current.contains(CREATED) && !current.contains("正在保存") &&
+            !current.contains("等待前序保存") && !current.contains("正在写入本地数据") {
             saved = true;
             break;
         }
@@ -172,7 +173,7 @@ fn create_page(root: &Path) -> Result<(), String> {
     if cmd(&["shell", "pidof", PACKAGE])?.trim().is_empty() {
         return Err("App process exited after knowledge page creation".into());
     }
-    Ok(())
+    Ok(started.elapsed().as_millis())
 }
 
 fn persisted_after_restart(root: &Path) -> Result<(), String> {
@@ -205,10 +206,10 @@ fn run(root: &Path) -> Result<String, String> {
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
-    create_page(root)?;
+    let saved_millis = create_page(root)?;
     persisted_after_restart(root)?;
     Ok(format!(
-        "PASS: installed and started Android {VERSION}, created a named knowledge page, save returned from the blocking dialog, forced process stop, restarted and found the same page in the directory."
+        "PASS: Android {VERSION} created the knowledge page and confirmed all saving-stage indicators cleared after {saved_millis} ms, then force-stopped and restarted with the page still durable."
     ))
 }
 fn main() {

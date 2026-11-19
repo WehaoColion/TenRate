@@ -208,7 +208,7 @@ jobs:
         run: |
           set -euo pipefail
           cd signed_apk
-          tr -d '\r' < tenfold_v3.0.2.1.apk.sha256 | sha256sum -c -
+          tr -d '\r' < tenfold_v3.0.2.2.apk.sha256 | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
       - name: Enable hardware-assisted Android emulator
@@ -231,7 +231,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r signed_apk/tenfold_v3.0.2.1.apk
+            adb install -r signed_apk/tenfold_v3.0.2.2.apk
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
             ./knowledge_save_probe knowledge_save_evidence
       - name: Summarize actual simulator acceptance
@@ -247,7 +247,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-knowledge-save-v3.0.2.1-evidence
+          name: android-knowledge-save-v3.0.2.2-evidence
           path: knowledge_save_evidence/
           if-no-files-found: warn
           retention-days: 21
