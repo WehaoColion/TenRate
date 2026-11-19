@@ -1,4 +1,4 @@
-// v3.0.2.3 - Exercise real long-note home layout on Android API 35.
+// v3.0.2.3 - Exercise real long-note home layout with Chinese and English UI.
 use std::{env,fs,path::{Path,PathBuf},process::{Command,Output},thread,time::Duration};
 
 const APP:&str="com.ofairyo.gridtimer";
@@ -85,19 +85,22 @@ fn dismiss()->Result<(),String>{
 fn home(dir:&Path)->Result<(),String>{
     for pass in 0..9{
         dismiss()?;
-        if find(&["最近便签"])?.is_some()&&find(&["回收站"])?.is_some(){return Ok(())}
+        if find(&["最近便签","Recent notes"])?.is_some()&&find(&["回收站","Trash"])?.is_some(){return Ok(())}
         if pass==0{capture(dir,"01_launched");}
-        if tap_any(&["便签","Sticky notes","Notes"])?{continue}
+        if tap_any(&["便签","Quick notes","Sticky notes"])?{
+            capture(dir,&format!("02_notes_opened_{pass}"));
+            continue
+        }
         thread::sleep(Duration::from_millis(900));
     }
     capture(dir,"02_home_not_found");
     Err("Could not navigate to the real sticky-note home screen".into())
 }
 fn visible_buttons(dir:&Path,label:&str)->Result<(),String>{
-    let title=find(&["最近便签"])?.ok_or("Recent note header not visible")?;
-    let create=find(&["新建"])?.ok_or("Create action not visible")?;
-    let folder=find(&["文件夹"])?.ok_or("Folder action not visible")?;
-    let trash=find(&["回收站"])?.ok_or("Trash action not visible")?;
+    let title=find(&["最近便签","Recent notes"])?.ok_or("Recent note header not visible")?;
+    let create=find(&["新建","New"])?.ok_or("Create action not visible")?;
+    let folder=find(&["文件夹","Folders"])?.ok_or("Folder action not visible")?;
+    let trash=find(&["回收站","Trash"])?.ok_or("Trash action not visible")?;
     let row_top=create.bounds[1].min(folder.bounds[1]).min(trash.bounds[1]);
     let row_bottom=create.bounds[3].max(folder.bounds[3]).max(trash.bounds[3]);
     let title_bottom=title.bounds[3];
@@ -125,7 +128,7 @@ fn acceptance(dir:&Path)->Result<String,String>{
     thread::sleep(Duration::from_secs(7));
     home(dir)?;
     visible_buttons(dir,"02_before_long_note")?;
-    if !tap_any(&["新建"])?{return Err("Cannot create a sticky note from home".into())}
+    if !tap_any(&["新建","New"])?{return Err("Cannot create a sticky note from home".into())}
     let mut fields=Vec::new();
     for _ in 0..8{
         fields=nodes(&hierarchy()?).into_iter().filter(|n|
@@ -158,12 +161,12 @@ fn acceptance(dir:&Path)->Result<String,String>{
     capture(dir,"03_long_note_in_editor");
     run(&["shell","input","keyevent","4"])?;
     thread::sleep(Duration::from_millis(500));
-    if !tap_any(&["完成"])?{
+    if !tap_any(&["完成","Done"])?{
         capture(dir,"04_save_missing");
         return Err("Note editor has no accessible finish/save button".into());
     }
     for _ in 0..24{
-        if find(&["最近便签"])?.is_some() && find(&["新建"])?.is_some() {break}
+        if find(&["最近便签","Recent notes"])?.is_some() && find(&["新建","New"])?.is_some() {break}
         thread::sleep(Duration::from_secs(1));
     }
     home(dir)?;
@@ -173,7 +176,7 @@ fn acceptance(dir:&Path)->Result<String,String>{
         capture(dir,"05_preview_missing");
         return Err("Newly saved long note is not the home summary".into());
     }
-    let search=find(&["搜索便签","标题、正文、文件夹都能搜"])?;
+    let search=find(&["搜索便签","Search notes","标题、正文、文件夹都能搜","Search titles, body text, and folders"])?;
     if search.is_none(){
         capture(dir,"05_search_offscreen");
         return Err("Search was pushed out of the first viewport by summary".into());
