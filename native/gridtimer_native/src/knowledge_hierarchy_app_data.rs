@@ -302,7 +302,14 @@ pub fn knowledge_container_create_note_json(
     // Preserve the same sanitization semantics as the full mutation. Only the
     // new note crosses JNI; no other field can be intentionally mutated here.
     let checked = data.sanitized(now)?;
-    serde_json::to_string(checked.notes.iter().find(|note| note.id == id)?).ok()
+    // AppData::sanitized orders notes by deletion, pinning and revision.
+    // Returning the exact insertion position preserves that ordering without
+    // sending the already-existing notes through JNI a second time.
+    let position = checked.notes.iter().position(|note| note.id == id)?;
+    serde_json::to_string(&serde_json::json!({
+        "position": position,
+        "note": &checked.notes[position]
+    })).ok()
 }
 
 /// Atomic hierarchy operations. Empty parent means the knowledge root.
