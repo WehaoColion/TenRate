@@ -75,6 +75,8 @@ mod android_knowledge_filters;
 mod android_knowledge_hierarchy;
 #[path = "../sourcegen/android_knowledge_hierarchy_ui.rs"]
 mod android_knowledge_hierarchy_ui;
+#[path = "../sourcegen/android_knowledge_save_v2.rs"]
+mod android_knowledge_save_v2;
 #[path = "../sourcegen/android_move_history.rs"]
 mod android_move_history;
 #[path = "../sourcegen/android_knowledge_navigation.rs"]
@@ -537,6 +539,8 @@ fn run() -> io::Result<()> {
         let rendered = android_english_home::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_header_single_row::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_knowledge_save_v2::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         write_source(&output_root, source.path, &rendered)?;
     }

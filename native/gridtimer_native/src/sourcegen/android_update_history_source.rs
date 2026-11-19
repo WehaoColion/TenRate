@@ -1,3 +1,5 @@
+// v3.0.2.2 - Scoped knowledge creation, bounded mirror retention and queue-stage feedback.
+// v3.0.2.1 - Optimize knowledge hierarchy create delta and keep durable save checks.
 // v3.0.2 - Canvas AI answer-first display and precise navigable money summary.
 // v3.0.1 - Fix explicit scope, safe back handling and new-answer positioning.
 // v3.0 - Compact canvas conversation, provenance and precise money dashboard.
@@ -80,7 +82,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2";
+pub const LATEST_VERSION: &str = "3.0.2.2";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -110,6 +112,38 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.2",
+        updatedAt = "2026-11-19 14:36",
+        summary = "缩小知识页面创建规范化范围，明确保存队列等待与可靠写入阶段",
+        sections = listOf(
+            AndroidUpdateSection("创建性能与数据安全", listOf(
+                "普通新建页面和文件夹在验证全工作区没有其他变化后，只对新增节点进行修订和规范化；不符合条件即退回全量路径。",
+                "原有本地数据库完整快照、历史验证、加密保护与恢复机制仍然保留。",
+                "小型恢复镜像使用有大小上限的缓存，减少连续保存时的重复解析。"
+            )),
+            AndroidUpdateSection("等待反馈与验证", listOf(
+                "区分等待前序保存和正在写入本地数据，长等待提示不会虚报提交成功。",
+                "记录知识目录写锁等待、规范化路径与耗时，便于诊断真实大数据设备上的慢保存。",
+                "模拟器检查保存状态真正结束后，再强制重启确认新建页面存在。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.1",
+        updatedAt = "2026-11-19 13:30",
+        summary = "改善知识目录新建页面和文件夹的本机处理开销，保留完整安全校验",
+        sections = listOf(
+            AndroidUpdateSection("知识创建性能", listOf(
+                "新建普通子页面或子文件夹时，Rust 只返回新增节点及其准确排序位置，避免再次回传并解析整份工作区。",
+                "保留原有父级权限、名称合法性和数据兼容检查，孤立子项或异常情况仍使用完整安全路径。"
+            )),
+            AndroidUpdateSection("数据保护与验证", listOf(
+                "继续执行 SQLite 持久化、历史快照预检与恢复镜像，不以提前关闭保存提示伪装成功。",
+                "增加知识页面创建、重新启动后的持久化模拟器验收，首次历史校验仍可能影响复杂数据的保存耗时。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2",
         updatedAt = "2026-11-19 05:19",

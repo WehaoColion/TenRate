@@ -239,6 +239,79 @@ fn knowledge_promote_legacy_folder(data: &mut AppData, id: &str, now: i64) -> Op
     Some(())
 }
 
+/// Build a single newly-created hierarchy node without serializing the entire
+/// mutated AppData back across JNI. Kotlin applies this exact node inside its
+/// existing updateDataDetailed transaction and still performs the authoritative
+/// durable SQLite snapshot, preflight and recovery checks.
+///
+/// This is deliberately *not* available for a newly created parent which already
+/// has dangling descendants: those need the existing full-tree compatibility
+/// projection and must use knowledge_container_action_app_data_json instead.
+pub fn knowledge_container_create_note_json(
+    raw: &str,
+    action: &str,
+    id: &str,
+    parent_id: &str,
+    title: &str,
+    now: i64,
+) -> Option<String> {
+    if !matches!(action, "create_page" | "create_folder")
+        || id.is_empty()
+        || id.len() > 512
+        || parent_id.len() > 512
+        || title.chars().count() > 240
+    {
+        return None;
+    }
+    let mut data = parse_app_data_for_mutation(raw, now)?;
+    if knowledge_identity_conflict(&data, id)
+        || data.notes.iter().any(|note| note.id == id)
+        || data.note_folders.iter().any(|folder| folder.id == id)
+        || !knowledge_parent_allowed(
+            &data,
+            id,
+            (!parent_id.is_empty()).then_some(parent_id),
+        )
+        || (action == "create_folder" && title.trim().is_empty())
+        || data.notes.iter().any(|note| {
+            note.id != id
+                && note.kind == NoteEntryKind::Document
+                && knowledge_effective_parent(&data, note) == Some(id)
+        })
+    {
+        return None;
+    }
+
+    let mut note = NoteEntry {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        kind: NoteEntryKind::Document,
+        ..Default::default()
+    };
+    let page = knowledge_ensure_page(&mut note);
+    page.parent_id = (!parent_id.is_empty()).then(|| parent_id.to_owned());
+    if action == "create_folder" {
+        page.properties.insert(
+            crate::knowledge::FOLDER_KIND_PROPERTY.to_owned(),
+            crate::knowledge::CellValue::Text("folder".into()),
+        );
+    }
+    note = normalize_note_for_save(&data, note, None, now)?;
+    data.notes.push(note);
+    knowledge_refresh_new_container_projection(&mut data, id, now)?;
+    // Preserve the same sanitization semantics as the full mutation. Only the
+    // new note crosses JNI; no other field can be intentionally mutated here.
+    let checked = data.sanitized(now)?;
+    // AppData::sanitized orders notes by deletion, pinning and revision.
+    // Returning the exact insertion position preserves that ordering without
+    // sending the already-existing notes through JNI a second time.
+    let position = checked.notes.iter().position(|note| note.id == id)?;
+    serde_json::to_string(&serde_json::json!({
+        "position": position,
+        "note": &checked.notes[position]
+    })).ok()
+}
+
 /// Atomic hierarchy operations. Empty parent means the knowledge root.
 /// No operation removes a body, attachment, version, or descendants.
 pub fn knowledge_container_action_app_data_json(

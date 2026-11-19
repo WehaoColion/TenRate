@@ -298,6 +298,13 @@ const BRIDGE: &str = r####"    fun knowledgeContainerActionAppDataJson(raw: Stri
     }
     private external fun nativeKnowledgeContainerActionAppDataJson(raw: String, action: String,
         id: String, parentId: String, title: String, now: Long): String?
+    fun knowledgeContainerCreateNoteJson(raw: String, action: String, id: String,
+        parentId: String, title: String, now: Long): String? {
+        if (!nativeAvailable) return null
+        return runCatching { nativeKnowledgeContainerCreateNoteJson(raw, action, id, parentId, title, now) }.getOrNull()
+    }
+    private external fun nativeKnowledgeContainerCreateNoteJson(raw: String, action: String,
+        id: String, parentId: String, title: String, now: Long): String?
 "####;
 const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction(action: String, id: String, parentId: String,
         title: String, expectedWorkspaceKey: String): Boolean {
@@ -317,18 +324,50 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
         try {
             val attempt = withContext(NonCancellable) {
                 updateDataDetailed(expectedWorkspaceKey = expectedWorkspaceKey,
+                    hierarchyCreateNoteId = if (action == "create_page" || action == "create_folder") id else null,
                     persistImmediately = true, publishAfterDurable = true) { data ->
                     val encodeStarted = System.nanoTime()
                     val originalJson = json.encodeToString(data)
                     recordHierarchyStage("hierarchy_encode", encodeStarted)
-                    val nativeStarted = System.nanoTime()
-                    val mutatedJson = NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
-                        originalJson, action, id, parentId, title, now())
-                    recordHierarchyStage("hierarchy_rust_mutation", nativeStarted)
-                    val decodeStarted = System.nanoTime()
-                    val decoded = mutatedJson?.let { decodeNativeAppData(it) }
-                    recordHierarchyStage("hierarchy_decode", decodeStarted)
-                    decoded?.also { applied = true } ?: data
+                    val mutationAt = now()
+                    val fastStarted = System.nanoTime()
+                    val newNodeJson = if (action == "create_page" || action == "create_folder") {
+                        NativeOptimizerBridge.knowledgeContainerCreateNoteJson(
+                            originalJson, action, id, parentId, title, mutationAt)
+                    } else null
+                    recordHierarchyStage("hierarchy_fast_create", fastStarted)
+                    val createDelta = newNodeJson?.let { rawDelta ->
+                        runCatching {
+                            val patch = json.parseToJsonElement(rawDelta) as?
+                                kotlinx.serialization.json.JsonObject
+                            val position = patch?.get("position")?.toString()?.toIntOrNull()
+                            val note = patch?.get("note")?.let {
+                                json.decodeFromString(NoteEntry.serializer(), it.toString())
+                            }
+                            if (position != null && position in 0..data.notes.size &&
+                                note != null && note.id == id) position to note else null
+                        }.getOrNull()
+                    }
+                    if (createDelta != null) {
+                        applied = true
+                        // Rust supplies the position after canonical sanitization;
+                        // preserving order is critical to pinned/recent hierarchy views.
+                        val notes = data.notes.toMutableList().apply {
+                            add(createDelta.first, createDelta.second)
+                        }
+                        data.copy(notes = notes)
+                    } else {
+                        // Dangling descendants or an unrecognized/corrupt result must
+                        // take the original lossless full-tree path, never a partial write.
+                        val nativeStarted = System.nanoTime()
+                        val mutatedJson = NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
+                            originalJson, action, id, parentId, title, mutationAt)
+                        recordHierarchyStage("hierarchy_rust_mutation", nativeStarted)
+                        val decodeStarted = System.nanoTime()
+                        val decoded = mutatedJson?.let { decodeNativeAppData(it) }
+                        recordHierarchyStage("hierarchy_decode", decodeStarted)
+                        decoded?.also { applied = true } ?: data
+                    }
                 }
             }
             return applied && attempt.succeeded
@@ -339,9 +378,10 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
 "####;
 const VIEW_MODEL: &str = r####"    internal fun knowledgeContainerAction(action: String, id: String, parentId: String,
         title: String, expectedWorkspaceKey: String = currentWorkspaceKey(),
-        onComplete: (Boolean, String) -> Unit) {
+        onStage: (String) -> Unit = {}, onComplete: (Boolean, String) -> Unit) {
         enqueueNoteMutation(onComplete = { ok -> onComplete(ok,
             if (ok) "本地已保存" else "操作未完成。请核对当前位置、页面权限及存储后重试。") }) {
+            withContext(kotlinx.coroutines.Dispatchers.Main.immediate) { onStage("writing") }
             repository.knowledgeContainerAction(action, id, parentId, title, expectedWorkspaceKey)
         }
     }
@@ -352,6 +392,7 @@ const STUDIO_STATE: &str = r####"    val hierarchyIndex = remember(appData.notes
     var hierarchyParentId by rememberSaveable(workspaceKey) { mutableStateOf<String?>(null) }
     var hierarchyRequest by remember(workspaceKey) { mutableStateOf<KnowledgeHierarchyRequest?>(null) }
     var hierarchyBusy by remember(workspaceKey) { mutableStateOf(false) }
+    var hierarchyStage by remember(workspaceKey) { mutableStateOf("waiting") }
     var hierarchyMessage by remember(workspaceKey) { mutableStateOf("") }
     val hierarchyCallbacksAlive = remember(workspaceKey) { java.util.concurrent.atomic.AtomicBoolean(true) }
     DisposableEffect(hierarchyCallbacksAlive) { onDispose { hierarchyCallbacksAlive.set(false) } }
@@ -426,7 +467,7 @@ const STUDIO_DIALOG: &str = r####"    // A document and the directory manager ar
     // This also handles unlocked documents and restored editor selections.
     hierarchyRequest?.let { request ->
         val requestLocation = request.id?.let(hierarchyIndex::location)
-        KnowledgeHierarchyActionDialog(request = request, index = hierarchyIndex, workspaceKey = workspaceKey, busy = hierarchyBusy,
+        KnowledgeHierarchyActionDialog(request = request, index = hierarchyIndex, workspaceKey = workspaceKey, busy = hierarchyBusy, stage = hierarchyStage,
             error = hierarchyMessage, onDismiss = { if (!hierarchyBusy) { hierarchyRequest = null; hierarchyMessage = "" } },
             onSubmit = submit@ { parent, title ->
                 if (!hierarchyBusy && hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {
@@ -440,9 +481,10 @@ const STUDIO_DIALOG: &str = r####"    // A document and the directory manager ar
                             return@submit
                         }
                     }
-                    hierarchyBusy = true; hierarchyMessage = ""
+                    hierarchyBusy = true; hierarchyStage = "waiting"; hierarchyMessage = ""
                     val id = request.id ?: java.util.UUID.randomUUID().toString()
-                    viewModel.knowledgeContainerAction(request.action, id, parent.orEmpty(), title, workspaceKey) { ok, detail ->
+                    viewModel.knowledgeContainerAction(request.action, id, parent.orEmpty(), title, workspaceKey,
+                        onStage = { phase -> if (hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) hierarchyStage = phase }) { ok, detail ->
                         if (hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {
                             hierarchyBusy = false
                             if (ok) {
@@ -1429,7 +1471,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
 
 @Composable
 internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, index: KnowledgeHierarchy,
-    workspaceKey: String, busy: Boolean, error: String, onDismiss: () -> Unit, onSubmit: (String?, String) -> Unit) {
+    workspaceKey: String, busy: Boolean, stage: String, error: String, onDismiss: () -> Unit, onSubmit: (String?, String) -> Unit) {
     val node = request.id?.let(index.nodes::get)
     val location = request.id?.let(index::location)
     val moving = request.action == "move"
@@ -1443,6 +1485,12 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
     var query by rememberSaveable(request) { mutableStateOf("") }
     val creating = request.action.startsWith("create_")
     val naming = creating || request.action == "rename"
+    var waitingSeconds by remember(request) { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(busy) {
+        if (busy) {
+            while (true) { kotlinx.coroutines.delay(1_000L); waitingSeconds += 1 }
+        } else waitingSeconds = 0
+    }
     val valid = !busy && when {
         naming -> (if (creating) index.mayCreateInside(request.parentId) else node?.writable == true) && title.isNotBlank() && title.length <= 120 && !title.contains('\n')
         moving -> destinationChosen && index.canMoveTo(request.id.orEmpty(), parent)
@@ -1517,7 +1565,15 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
                 }
             } else if (!naming) Text("保留正文、附件、页面链接和子项，只更改页面类型。可随时转换回来。")
             if (creating) Text("位置：" + request.parentId?.let(index::pathLabel).orEmpty().ifBlank { "知识目录" })
-            if (busy) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { CircularProgressIndicator(Modifier.size(22.dp)); Text("正在保存…") }
+            if (busy) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(22.dp))
+                    Text(if (stage == "waiting") "等待前序保存完成…" else "正在写入本地数据…")
+                }
+                if (waitingSeconds >= 8) Text("保存仍在进行。完成可靠提交前不会退出此窗口。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
         }
     }, confirmButton = { TextButton(enabled = valid, onClick = { onSubmit(parent, title.trim()) }) { Text("确定") } },
@@ -1747,6 +1803,13 @@ mod hierarchy_save_latency_tests {
         ] {
             assert!(source.contains(phase), "{phase}");
         }
+        assert!(source.contains("hierarchy_fast_create"));
+        assert!(source.contains("knowledgeContainerCreateNoteJson"));
+        assert!(source.contains("json.decodeFromString(NoteEntry.serializer(), it.toString())"));
+        assert!(source.contains("add(createDelta.first, createDelta.second)"));
+        assert!(source.contains("position in 0..data.notes.size"));
+        assert!(source.contains("knowledgeContainerActionAppDataJson("));
+        assert!(source.contains("persistImmediately = true, publishAfterDurable = true"));
         assert!(source.contains("elapsedMs >= 1_000L"));
         assert!(!source.contains("title=$title"));
         assert!(!source.contains("workspace=$expectedWorkspaceKey"));
