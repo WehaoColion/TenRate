@@ -19,7 +19,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     let original = &source[from..to];
     if !original.contains("text = latestNote?.let {") ||
         !original.contains("verticalAlignment = Alignment.CenterVertically") ||
-        !original.contains("onManageFolders = onManageFolders") {
+        !original.contains("onClick = onManageFolders") {
         return Err("sticky summary: expected original card layout changed".into());
     }
     let mut result = String::with_capacity(source.len());
