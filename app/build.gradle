@@ -1,3 +1,4 @@
+// v3.0.2.3 - 便签首页限制预览高度并固定操作区，不更改保存与同步。
 // v3.0.2.2 - 仅新增节点规范化与保存阶段交互，保留原安全提交规则。
 // v3.0.2.1 - Rust 单节点知识创建与安全回退，保留数据库与历史校验。
 // v3.0.2 - 画布问答结果优先、来源定位、AI 解释按需展开。
@@ -198,8 +199,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30004
-        versionName '3.0.2.2'
+        versionCode 30005
+        versionName '3.0.2.3'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

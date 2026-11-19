@@ -1,3 +1,4 @@
+Android 3.0.2.3 便签首页长摘要约束与操作区稳定布局候选：[说明](android/release_notes_v3.0.2.3.md)。
 Android 3.0.2.2 知识页面创建规范化、保存阶段反馈与安全回退候选：[说明](android/release_notes_v3.0.2.2.md)。
 Android 3.0.2.1 知识目录单节点增量创建与持久化验收候选：[说明](android/release_notes_v3.0.2.1.md)。
 Android 3.0.2 画布问答结果优先与可定位来源：[说明](android/release_notes_v3.0.2.md)。
