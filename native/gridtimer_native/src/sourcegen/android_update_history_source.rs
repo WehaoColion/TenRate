@@ -1,3 +1,4 @@
+// v3.0.2 - Canvas AI answer-first display and precise navigable money summary.
 // v3.0.1 - Fix explicit scope, safe back handling and new-answer positioning.
 // v3.0 - Compact canvas conversation, provenance and precise money dashboard.
 // v2.13.5.13 - Add read-only canvas AI questions, source navigation and encrypted history.
@@ -79,7 +80,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.1";
+pub const LATEST_VERSION: &str = "3.0.2";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -109,6 +110,23 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2",
+        updatedAt = "2026-11-19 05:19",
+        summary = "画布问答结果优先，来源可查，保留 DeepSeek 原有分析能力",
+        sections = listOf(
+            AndroidUpdateSection("阅读与来源", listOf(
+                "将画布标题和卡片数量收至顶部小字，减少重复信息占用。",
+                "模型引用改为按需展开的具名卡片来源，旧版历史来源尽量恢复可读名称，点击直接定位。",
+                "无须删减加密历史正文，金额问题先显示 Rust 本地准确结果，AI 的完整分析可以一键展开。"
+            )),
+            AndroidUpdateSection("金额与验证", listOf(
+                "本地精确计算待收合计并生成可定位的客户金额明细；超出展示上限仍以全部客户计算总额。",
+                "统一面向用户的人民币元展示，减少正文中的内部金额单位和密集引用。",
+                "保留原加密存档与跨版本兼容，仅新增具有默认值的展示字段。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.1",
         updatedAt = "2026-11-19 03:03",

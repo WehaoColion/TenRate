@@ -1,3 +1,4 @@
+// v3.0.2 - Readable DeepSeek answers, exact local result cards and source-first navigation.
 // v3.0.1 - Render canvas QA as a real full-screen route for reliable IME layout and safe interactions.
 // v3.0.1 - Recover explicit question scope, safe exit, reliable new-answer position, and precise payment intent.
 // v3.0 - Full-screen canvas conversation, compact composer, evidence navigation and exact-money summaries.
@@ -1889,13 +1890,28 @@ private data class CanvasAskReference(
 )
 
 @Serializable
+private data class CanvasAskPendingClient(
+    val nodeId: String, val title: String, val pendingCents: Long
+)
+
+// Raw AI answers stay intact in encrypted history; only their visual
+// presentation suppresses distracting numeric reference markers.
+private fun canvasReadableAnswer(answer: String): String =
+    answer.replace(Regex("""[（(]\s*(?:即\s*)?[0-9,]+(?:\.[0-9]+)?\s*分\s*[）)]"""), "")
+        .replace(Regex("""\[[0-9]{1,3}]"""), "")
+        .replace(Regex("""[ \t]+([，。；、！？])"""), "$1")
+        .trim()
+
+@Serializable
 private data class CanvasAskTurn(
     val question: String, val answer: String, val sourceIds: List<String>,
     val revision: Long,
     // Defaults retain compatibility with encrypted conversations saved before 3.0.
     val references: List<CanvasAskReference> = emptyList(),
     val pendingCents: Long? = null,
-    val pendingClientCount: Int? = null
+    val pendingClientCount: Int? = null,
+    val pendingClients: List<CanvasAskPendingClient> = emptyList(),
+    val pendingClientsTruncated: Boolean = false
 )
 
 // Dedicated account/board-separated encrypted history. A failed decrypt never becomes an empty archive.
@@ -2102,10 +2118,23 @@ private fun CanvasQuestionSheet(
                     // receivables when it is asking about cards, tasks or time.
                     val pendingQuery = Regex("""待付|待收|欠款|欠多少|待付款|未付款|未付金额|未收款|应收款|还剩多少钱|还剩多少款|剩余款项|剩余金额""")
                         .containsMatchIn(typed)
+                    val pendingClients = if (pendingQuery) {
+                        val clients = snapshot.optJSONArray("pendingClients") ?: org.json.JSONArray()
+                        (0 until clients.length()).mapNotNull { index ->
+                            clients.optJSONObject(index)?.let { item ->
+                                val nodeId = item.optString("nodeId")
+                                val amount = item.optLong("pendingCents")
+                                if (nodeId.isBlank() || amount <= 0L) null
+                                else CanvasAskPendingClient(nodeId, item.optString("title"), amount)
+                            }
+                        }
+                    } else emptyList()
                     CanvasAskTurn(typed, response, citedNodeIds,
                         snapshot.getLong("revision"), references,
                         if (pendingQuery) snapshot.getLong("totalPendingCents") else null,
-                        if (pendingQuery) snapshot.getInt("pendingClientCount") else null)
+                        if (pendingQuery) snapshot.getInt("pendingClientCount") else null,
+                        pendingClients,
+                        if (pendingQuery) snapshot.optBoolean("pendingClientsTruncated") else false)
                 }
                 if (currentBoardId != board.id || currentOwner != owner) return@launch
                 pendingSave = answer
@@ -2150,21 +2179,16 @@ private fun CanvasQuestionSheet(
                     TextButton(onClick = requestClose) {
                         Text("返回画布")
                     }
-                    Text("画布问答", Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium)
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                        Text("画布问答", style = MaterialTheme.typography.titleMedium)
+                        Text("${board.title} · ${board.nodes.size} 张卡片",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                     TextButton(onClick = { scopeExpanded = !scopeExpanded }) {
                         Text(if (scopeExpanded) "收起说明" else "隐私说明")
                     }
-                }
-                Row(Modifier.fillMaxWidth().padding(bottom = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text(board.title, Modifier.weight(1f), maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.width(8.dp))
-                    Text("${board.nodes.size} 张卡片 · ${board.edges.size} 条关系",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 // Scope selection must never be hidden behind a disclosure.
                 // The selected scope is a permission boundary, not a decorative option.
@@ -2248,66 +2272,144 @@ private fun CanvasQuestionSheet(
                             Text("✦ 根据画布回答",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary)
+                            var showAllClients by remember(turn) { mutableStateOf(false) }
+                            var showExplanation by remember(turn) {
+                                mutableStateOf(turn.pendingCents == null || turn.pendingClients.isEmpty())
+                            }
+                            val evidence = if (turn.references.isNotEmpty()) turn.references
+                                else turn.sourceIds.distinct().map { oldId ->
+                                    val node = board.nodes.firstOrNull { it.id == oldId }
+                                    CanvasAskReference(0, oldId, node?.let {
+                                        if (it.kind == "page")
+                                            pages[it.pageId]?.displayTitle() ?: "知识页面"
+                                        else it.text.substringBefore("\n").ifBlank { "未命名卡片" }
+                                    } ?: "来源卡片已移除")
+                                }
+                            // The Rust total and client breakdown are authoritative.
+                            // DeepSeek may explain these facts but never supplies the values.
                             turn.pendingCents?.let { cents ->
-                                Surface(shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
+                                Surface(shape = RoundedCornerShape(18.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.37f),
                                     modifier = Modifier.fillMaxWidth()) {
-                                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        verticalAlignment = Alignment.CenterVertically) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text("本地核算 · 待收款",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            turn.pendingClientCount?.let { count ->
-                                                Text("$count 位客户尚未结清",
+                                    Column(Modifier.fillMaxWidth().padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("本次查询范围 · 待收款合计",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(canvasYuan(cents),
+                                            style = MaterialTheme.typography.headlineLarge,
+                                            color = MaterialTheme.colorScheme.onSurface)
+                                        Text("${turn.pendingClientCount ?: 0} 位客户尚未结清 · 本地精确核算",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (turn.pendingClients.isNotEmpty()) {
+                                            HorizontalDivider()
+                                            val displayed = if (showAllClients)
+                                                turn.pendingClients else turn.pendingClients.take(3)
+                                            displayed.forEach { client ->
+                                                val current = board.nodes.any { it.id == client.nodeId }
+                                                if (current) {
+                                                    TextButton(onClick = { onLocate(client.nodeId) },
+                                                        contentPadding = PaddingValues(0.dp),
+                                                        modifier = Modifier.fillMaxWidth()) {
+                                                        Row(Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                            verticalAlignment = Alignment.CenterVertically) {
+                                                            Text(client.title.ifBlank { "未命名客户" },
+                                                                modifier = Modifier.weight(1f),
+                                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                            Text(canvasYuan(client.pendingCents),
+                                                                style = MaterialTheme.typography.bodyMedium)
+                                                            Text("›", style = MaterialTheme.typography.titleLarge)
+                                                        }
+                                                    }
+                                                } else {
+                                                    Row(Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween) {
+                                                        Text(client.title + " · 已从画布移除",
+                                                            style = MaterialTheme.typography.bodySmall)
+                                                        Text(canvasYuan(client.pendingCents),
+                                                            style = MaterialTheme.typography.bodySmall)
+                                                    }
+                                                }
+                                            }
+                                            if (turn.pendingClients.size > 3) {
+                                                TextButton(onClick = { showAllClients = !showAllClients },
+                                                    contentPadding = PaddingValues(0.dp)) {
+                                                    Text(if (showAllClients) "收起明细"
+                                                        else if (turn.pendingClientsTruncated) "查看前 ${turn.pendingClients.size} 位客户明细"
+                                                        else "查看 ${turn.pendingClients.size} 位客户的明细")
+                                                }
+                                            }
+                                            if (turn.pendingClientsTruncated && showAllClients) {
+                                                Text("仅展示前 12 位客户；合计仍包含当前范围内的全部客户。",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
-                                        Text(java.text.NumberFormat.getCurrencyInstance(
-                                            java.util.Locale.CHINA).format(
-                                            java.math.BigDecimal.valueOf(cents, 2)),
-                                            style = MaterialTheme.typography.titleLarge)
                                     }
                                 }
                             }
-                            AndroidRenderedMarkdown(turn.answer, modifier = Modifier.fillMaxWidth())
+                            if (turn.pendingCents != null && turn.pendingClients.isNotEmpty()) {
+                                TextButton(onClick = { showExplanation = !showExplanation },
+                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 3.dp)) {
+                                    Text(if (showExplanation) "收起 AI 分析" else "查看 AI 分析与计算说明")
+                                }
+                            }
+                            if (showExplanation) {
+                                AndroidRenderedMarkdown(
+                                    if (evidence.isNotEmpty()) canvasReadableAnswer(turn.answer)
+                                    else turn.answer,
+                                    modifier = Modifier.fillMaxWidth())
+                            }
                             if (turn.revision != model.reply?.revision) {
-                                Text("此回答依据历史画布快照，当前资料可能已有变更",
+                                Text("回答使用的是历史画布快照，金额与当前记录可能不同",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            val evidence = if (turn.references.isNotEmpty()) turn.references
-                                else turn.sourceIds.distinct().take(8).map { oldId ->
-                                    CanvasAskReference(0, oldId, "相关卡片")
-                                }
                             if (evidence.isNotEmpty()) {
-                                Text("回答依据 · 点击卡片来源可在画布中定位",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                evidence.take(8).forEach { ref ->
-                                    if (ref.nodeId.isBlank()) {
-                                        Text("[${ref.number}] ${ref.title}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    } else {
-                                        val node = board.nodes.firstOrNull { it.id == ref.nodeId }
-                                        if (node != null) {
-                                            TextButton(onClick = { onLocate(ref.nodeId) },
-                                                contentPadding = PaddingValues(
-                                                    horizontal = 0.dp, vertical = 2.dp)) {
-                                                Text((if (ref.number > 0) "[${ref.number}] " else "") +
-                                                    (if (node.kind == "page")
-                                                        pages[node.pageId]?.displayTitle() ?: ref.title
-                                                    else ref.title).take(52) + "  ·  定位到卡片",
-                                                    maxLines = 2)
-                                            }
-                                        } else {
-                                            Text("来源卡片已被删除或移走：${ref.title}",
+                                var showEvidence by remember(turn) { mutableStateOf(false) }
+                                val uniqueSources = evidence.filter { it.nodeId.isNotBlank() }
+                                    .distinctBy { it.nodeId }
+                                TextButton(onClick = { showEvidence = !showEvidence },
+                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)) {
+                                    Text(if (showEvidence) "收起来源"
+                                        else "查看来源 · ${uniqueSources.size} 张卡片")
+                                }
+                                if (showEvidence) {
+                                    evidence.take(10).forEach { ref ->
+                                        if (ref.nodeId.isBlank()) {
+                                            Text("本地画布精确统计",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        } else {
+                                            val node = board.nodes.firstOrNull { it.id == ref.nodeId }
+                                            if (node == null) {
+                                                Text("${ref.title} · 来源已移除",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            } else {
+                                                TextButton(onClick = { onLocate(ref.nodeId) },
+                                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 1.dp),
+                                                    modifier = Modifier.fillMaxWidth()) {
+                                                    Row(Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(if (node.kind == "page")
+                                                            pages[node.pageId]?.displayTitle() ?: ref.title
+                                                            else node.text.substringBefore("\n").ifBlank { ref.title },
+                                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f))
+                                                        Text("定位 ›")
+                                                    }
+                                                }
+                                            }
                                         }
+                                    }
+                                    if (evidence.size > 10) {
+                                        Text("其余来源未在此处展开",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                             }
@@ -2339,9 +2441,10 @@ private fun CanvasQuestionSheet(
                         }
                     }
                 }
-                if (history.isNotEmpty() && listState.canScrollForward) {
+                if (history.size > 1 &&
+                    (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) < history.lastIndex) {
                     TextButton(onClick = {
-                        scope.launch { listState.animateScrollToItem(history.size - 1) }
+                        scope.launch { listState.animateScrollToItem(history.lastIndex) }
                     }, modifier = Modifier.align(Alignment.End)) {
                         Text("回到最新回答 ↓")
                     }
@@ -2366,9 +2469,9 @@ private fun CanvasQuestionSheet(
                         placeholder = { Text(if (board.nodes.isEmpty()) "先添加卡片，再向画布提问" else "继续向画布提问…") },
                         minLines = 1, maxLines = 4,
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(20.dp))
+                        shape = RoundedCornerShape(16.dp))
                     Button(onClick = ::ask, enabled = canSend,
-                        modifier = Modifier.height(56.dp)
+                        modifier = Modifier.height(52.dp)
                             .semantics { contentDescription = "发送问题" },
                         shape = RoundedCornerShape(18.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp)) {
