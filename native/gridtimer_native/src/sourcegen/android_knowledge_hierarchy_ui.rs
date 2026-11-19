@@ -1774,6 +1774,12 @@ mod hierarchy_save_latency_tests {
         ] {
             assert!(source.contains(phase), "{phase}");
         }
+        assert!(source.contains("hierarchy_fast_create"));
+        assert!(source.contains("knowledgeContainerCreateNoteJson"));
+        assert!(source.contains("json.decodeFromString(NoteEntry.serializer(), rawNote)"));
+        assert!(source.contains("data.copy(notes = data.notes + newNode)"));
+        assert!(source.contains("knowledgeContainerActionAppDataJson("));
+        assert!(source.contains("persistImmediately = true, publishAfterDurable = true"));
         assert!(source.contains("elapsedMs >= 1_000L"));
         assert!(!source.contains("title=$title"));
         assert!(!source.contains("workspace=$expectedWorkspaceKey"));
