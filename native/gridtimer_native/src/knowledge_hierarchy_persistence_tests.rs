@@ -651,8 +651,11 @@ fn rust_create_node_delta_matches_the_full_durable_workspace_mutation() {
             )
             .expect("ordinary new pages and folders must take the fast path");
             let mut reconstructed: Value = serde_json::from_str(&root).unwrap();
-            reconstructed["notes"].as_array_mut().unwrap().push(
-                serde_json::from_str::<Value>(&single).unwrap()
+            let patch = serde_json::from_str::<Value>(&single).unwrap();
+            let position = patch["position"].as_u64().unwrap() as usize;
+            reconstructed["notes"].as_array_mut().unwrap().insert(
+                position,
+                patch["note"].clone(),
             );
             let full = action(&root, action_kind, &id, parent_id, "服务", now);
             assert_eq!(
