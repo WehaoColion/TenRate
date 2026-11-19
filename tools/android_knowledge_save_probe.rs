@@ -131,6 +131,14 @@ fn create_page(root: &Path) -> Result<(), String> {
         capture(root, "03_no_create_action");
         return Err("Knowledge directory has no accessible create-page control".into());
     }
+    // Root screens may expose a direct button or a compact "新建" menu.
+    // Require the actual dialog, not merely the menu's accessibility label.
+    let before_dialog = dump()?;
+    if !before_dialog.contains("新建页面") && !before_dialog.contains("New page") {
+        if !tap_any(&["子页面", "Subpage"])? {
+            return Err("Tapped create entry, but no page action was offered".into());
+        }
+    }
     capture(root, "03_page_dialog");
     let edit = elements(&dump()?).into_iter()
         .find(|node| node.class_name.ends_with("EditText")
