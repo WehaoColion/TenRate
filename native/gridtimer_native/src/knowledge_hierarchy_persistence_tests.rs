@@ -635,3 +635,61 @@ fn duplicate_root_page_remains_at_root_without_mutating_source() {
     assert_eq!(note(&copied, "other")["document"]["knowledge"]["parentId"], Value::Null);
     assert_eq!(note(&copied, "root"), note(&raw, "root"));
 }
+
+
+#[test]
+fn rust_create_node_delta_matches_the_full_durable_workspace_mutation() {
+    let root = state();
+    let root = action(&root, "create_folder", "folder", "", "资料柜", 1001);
+    let root = action(&root, "create_page", "parent", "folder", "容器", 1002);
+    for (index, parent_id) in ["", "folder", "parent"].into_iter().enumerate() {
+        for action_kind in ["create_page", "create_folder"] {
+            let id = format!("delta_{index}_{action_kind}");
+            let now = 1100 + index as i64;
+            let single = knowledge_container_create_note_json(
+                &root, action_kind, &id, parent_id, "服务", now,
+            )
+            .expect("ordinary new pages and folders must take the fast path");
+            let mut reconstructed: Value = serde_json::from_str(&root).unwrap();
+            reconstructed["notes"].as_array_mut().unwrap().push(
+                serde_json::from_str::<Value>(&single).unwrap()
+            );
+            let full = action(&root, action_kind, &id, parent_id, "服务", now);
+            assert_eq!(
+                reconstructed,
+                serde_json::from_str::<Value>(&full).unwrap(),
+                "delta must preserve the entire original document, history and folder collection",
+            );
+        }
+    }
+}
+
+#[test]
+fn rust_create_delta_rejects_invalid_or_dangling_parent_without_partial_projection() {
+    let base = action(&state(), "create_page", "root", "", "根", 1001);
+    for (action_kind, id, parent_id, title) in [
+        ("create_page", "root", "", "重复"),
+        ("create_page", "new", "missing", "无效父级"),
+        ("create_folder", "folder", "", ""),
+        ("move", "new", "root", ""),
+    ] {
+        assert!(
+            knowledge_container_create_note_json(
+                &base, action_kind, id, parent_id, title, 1002
+            ).is_none(),
+            "{action_kind}/{id} must not create a partial result"
+        );
+    }
+    let mut with_orphan: Value = serde_json::from_str(&base).unwrap();
+    let root = with_orphan["notes"].as_array_mut().unwrap().first_mut().unwrap();
+    root["document"]["knowledge"]["parentId"] = json!("future");
+    // A previously dangling child needs a full-tree compatibility refresh.
+    // Fast-path rejection is intentional; the existing full mutation can repair it.
+    let dangling = sanitize_app_data_json(&with_orphan.to_string(), 1002).unwrap();
+    assert!(knowledge_container_create_note_json(
+        &dangling, "create_page", "future", "", "补建", 1003
+    ).is_none());
+    assert!(knowledge_container_action_app_data_json(
+        &dangling, "create_page", "future", "", "补建", 1003
+    ).is_some());
+}
