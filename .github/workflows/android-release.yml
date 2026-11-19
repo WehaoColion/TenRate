@@ -232,6 +232,7 @@ jobs:
           script: |
             set -eu
             adb install -r signed_apk/tenfold_v3.0.2.1.apk
+            adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
             ./knowledge_save_probe knowledge_save_evidence
       - name: Summarize actual simulator acceptance
         if: always()
