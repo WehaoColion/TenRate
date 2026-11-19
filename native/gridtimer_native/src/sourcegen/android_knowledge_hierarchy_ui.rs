@@ -298,6 +298,13 @@ const BRIDGE: &str = r####"    fun knowledgeContainerActionAppDataJson(raw: Stri
     }
     private external fun nativeKnowledgeContainerActionAppDataJson(raw: String, action: String,
         id: String, parentId: String, title: String, now: Long): String?
+    fun knowledgeContainerCreateNoteJson(raw: String, action: String, id: String,
+        parentId: String, title: String, now: Long): String? {
+        if (!nativeAvailable) return null
+        return runCatching { nativeKnowledgeContainerCreateNoteJson(raw, action, id, parentId, title, now) }.getOrNull()
+    }
+    private external fun nativeKnowledgeContainerCreateNoteJson(raw: String, action: String,
+        id: String, parentId: String, title: String, now: Long): String?
 "####;
 const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction(action: String, id: String, parentId: String,
         title: String, expectedWorkspaceKey: String): Boolean {
@@ -321,14 +328,34 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
                     val encodeStarted = System.nanoTime()
                     val originalJson = json.encodeToString(data)
                     recordHierarchyStage("hierarchy_encode", encodeStarted)
-                    val nativeStarted = System.nanoTime()
-                    val mutatedJson = NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
-                        originalJson, action, id, parentId, title, now())
-                    recordHierarchyStage("hierarchy_rust_mutation", nativeStarted)
-                    val decodeStarted = System.nanoTime()
-                    val decoded = mutatedJson?.let { decodeNativeAppData(it) }
-                    recordHierarchyStage("hierarchy_decode", decodeStarted)
-                    decoded?.also { applied = true } ?: data
+                    val mutationAt = now()
+                    val fastStarted = System.nanoTime()
+                    val newNodeJson = if (action == "create_page" || action == "create_folder") {
+                        NativeOptimizerBridge.knowledgeContainerCreateNoteJson(
+                            originalJson, action, id, parentId, title, mutationAt)
+                    } else null
+                    recordHierarchyStage("hierarchy_fast_create", fastStarted)
+                    val newNode = newNodeJson?.let { rawNote ->
+                        runCatching { json.decodeFromString(NoteEntry.serializer(), rawNote) }.getOrNull()
+                    }
+                    if (newNode != null && newNode.id == id) {
+                        applied = true
+                        // Keep unchanged domains and all existing notes by identity. The
+                        // ordinary updateDataDetailed lock, schema preflight, durable
+                        // SQLite commit and recovery mirrors still run below.
+                        data.copy(notes = data.notes + newNode)
+                    } else {
+                        // Dangling descendants or an unrecognized/corrupt result must
+                        // take the original lossless full-tree path, never a partial write.
+                        val nativeStarted = System.nanoTime()
+                        val mutatedJson = NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
+                            originalJson, action, id, parentId, title, mutationAt)
+                        recordHierarchyStage("hierarchy_rust_mutation", nativeStarted)
+                        val decodeStarted = System.nanoTime()
+                        val decoded = mutatedJson?.let { decodeNativeAppData(it) }
+                        recordHierarchyStage("hierarchy_decode", decodeStarted)
+                        decoded?.also { applied = true } ?: data
+                    }
                 }
             }
             return applied && attempt.succeeded
