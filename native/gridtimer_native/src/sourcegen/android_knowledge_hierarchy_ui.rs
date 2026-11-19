@@ -335,15 +335,26 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
                             originalJson, action, id, parentId, title, mutationAt)
                     } else null
                     recordHierarchyStage("hierarchy_fast_create", fastStarted)
-                    val newNode = newNodeJson?.let { rawNote ->
-                        runCatching { json.decodeFromString(NoteEntry.serializer(), rawNote) }.getOrNull()
+                    val createDelta = newNodeJson?.let { rawDelta ->
+                        runCatching {
+                            val patch = json.parseToJsonElement(rawDelta) as?
+                                kotlinx.serialization.json.JsonObject
+                            val position = patch?.get("position")?.toString()?.toIntOrNull()
+                            val note = patch?.get("note")?.let {
+                                json.decodeFromString(NoteEntry.serializer(), it.toString())
+                            }
+                            if (position != null && position in 0..data.notes.size &&
+                                note != null && note.id == id) position to note else null
+                        }.getOrNull()
                     }
-                    if (newNode != null && newNode.id == id) {
+                    if (createDelta != null) {
                         applied = true
-                        // Keep unchanged domains and all existing notes by identity. The
-                        // ordinary updateDataDetailed lock, schema preflight, durable
-                        // SQLite commit and recovery mirrors still run below.
-                        data.copy(notes = data.notes + newNode)
+                        // Rust supplies the position after canonical sanitization;
+                        // preserving order is critical to pinned/recent hierarchy views.
+                        val notes = data.notes.toMutableList().apply {
+                            add(createDelta.first, createDelta.second)
+                        }
+                        data.copy(notes = notes)
                     } else {
                         // Dangling descendants or an unrecognized/corrupt result must
                         // take the original lossless full-tree path, never a partial write.
@@ -1776,8 +1787,9 @@ mod hierarchy_save_latency_tests {
         }
         assert!(source.contains("hierarchy_fast_create"));
         assert!(source.contains("knowledgeContainerCreateNoteJson"));
-        assert!(source.contains("json.decodeFromString(NoteEntry.serializer(), rawNote)"));
-        assert!(source.contains("data.copy(notes = data.notes + newNode)"));
+        assert!(source.contains("json.decodeFromString(NoteEntry.serializer(), it.toString())"));
+        assert!(source.contains("add(createDelta.first, createDelta.second)"));
+        assert!(source.contains("position in 0..data.notes.size"));
         assert!(source.contains("knowledgeContainerActionAppDataJson("));
         assert!(source.contains("persistImmediately = true, publishAfterDurable = true"));
         assert!(source.contains("elapsedMs >= 1_000L"));
