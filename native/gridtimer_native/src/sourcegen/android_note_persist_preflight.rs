@@ -154,6 +154,7 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
         workspaceKey: String,
         onNativeVerification: (Long, Long) -> Unit = { _, _ -> },
         onTransactionWait: (Long) -> Unit = {},
+        onScope: (Boolean) -> Unit = {},
         action: () -> T
     ): T {
         val waitingSince = System.nanoTime()
@@ -195,9 +196,17 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
                     android.util.Log.w("NoteSaveLatency", "Save preflight requires full recovery verification", it)
                 },
                 action = {
+                    val currentProof = currentOnlyVerified &&
+                        snapshotReadWindow.get()?.hasCurrentOnlyReceipt(
+                            workspaceKey, snapshotWriteStamp()
+                        ) == true
+                    // Diagnostic logging must never turn a committed save into a failure.
+                    runCatching { onScope(currentProof) }.onFailure {
+                        android.util.Log.w("NoteSaveLatency", "scope diagnostic unavailable", it)
+                    }
                     android.util.Log.i(
                         "NoteSaveLatency",
-                        "savePreflight scope=" + if (currentOnlyVerified) "current" else "full"
+                        "savePreflight scope=" + if (currentProof) "current" else "full"
                     )
                     action()
                 }
@@ -221,6 +230,12 @@ const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySur
             logDiagnosticEvent(
                 category = "notes.local_save.latency",
                 message = "phase=preflight_transaction_wait durationMs=$millis"
+            )
+        },
+        onScope = { current ->
+            logDiagnosticEvent(
+                category = "notes.local_save.preflight",
+                message = if (current) "scope=current" else "scope=full"
             )
         }
     ) {
@@ -565,6 +580,9 @@ mod generated_preflight_diagnostics_tests {
         assert!(DATABASE_PREFLIGHT.contains("schema_version > ? LIMIT 1"));
         assert!(DATABASE_PREFLIGHT.contains("sha256 IS NULL OR sha256 = ''"));
         assert!(DATABASE_PREFLIGHT.contains("onTransactionWait(waitMs)"));
+        assert!(SCHEMA_PREFLIGHT.contains("notes.local_save.preflight"));
+        assert!(DATABASE_PREFLIGHT.contains("hasCurrentOnlyReceipt"));
+        assert!(DATABASE_PREFLIGHT.contains("onScope(currentProof)"));
         assert!(SCHEMA_PREFLIGHT.contains("phase=preflight_transaction_wait"));
         assert!(POLICY.contains("window.recordNativeCurrent(workspaceKey, after)"));
         assert!(POLICY.contains("window.recordNativeHistory(workspaceKey, after)"));
