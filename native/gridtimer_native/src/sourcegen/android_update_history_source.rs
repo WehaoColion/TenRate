@@ -122,7 +122,7 @@ internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
         sections = listOf(
             AndroidUpdateSection("保存性能", listOf(
                 "按工作区和版本定位异常历史记录，利用局部索引判断缺失摘要或未封装记录，正常历史不再逐条回表查询。",
-                "保持对未来版本、旧式历史、缺失摘要和恢复镜像的完整安全保护，不自动删除历史数据。",
+                "旧式历史在保存时保留原文且不被自动清理，启动和恢复时仍执行完整认证；未来版本与缺失摘要继续触发完整检查。",
                 "将外层数据库同步锁等待和 SQLite 开启事务等待分别记录，便于分析真实设备数分钟的卡顿。"
             )),
             AndroidUpdateSection("验收", listOf(
