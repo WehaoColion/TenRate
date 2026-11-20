@@ -47,6 +47,9 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
 
         }
         DATABASE => {
+            // Sourcegen unit tests also render a pre-migration v4 fragment.
+            // Full production generation has the v5 history codec already installed.
+            if source.contains("const val DATABASE_VERSION = 5") {
             // Migrate existing v5 history storage in place, retaining all payloads.
             replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 6")?;
             replace(&mut source, "        createHistoryEncodingSchema(database)\n    }\n\n    override fun onUpgrade",
@@ -60,6 +63,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             replace(&mut source,
                 "              AND created_at_epoch_millis < ?\n              AND id NOT IN (",
                 "              AND created_at_epoch_millis < ?\n              AND sha256 IS NOT NULL AND sha256 != ''\n              AND envelope_sha256 IS NOT NULL AND envelope_sha256 != ''\n              AND id NOT IN (")?;
+            }
             // Startup and save use the same historical metadata safety guard.
             let startup = source.find("    private fun historyRequiresFullStartupScan(")
                 .ok_or("missing startup history metadata guard")?;
