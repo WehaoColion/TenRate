@@ -153,10 +153,39 @@ const DATABASE_WRITE_GUARD: &str = r####"    data class SnapshotWriteStamp(
         return SnapshotWriteStamp(database, scalar("PRAGMA data_version"), scalar("SELECT total_changes()"))
     }
 
+    // Keep the original database monitor; measure contention before entry.
+    fun <T> withSnapshotWriteTransaction(action: () -> T): T =
+        withSnapshotWriteTransactionTracked({}, {}, action)
+
+    fun <T> withSnapshotWriteTransactionTracked(
+        onMonitorWait: (Long) -> Unit,
+        onSqliteBeginWait: (Long) -> Unit,
+        action: () -> T
+    ): T {
+        val queuedAt = System.nanoTime()
+        return withSnapshotWriteTransactionLocked(queuedAt, onMonitorWait, onSqliteBeginWait, action)
+    }
+
     @Synchronized
-    fun <T> withSnapshotWriteTransaction(action: () -> T): T {
+    private fun <T> withSnapshotWriteTransactionLocked(
+        queuedAt: Long,
+        onMonitorWait: (Long) -> Unit,
+        onSqliteBeginWait: (Long) -> Unit,
+        action: () -> T
+    ): T {
+        val monitorWaitMs = (System.nanoTime() - queuedAt).coerceAtLeast(0L) / 1_000_000L
+        if (monitorWaitMs >= 1_000L) {
+            android.util.Log.w("NoteSaveLatency", "database_monitor_wait ms=$monitorWaitMs")
+            onMonitorWait(monitorWaitMs)
+        }
+        val beginAt = System.nanoTime()
         val database = writableDatabase
         database.beginTransactionNonExclusive()
+        val beginWaitMs = (System.nanoTime() - beginAt).coerceAtLeast(0L) / 1_000_000L
+        if (beginWaitMs >= 1_000L) {
+            android.util.Log.w("NoteSaveLatency", "database_begin_wait ms=$beginWaitMs")
+            onSqliteBeginWait(beginWaitMs)
+        }
         try {
             val result = action()
             database.setTransactionSuccessful()

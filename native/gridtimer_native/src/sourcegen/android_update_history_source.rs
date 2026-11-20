@@ -1,3 +1,4 @@
+// v3.0.2.5 - Index save safety metadata and isolate outer database wait.
 // v3.0.2.4 - Prioritize authenticated current-only knowledge save verification.
 // v3.0.2.3 - Keep sticky summary short and independent from actions.
 // v3.0.2.2 - Scoped knowledge creation, bounded mirror retention and queue-stage feedback.
@@ -84,7 +85,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.4";
+pub const LATEST_VERSION: &str = "3.0.2.5";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -114,6 +115,22 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.5",
+        updatedAt = "2026-11-21 03:51",
+        summary = "修正大型知识库保存前检查的历史索引与外层事务等待计时",
+        sections = listOf(
+            AndroidUpdateSection("保存性能", listOf(
+                "按工作区和版本定位异常历史记录，利用局部索引判断缺失摘要或未封装记录，正常历史不再逐条回表查询。",
+                "保持对未来版本、旧式历史、缺失摘要和恢复镜像的完整安全保护，不自动删除历史数据。",
+                "将外层数据库同步锁等待和 SQLite 开启事务等待分别记录，便于分析真实设备数分钟的卡顿。"
+            )),
+            AndroidUpdateSection("验收", listOf(
+                "用 Rust 回归测试验证历史异常检测、索引查询计划和工作区隔离。",
+                "在 Android 模拟器使用正式签名 APK 验证知识页面保存、实际数据库内容及强制停止后的恢复。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.4",
         updatedAt = "2026-11-20 09:10",
