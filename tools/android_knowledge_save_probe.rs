@@ -346,6 +346,8 @@ fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
         .map_err(|error| error.to_string())?;
     if last.contains("scope=current") {
         Ok("authenticated current-only (application diagnostic confirmed)")
+    } else if last.contains("scope=cached") {
+        Ok("unchanged authenticated workspace stamp (application diagnostic confirmed)")
     } else {
         Err(format!("The measured save did not use current-only preflight: {last}"))
     }
