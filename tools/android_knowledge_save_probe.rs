@@ -303,7 +303,7 @@ fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
     if matches.contains("savePreflight scope=current") {
         Ok("current-only (logcat confirmed)")
     } else if matches.contains("savePreflight scope=full") {
-        Ok("conservative full-history check (expected for unsealed legacy fixture)")
+        Err("App fell back to full-history scan on a legacy-envelope-only save fixture".into())
     } else {
         Ok("logcat unavailable; durability and timed-save assertions used")
     }
@@ -331,7 +331,7 @@ fn run(root: &Path) -> Result<String, String> {
     }
     let durable_history = persisted_after_restart(root, CREATED)?;
     Ok(format!(
-        "PASS: Android {VERSION} saved a knowledge page with {durable_history} historical SQLite snapshots in {saved_millis} ms; on-disk current snapshot and UI both survived force-stop/restart. Preflight trace: {scope}. The injected legacy rows do not establish current-only fast-path performance."
+        "PASS: Android {VERSION} saved a knowledge page with {durable_history} historical SQLite snapshots in {saved_millis} ms; on-disk current snapshot and UI both survived force-stop/restart. Preflight trace: {scope}. Legacy-envelope fixture retains historical data; current-only routing must be corroborated by diagnostics where available."
     ))
 }
 fn main() {
