@@ -10,6 +10,7 @@ const VERSION: &str = "3.0.2.5";
 const CREATED: &str = "KnowledgeSaveProbe";
 const SEED: &str = "KnowledgeSeedProbe";
 const HISTORY_ROWS: usize = 7_200;
+const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 
 #[derive(Clone)]
 struct Node {
@@ -233,6 +234,39 @@ fn sqlite(db: &Path, statement: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
+
+// Expand only the historical JSON with legal whitespace, retaining the exact
+// AppData object. An independently calculated digest keeps each row valid;
+// padding invalid JSON or copying the old digest would test quarantine instead.
+fn padded_history_digest(db: &Path, root: &Path) -> Result<String, String> {
+    let encoded = sqlite(db,
+        "SELECT hex(app_data_json) FROM current_snapshot WHERE workspace_key = 'guest';")?;
+    if encoded.is_empty() || encoded.len() % 2 != 0 {
+        return Err("Seed current JSON is empty or has invalid hexadecimal encoding".into());
+    }
+    let mut payload = Vec::with_capacity(encoded.len() / 2 + HISTORY_PADDING_BYTES);
+    for pair in encoded.as_bytes().chunks_exact(2) {
+        let digits = std::str::from_utf8(pair).map_err(|error| error.to_string())?;
+        payload.push(u8::from_str_radix(digits, 16).map_err(|error| error.to_string())?);
+    }
+    payload.extend(std::iter::repeat(b' ').take(HISTORY_PADDING_BYTES));
+    let candidate = root.join("legacy_history_payload_sample.json");
+    fs::write(&candidate, &payload).map_err(|error| error.to_string())?;
+    let hashed = Command::new("sha256sum").arg(&candidate).output()
+        .map_err(|error| format!("sha256sum unavailable: {error}"))?;
+    if !hashed.status.success() {
+        return Err(format!("Cannot digest history fixture: {}", String::from_utf8_lossy(&hashed.stderr)));
+    }
+    let text = String::from_utf8_lossy(&hashed.stdout);
+    let digest = text.split_whitespace().next().ok_or("No SHA-256 fixture digest")?;
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("History fixture SHA-256 is malformed".into());
+    }
+    fs::write(root.join("history_payload_bytes.txt"), format!("{}\n", payload.len()))
+        .map_err(|error| error.to_string())?;
+    Ok(digest.to_owned())
+}
+
 // The emulator is rooted only for seeding a true on-disk historical workload.
 // Production APK still runs with its normal signature, sandbox and persistence code.
 fn seed_history(root: &Path) -> Result<(), String> {
@@ -251,16 +285,20 @@ fn seed_history(root: &Path) -> Result<(), String> {
         return Err(format!("Expected one guest current snapshot before seeding, found {current}"));
     }
     // Preserve the payload/digest from an already authenticated current row.
-    // Deliberately leave legacy envelopes blank to exercise safe fallback.
+    // Legacy history has a valid digest and a blank envelope; only startup
+    // recovery must scan these unchanged rows. Save must preserve them while
+    // authenticating the current snapshot without rereading all history.
     // Blank legacy history envelopes are supported by the existing native
     // history verifier, so no fabricated signature is introduced.
+    let digest = padded_history_digest(&local, root)?;
     let sql = format!(
         "PRAGMA wal_checkpoint(TRUNCATE); \
          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < {HISTORY_ROWS}) \
          INSERT INTO snapshot_history (workspace_key, schema_version, revision, item_count, \
              app_data_json, sha256, envelope_sha256, created_at_epoch_millis) \
          SELECT c.workspace_key, c.schema_version, c.revision, c.item_count, \
-             c.app_data_json, c.sha256, '', c.updated_at_epoch_millis - {HISTORY_ROWS} + seq.n \
+             c.app_data_json || printf('%*s', {HISTORY_PADDING_BYTES}, ''), '{digest}', '', \
+             c.updated_at_epoch_millis - {HISTORY_ROWS} + seq.n \
          FROM current_snapshot c CROSS JOIN seq WHERE c.workspace_key = 'guest'; \
          PRAGMA wal_checkpoint(TRUNCATE);"
     );
