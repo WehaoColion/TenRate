@@ -58,6 +58,23 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 6) createHistoryGuardIndexes(database)")?;
             replace(&mut source, "    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {",
                 &format!("{HISTORY_GUARD_INDEXES}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{"))?;
+            // A database backup stamped with v6 must contain v6 guard indexes;
+            // otherwise restoring it would skip onUpgrade and fail INDEXED BY.
+            replace(&mut source,
+                "                database.execSQL(\\\"PRAGMA app_state_backup.user_version=$DATABASE_VERSION\\\")",
+                r####"                database.execSQL(
+                    "CREATE INDEX app_state_backup.snapshot_history_schema_guard " +
+                        "ON snapshot_history(workspace_key, schema_version)"
+                )
+                database.execSQL(
+                    "CREATE INDEX app_state_backup.snapshot_history_digest_guard " +
+                        "ON snapshot_history(workspace_key) WHERE sha256 IS NULL OR sha256 = ''"
+                )
+                database.execSQL(
+                    "CREATE INDEX app_state_backup.snapshot_history_envelope_guard " +
+                        "ON snapshot_history(workspace_key) WHERE envelope_sha256 IS NULL OR envelope_sha256 = ''"
+                )
+                database.execSQL("PRAGMA app_state_backup.user_version=$DATABASE_VERSION")"####)?;
             // Saves may bypass a legacy row's body, but must NEVER prune
             // unauthenticated history before an explicit recovery/verification.
             replace(&mut source,
