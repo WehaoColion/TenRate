@@ -121,12 +121,18 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
     // Unknown schema/digest triggers full verification; legacy envelopes
     // are preserved unpruned and checked during startup or explicit recovery.
     private fun historyRequiresFullSaveVerification(workspaceKey: String): Boolean {
-        val unsafeSchema = writableDatabase.rawQuery(
+        val unknownSchema = writableDatabase.rawQuery(
             "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
-                "WHERE workspace_key = ? AND (schema_version IS NULL OR schema_version > ?) LIMIT 1",
+                "WHERE workspace_key = ? AND schema_version IS NULL LIMIT 1",
+            arrayOf(workspaceKey)
+        ).use { it.moveToFirst() }
+        if (unknownSchema) return true
+        val futureSchema = writableDatabase.rawQuery(
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
+                "WHERE workspace_key = ? AND schema_version > ? LIMIT 1",
             arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
         ).use { it.moveToFirst() }
-        if (unsafeSchema) return true
+        if (futureSchema) return true
         return writableDatabase.rawQuery(
             "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_digest_guard " +
                 "WHERE workspace_key = ? AND (sha256 IS NULL OR sha256 = '') LIMIT 1",
@@ -491,14 +497,17 @@ mod generated_preflight_diagnostics_tests {
             db.execute("INSERT INTO snapshot_history VALUES (?1, 15, ?2, 'digest', 'envelope')",
                 rusqlite::params![if i % 113 == 0 { "other" } else { "guest" }, "note-content"]).unwrap();
         }
-        let schema = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
-            WHERE workspace_key = ?1 AND (schema_version IS NULL OR schema_version > ?2) LIMIT 1";
+        let schema_null = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
+            WHERE workspace_key = ?1 AND schema_version IS NULL LIMIT 1";
+        let schema_future = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
+            WHERE workspace_key = ?1 AND schema_version > ?2 LIMIT 1";
         let digest = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_digest_guard
             WHERE workspace_key = ?1 AND (sha256 IS NULL OR sha256 = '') LIMIT 1";
         let envelope = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_envelope_guard
             WHERE workspace_key = ?1 AND (envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1";
         let unsafe_schema = |workspace: &str| -> bool {
-            db.prepare(schema).unwrap().exists(rusqlite::params![workspace, 15]).unwrap()
+            db.prepare(schema_null).unwrap().exists([workspace]).unwrap() ||
+                db.prepare(schema_future).unwrap().exists(rusqlite::params![workspace, 15]).unwrap()
         };
         let unsafe_digest = |workspace: &str| -> bool {
             db.prepare(digest).unwrap().exists([workspace]).unwrap()
@@ -517,15 +526,21 @@ mod generated_preflight_diagnostics_tests {
         };
         let version: &dyn rusqlite::ToSql = &15_i64;
         let workspace: &dyn rusqlite::ToSql = &"guest";
-        let schema_plan = plan(schema, vec![workspace, version]);
+        let null_plan = plan(schema_null, vec![workspace]);
+        let schema_plan = plan(schema_future, vec![workspace, version]);
         let digest_plan = plan(digest, vec![workspace]);
         let envelope_plan = plan(envelope, vec![workspace]);
         assert!(schema_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{schema_plan}");
+        assert!(schema_plan.contains("schema_version>?"), "{schema_plan}");
+        assert!(null_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{null_plan}");
+        assert!(null_plan.contains("schema_version=?"), "{null_plan}");
         assert!(digest_plan.contains("INDEX snapshot_history_digest_guard"), "{digest_plan}");
         assert!(envelope_plan.contains("INDEX snapshot_history_envelope_guard"), "{envelope_plan}");
         db.execute("INSERT INTO snapshot_history VALUES ('other', 16, 'x', 'digest', 'envelope')", []).unwrap();
         assert!(!unsafe_schema("guest"));
         db.execute("INSERT INTO snapshot_history VALUES ('guest', 16, 'x', 'digest', 'envelope')", []).unwrap();
+        assert!(unsafe_schema("guest"));
+        db.execute("INSERT INTO snapshot_history VALUES ('guest', NULL, 'x', 'digest', 'envelope')", []).unwrap();
         assert!(unsafe_schema("guest"));
         db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', 'digest', '')", []).unwrap();
         assert!(unsafe_envelope("guest"));
@@ -546,7 +561,8 @@ mod generated_preflight_diagnostics_tests {
         assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_envelope_guard"));
         assert!(HISTORY_GUARD_INDEXES.contains("CREATE INDEX IF NOT EXISTS snapshot_history_digest_guard"));
         assert!(DATABASE_PREFLIGHT.contains("envelope_sha256 IS NULL OR envelope_sha256 = ''"));
-        assert!(DATABASE_PREFLIGHT.contains("schema_version IS NULL OR schema_version > ?"));
+        assert!(DATABASE_PREFLIGHT.contains("schema_version IS NULL LIMIT 1"));
+        assert!(DATABASE_PREFLIGHT.contains("schema_version > ? LIMIT 1"));
         assert!(DATABASE_PREFLIGHT.contains("sha256 IS NULL OR sha256 = ''"));
         assert!(DATABASE_PREFLIGHT.contains("onTransactionWait(waitMs)"));
         assert!(SCHEMA_PREFLIGHT.contains("phase=preflight_transaction_wait"));
