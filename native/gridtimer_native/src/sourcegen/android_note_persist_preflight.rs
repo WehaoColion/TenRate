@@ -27,6 +27,12 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                     .find("    private fun migrateLegacyStateOnce(")
                     .ok_or("missing note save schema preflight end")?;
             source.replace_range(start..end, SCHEMA_PREFLIGHT);
+            // An unchanged, authenticated startup/save stamp can skip preflight
+            // entirely. Record this explicitly so the emulator cannot confuse
+            // absence of a scan with missing diagnostic data.
+            replace(&mut source,
+                "                // Preflight and the authoritative write share one primary transaction;",
+                REPOSITORY_CACHE_DIAGNOSTIC)?;
             // Time the outer save transaction; nested preflight starts too late.
             replace(&mut source,
                 "            val committedStamp = stateDatabase.withSnapshotWriteTransaction {",
@@ -96,6 +102,14 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     }
     Ok(source)
 }
+
+const REPOSITORY_CACHE_DIAGNOSTIC: &str = r####"                if (cached?.first == workspaceKey && cached?.second == stamp) {
+                    logDiagnosticEvent(
+                        category = "notes.local_save.preflight",
+                        message = "scope=cached"
+                    )
+                }
+                // Preflight and the authoritative write share one primary transaction;"####;
 
 const HISTORY_GUARD_INDEXES: &str = r####"    // Compact future-schema and unsealed-envelope probes for every workspace.
     private fun createHistoryGuardIndexes(database: SQLiteDatabase) {
@@ -581,6 +595,7 @@ mod generated_preflight_diagnostics_tests {
         assert!(DATABASE_PREFLIGHT.contains("sha256 IS NULL OR sha256 = ''"));
         assert!(DATABASE_PREFLIGHT.contains("onTransactionWait(waitMs)"));
         assert!(SCHEMA_PREFLIGHT.contains("notes.local_save.preflight"));
+        assert!(REPOSITORY_CACHE_DIAGNOSTIC.contains("scope=cached"));
         assert!(DATABASE_PREFLIGHT.contains("hasCurrentOnlyReceipt"));
         assert!(DATABASE_PREFLIGHT.contains("onScope(currentProof)"));
         assert!(SCHEMA_PREFLIGHT.contains("phase=preflight_transaction_wait"));
