@@ -176,7 +176,9 @@ const DATABASE_WRITE_GUARD: &str = r####"    data class SnapshotWriteStamp(
         val monitorWaitMs = (System.nanoTime() - queuedAt).coerceAtLeast(0L) / 1_000_000L
         if (monitorWaitMs >= 1_000L) {
             android.util.Log.w("NoteSaveLatency", "database_monitor_wait ms=$monitorWaitMs")
-            onMonitorWait(monitorWaitMs)
+            runCatching { onMonitorWait(monitorWaitMs) }.onFailure {
+                android.util.Log.w("NoteSaveLatency", "monitor wait diagnostic unavailable", it)
+            }
         }
         val beginAt = System.nanoTime()
         val database = writableDatabase
@@ -184,7 +186,9 @@ const DATABASE_WRITE_GUARD: &str = r####"    data class SnapshotWriteStamp(
         val beginWaitMs = (System.nanoTime() - beginAt).coerceAtLeast(0L) / 1_000_000L
         if (beginWaitMs >= 1_000L) {
             android.util.Log.w("NoteSaveLatency", "database_begin_wait ms=$beginWaitMs")
-            onSqliteBeginWait(beginWaitMs)
+            runCatching { onSqliteBeginWait(beginWaitMs) }.onFailure {
+                android.util.Log.w("NoteSaveLatency", "begin wait diagnostic unavailable", it)
+            }
         }
         try {
             val result = action()
