@@ -49,19 +49,19 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         DATABASE => {
             // Migrate existing v5 history storage in place, retaining all payloads.
             replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 6")?;
-            replace(&mut source, "        createHistoryEncodingSchema(database)\\n    }\\n\\n    override fun onUpgrade",
-                "        createHistoryEncodingSchema(database)\\n        createHistoryGuardIndexes(database)\\n    }\\n\\n    override fun onUpgrade")?;
+            replace(&mut source, "        createHistoryEncodingSchema(database)\n    }\n\n    override fun onUpgrade",
+                "        createHistoryEncodingSchema(database)\n        createHistoryGuardIndexes(database)\n    }\n\n    override fun onUpgrade")?;
             replace(&mut source, "        if (oldVersion < 5) createHistoryEncodingSchema(database)",
-                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\\n        if (oldVersion < 6) createHistoryGuardIndexes(database)")?;
+                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 6) createHistoryGuardIndexes(database)")?;
             replace(&mut source, "    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {",
-                &format!("{HISTORY_GUARD_INDEXES}\\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{"))?;
+                &format!("{HISTORY_GUARD_INDEXES}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{"))?;
             // Startup and save use the same historical metadata safety guard.
             let startup = source.find("    private fun historyRequiresFullStartupScan(")
                 .ok_or("missing startup history metadata guard")?;
-            let startup_end = startup + source[startup..].find("\\n\\n    fun <T> withVerifiedWorkspaceReads(")
+            let startup_end = startup + source[startup..].find("\n\n    fun <T> withVerifiedWorkspaceReads(")
                 .ok_or("missing startup history guard end")?;
             source.replace_range(startup..startup_end,
-                "    private fun historyRequiresFullStartupScan(workspaceKey: String): Boolean =\\n        historyRequiresFullSaveVerification(workspaceKey)");
+                "    private fun historyRequiresFullStartupScan(workspaceKey: String): Boolean =\n        historyRequiresFullSaveVerification(workspaceKey)");
             replace(&mut source, "    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()",
                 &format!("{DATABASE_PREFLIGHT}\n    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()"))?;
             source.push_str(POLICY);
