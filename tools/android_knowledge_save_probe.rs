@@ -1,11 +1,14 @@
+// v3.0.2.4 - Acceptance with 7200 real SQLite history rows and durable restart.
 //! Android API 35 signed-APK acceptance: new knowledge page must persist after restart.
 //! The driver runs only against an installed signed APK, never a mocked UI.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "3.0.2.2";
+const VERSION: &str = "3.0.2.4";
 const CREATED: &str = "KnowledgeSaveProbe";
+const SEED: &str = "KnowledgeSeedProbe";
+const HISTORY_ROWS: usize = 7_200;
 
 #[derive(Clone)]
 struct Node {
@@ -126,7 +129,7 @@ fn directory(root: &Path) -> Result<(), String> {
     capture(root, "02_directory_not_found");
     Err("Could not reach the Android knowledge hierarchy and its create actions".into())
 }
-fn create_page(root: &Path) -> Result<u128, String> {
+fn create_page(root: &Path, page_name: &str) -> Result<u128, String> {
     if !tap_any(&["新建子页面", "新建页面", "New subpage"])? {
         capture(root, "03_no_create_action");
         return Err("Knowledge directory has no accessible create-page control".into());
@@ -145,7 +148,7 @@ fn create_page(root: &Path) -> Result<u128, String> {
             && node.bounds[2] - node.bounds[0] > 60)
         .ok_or("New-page title field not accessible")?;
     tap(&edit)?;
-    cmd(&["shell", "input", "text", CREATED])?;
+    cmd(&["shell", "input", "text", page_name])?;
     sleep(Duration::from_millis(450));
     capture(root, "04_title_entered");
     if !tap_any(&["确定", "Confirm", "OK"])? {
@@ -156,7 +159,7 @@ fn create_page(root: &Path) -> Result<u128, String> {
     for tick in 0..28 {
         let current = dump()?;
         if tick == 2 || tick == 10 { capture(root, &format!("05_saving_{tick}")); }
-        if current.contains(CREATED) && !current.contains("正在保存") &&
+        if current.contains(page_name) && !current.contains("正在保存") &&
             !current.contains("等待前序保存") && !current.contains("正在写入本地数据") {
             saved = true;
             break;
@@ -176,13 +179,13 @@ fn create_page(root: &Path) -> Result<u128, String> {
     Ok(started.elapsed().as_millis())
 }
 
-fn persisted_after_restart(root: &Path) -> Result<(), String> {
+fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(), String> {
     cmd(&["shell", "am", "force-stop", PACKAGE])?;
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
     for attempt in 0..18 {
-        if find(&[CREATED])?.is_some() {
+        if find(&[page_name])?.is_some() {
             capture(root, "07_persisted_after_restart");
             return Ok(());
         }
@@ -197,6 +200,74 @@ fn persisted_after_restart(root: &Path) -> Result<(), String> {
     Err("New knowledge page was not found after app process restart".into())
 }
 
+fn sqlite(db: &Path, statement: &str) -> Result<String, String> {
+    let out = Command::new("sqlite3").arg(db).arg(statement)
+        .output().map_err(|e| format!("sqlite3 is unavailable: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("SQLite history fixture failed: {}", String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+// The emulator is rooted only for seeding a true on-disk historical workload.
+// Production APK still runs with its normal signature, sandbox and persistence code.
+fn seed_history(root: &Path) -> Result<(), String> {
+    cmd(&["shell", "am", "force-stop", PACKAGE])?;
+    cmd(&["root"])?;
+    cmd(&["wait-for-device"])?;
+    let device = "/data/user/0/com.ofairyo.gridtimer/databases/app_state.db";
+    let local = root.join("fixture_app_state.db");
+    let local_str = local.to_str().ok_or("Fixture path is not UTF-8")?;
+    cmd(&["pull", device, local_str])?;
+    for extension in ["-wal", "-shm"] {
+        let _ = adb(&["pull", &format!("{device}{extension}"), &format!("{local_str}{extension}")]);
+    }
+    let current = sqlite(&local, "SELECT COUNT(*) FROM current_snapshot WHERE workspace_key = 'guest';")?;
+    if current != "1" {
+        return Err(format!("Expected one guest current snapshot before seeding, found {current}"));
+    }
+    // Preserve the payload/digest from an already authenticated current row.
+    // Blank legacy history envelopes are supported by the existing native
+    // history verifier, so no fabricated signature is introduced.
+    let sql = format!(
+        "PRAGMA wal_checkpoint(TRUNCATE); \
+         WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < {HISTORY_ROWS}) \
+         INSERT INTO snapshot_history (workspace_key, schema_version, revision, item_count, \
+             app_data_json, sha256, envelope_sha256, created_at_epoch_millis) \
+         SELECT c.workspace_key, c.schema_version, c.revision, c.item_count, \
+             c.app_data_json, c.sha256, '', c.updated_at_epoch_millis - {HISTORY_ROWS} + seq.n \
+         FROM current_snapshot c CROSS JOIN seq WHERE c.workspace_key = 'guest'; \
+         PRAGMA wal_checkpoint(TRUNCATE);"
+    );
+    sqlite(&local, &sql)?;
+    let count: usize = sqlite(&local,
+        "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
+        .parse().map_err(|_| "Could not read seeded history row count")?;
+    if count < HISTORY_ROWS {
+        return Err(format!("History fixture contains {count} rows, expected at least {HISTORY_ROWS}"));
+    }
+    let temporary = "/data/local/tmp/tenrate_history_fixture.db";
+    cmd(&["push", local_str, temporary])?;
+    cmd(&["shell", "cp", temporary, device])?;
+    let _ = cmd(&["shell", "rm", "-f", &format!("{device}-wal"), &format!("{device}-shm")]);
+    let _ = cmd(&["shell", "restorecon", device]);
+    cmd(&["shell", "rm", "-f", temporary])?;
+    fs::write(root.join("fixture_history_count.txt"), format!("{count}\n"))
+        .map_err(|e| e.to_string())?;
+    cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    Ok(())
+}
+
+fn verify_current_only_preflight(root: &Path) -> Result<(), String> {
+    let log = cmd(&["logcat", "-d", "-s", "NoteSaveLatency:I", "*:S"])?;
+    fs::write(root.join("save_preflight_logcat.txt"), &log).map_err(|e| e.to_string())?;
+    if !log.contains("savePreflight scope=current") {
+        return Err("No transaction-pinned current-only proof during a save with 7200 history rows".into());
+    }
+    Ok(())
+}
+
 fn run(root: &Path) -> Result<String, String> {
     cmd(&["wait-for-device"])?;
     let info = cmd(&["shell", "dumpsys", "package", PACKAGE])?;
@@ -206,10 +277,15 @@ fn run(root: &Path) -> Result<String, String> {
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
-    let saved_millis = create_page(root)?;
-    persisted_after_restart(root)?;
+    let _ = create_page(root, SEED)?;
+    seed_history(root)?;
+    directory(root)?;
+    cmd(&["logcat", "-c"])?;
+    let saved_millis = create_page(root, CREATED)?;
+    verify_current_only_preflight(root)?;
+    persisted_after_restart(root, CREATED)?;
     Ok(format!(
-        "PASS: Android {VERSION} created the knowledge page and confirmed all saving-stage indicators cleared after {saved_millis} ms, then force-stopped and restarted with the page still durable."
+        "PASS: Android {VERSION} saved a knowledge page against at least {HISTORY_ROWS} historical SQLite snapshots in {saved_millis} ms, used an authenticated current-only preflight, and retained the page across force-stop and restart."
     ))
 }
 fn main() {

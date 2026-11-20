@@ -1,3 +1,4 @@
+// v3.0.2.4 - Bound Android knowledge-save preflight to authenticated current snapshots.
 // v3.0.2.3 - Keep Android note-home candidate version in sync with APK.
 // v3.0.2.2 - Scoped creation and durable-save diagnostics.
 // v3.0.2.1 - Knowledge create-node delta with safe full fallback.
@@ -153,8 +154,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.3";
-pub const ANDROID_VERSION_CODE: i32 = 30005;
+pub const ANDROID_APP_VERSION: &str = "3.0.2.4";
+pub const ANDROID_VERSION_CODE: i32 = 30006;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

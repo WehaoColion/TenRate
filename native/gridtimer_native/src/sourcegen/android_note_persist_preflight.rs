@@ -1,3 +1,4 @@
+// v3.0.2.4 - Use a transaction-pinned authenticated current snapshot for ordinary saves.
 // v2.23.2.54 - Report native preflight separately from schema and mirror checks.
 // v2.23.2.35 - Reuse verified history within the current local-save transaction.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
@@ -36,15 +37,29 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     Ok(source)
 }
 
-const DATABASE_PREFLIGHT: &str = r####"    fun <T> withVerifiedSavePreflight(
+const DATABASE_PREFLIGHT: &str = r####"    // Metadata is indexed by workspace; legacy unsealed histories remain
+    // untouched and are still authenticated before recovery. A current save
+    // must not read thousands of immutable historical JSON payloads.
+    private fun historyRequiresFullSaveVerification(workspaceKey: String): Boolean =
+        writableDatabase.rawQuery(
+            "SELECT 1 FROM $HISTORY_TABLE WHERE workspace_key = ? AND " +
+                "(schema_version IS NULL OR schema_version > ? OR " +
+                "sha256 IS NULL OR sha256 = '') LIMIT 1",
+            arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
+        ).use { it.moveToFirst() }
+
+    fun <T> withVerifiedSavePreflight(
         workspaceKey: String,
         onNativeVerification: (Long, Long) -> Unit = { _, _ -> },
+        onTransactionWait: (Long) -> Unit = {},
         action: () -> T
-    ): T =
-        withSnapshotWriteTransaction {
-            // Reuse the existing native payload/envelope/schema verifier on the
-            // already pinned primary connection. Saving never starts history
-            // compaction, and no receipt survives this scope or its transaction.
+    ): T {
+        val waitingSince = System.nanoTime()
+        return withSnapshotWriteTransaction {
+            val waitMs = (System.nanoTime() - waitingSince).coerceAtLeast(0L) / 1_000_000L
+            if (waitMs >= 1_000L) onTransactionWait(waitMs)
+            var currentOnlyVerified = false
+            // Every receipt belongs solely to this pinned transaction.
             runNoteSavePreflight(
                 workspaceKey = workspaceKey,
                 windows = snapshotReadWindow,
@@ -54,18 +69,39 @@ const DATABASE_PREFLIGHT: &str = r####"    fun <T> withVerifiedSavePreflight(
                     val began = System.nanoTime()
                     var verifiedRows = -1L
                     try {
-                        verifyNativeSnapshotRows(workspaceKey).also { verifiedRows = it }
+                        val safeHistoryHeaders = !historyRequiresFullSaveVerification(workspaceKey)
+                        val currentRows = if (safeHistoryHeaders)
+                            runCatching { verifyNativeSnapshotRows(workspaceKey, currentOnly = true) }
+                                .getOrDefault(-1L)
+                        else -1L
+                        if (canUseCurrentOnlySaveProof(safeHistoryHeaders, currentRows)) {
+                            currentOnlyVerified = true
+                            verifiedRows = currentRows
+                        } else {
+                            // Unknown schema, absent/corrupt current or native failure:
+                            // preserve the original full history/recovery guard.
+                            verifyNativeSnapshotRows(workspaceKey).also { verifiedRows = it }
+                        }
+                        verifiedRows
                     } finally {
                         val elapsedMs = (System.nanoTime() - began).coerceAtLeast(0L) / 1_000_000L
                         if (elapsedMs >= 1_000L) onNativeVerification(elapsedMs, verifiedRows)
                     }
                 },
+                currentOnlyVerified = { currentOnlyVerified },
                 onVerificationFailure = {
                     android.util.Log.w("NoteSaveLatency", "Save preflight requires full recovery verification", it)
                 },
-                action = action
+                action = {
+                    android.util.Log.i(
+                        "NoteSaveLatency",
+                        "savePreflight scope=" + if (currentOnlyVerified) "current" else "full"
+                    )
+                    action()
+                }
             )
         }
+    }
 "####;
 
 const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySurface(
@@ -77,6 +113,12 @@ const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySur
             logDiagnosticEvent(
                 category = "notes.local_save.latency",
                 message = "phase=preflight_native_verification durationMs=$millis rows=$rows"
+            )
+        },
+        onTransactionWait = { millis ->
+            logDiagnosticEvent(
+                category = "notes.local_save.latency",
+                message = "phase=preflight_transaction_wait durationMs=$millis"
             )
         }
     ) {
@@ -129,6 +171,9 @@ internal class NoteSavePreflightEvidence(private val supportedVersion: Int) {
     }
 }
 
+internal fun canUseCurrentOnlySaveProof(historyMetadataSafe: Boolean, verifiedCurrentRows: Long): Boolean =
+    historyMetadataSafe && verifiedCurrentRows == 1L
+
 internal fun <Stamp : Any, Result> runNoteSavePreflight(
     workspaceKey: String,
     windows: ThreadLocal<SnapshotVerificationWindow>,
@@ -136,6 +181,7 @@ internal fun <Stamp : Any, Result> runNoteSavePreflight(
     snapshotStamp: () -> Stamp,
     verifyRows: () -> Long,
     onVerificationFailure: (Throwable) -> Unit = {},
+    currentOnlyVerified: () -> Boolean = { false },
     action: () -> Result
 ): Result {
     check(transactionActive()) { "Save preflight requires the primary transaction." }
@@ -152,7 +198,8 @@ internal fun <Stamp : Any, Result> runNoteSavePreflight(
         }
         val after = snapshotStamp()
         if (verifiedRows >= 0L && before == after) {
-            window.recordNativeHistory(workspaceKey, after)
+            if (currentOnlyVerified()) window.recordNativeCurrent(workspaceKey, after)
+            else window.recordNativeHistory(workspaceKey, after)
         }
         return action()
     } finally {
@@ -172,6 +219,43 @@ class NoteSavePreflightTest {
 
     private fun canSkip(evidence: NoteSavePreflightEvidence, workspace: String = "guest", stamp: Long = 7L): Boolean =
         windows.get()?.canSkipVerifiedHistory(workspace, stamp, evidence.acceptedCurrentWithoutFuture) == true
+
+    @Test fun saveCurrentOnlyDecisionRequiresTrustworthyMetadataAndExactlyOneValidCurrent() {
+        assertTrue(canUseCurrentOnlySaveProof(true, 1L))
+        for (rows in listOf(-1L, 0L, 2L, 7001L)) {
+            assertFalse(canUseCurrentOnlySaveProof(true, rows))
+        }
+        assertFalse(canUseCurrentOnlySaveProof(false, 1L))
+    }
+
+    @Test fun currentOnlySaveReceiptNeverPretendsToHaveValidatedAllHistory() {
+        runNoteSavePreflight("guest", windows, { true }, { 7L }, { 1L },
+            currentOnlyVerified = { true }) {
+            val evidence = NoteSavePreflightEvidence(15)
+            evidence.observe("sqlite-current", 15, 15)
+            assertTrue(canSkip(evidence))
+            assertFalse(windows.get()!!.hasFullHistoryReceipt("guest", 7L))
+            assertFalse(canSkip(evidence, workspace = "account:other"))
+            assertFalse(canSkip(evidence, stamp = 8L))
+        }
+        assertNull(windows.get())
+    }
+
+    @Test fun currentOnlyProofNeedsUnchangedTransactionalStampAndNativeSuccess() {
+        var stamp = 7L
+        runNoteSavePreflight("guest", windows, { true }, { stamp },
+            { stamp = 8L; 1L }, currentOnlyVerified = { true }) {
+            val evidence = NoteSavePreflightEvidence(15)
+            evidence.observe("sqlite-current", 15, 15)
+            assertFalse(canSkip(evidence, stamp = 8L))
+        }
+        runNoteSavePreflight("guest", windows, { true }, { 8L },
+            { -1L }, currentOnlyVerified = { true }) {
+            val evidence = NoteSavePreflightEvidence(15)
+            evidence.observe("sqlite-current", 15, 15)
+            assertFalse(canSkip(evidence, stamp = 8L))
+        }
+    }
 
     @Test fun unchangedNativeProofAcceptsCurrentAndAvoidsHistoryExpansion() {
         var expanded = 0
@@ -291,6 +375,14 @@ mod generated_preflight_diagnostics_tests {
     fn slow_native_verification_records_only_bounded_metrics() {
         assert!(DATABASE_PREFLIGHT.contains("withSnapshotWriteTransaction"));
         assert!(DATABASE_PREFLIGHT.contains("verifyNativeSnapshotRows(workspaceKey)"));
+        assert!(DATABASE_PREFLIGHT.contains("verifyNativeSnapshotRows(workspaceKey, currentOnly = true)"));
+        assert!(DATABASE_PREFLIGHT.contains("historyRequiresFullSaveVerification(workspaceKey)"));
+        assert!(DATABASE_PREFLIGHT.contains("schema_version IS NULL OR schema_version > ?"));
+        assert!(DATABASE_PREFLIGHT.contains("sha256 IS NULL OR sha256 = ''"));
+        assert!(DATABASE_PREFLIGHT.contains("onTransactionWait(waitMs)"));
+        assert!(SCHEMA_PREFLIGHT.contains("phase=preflight_transaction_wait"));
+        assert!(POLICY.contains("window.recordNativeCurrent(workspaceKey, after)"));
+        assert!(POLICY.contains("window.recordNativeHistory(workspaceKey, after)"));
         assert!(DATABASE_PREFLIGHT.contains("finally {"));
         assert!(DATABASE_PREFLIGHT.contains("onNativeVerification(elapsedMs, verifiedRows)"));
         assert!(SCHEMA_PREFLIGHT.contains("phase=preflight_native_verification durationMs=$millis rows=$rows"));
