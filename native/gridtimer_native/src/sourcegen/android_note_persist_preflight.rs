@@ -58,8 +58,8 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             // Saves may bypass a legacy row's body, but must NEVER prune
             // unauthenticated history before an explicit recovery/verification.
             replace(&mut source,
-                "              AND created_at_epoch_millis < ?\\n              AND id NOT IN (",
-                "              AND created_at_epoch_millis < ?\\n              AND sha256 IS NOT NULL AND sha256 != ''\\n              AND envelope_sha256 IS NOT NULL AND envelope_sha256 != ''\\n              AND id NOT IN (")?;
+                "              AND created_at_epoch_millis < ?\n              AND id NOT IN (",
+                "              AND created_at_epoch_millis < ?\n              AND sha256 IS NOT NULL AND sha256 != ''\n              AND envelope_sha256 IS NOT NULL AND envelope_sha256 != ''\n              AND id NOT IN (")?;
             // Startup and save use the same historical metadata safety guard.
             let startup = source.find("    private fun historyRequiresFullStartupScan(")
                 .ok_or("missing startup history metadata guard")?;
