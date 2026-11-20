@@ -61,7 +61,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             // A database backup stamped with v6 must contain v6 guard indexes;
             // otherwise restoring it would skip onUpgrade and fail INDEXED BY.
             replace(&mut source,
-                "                database.execSQL(\\\"PRAGMA app_state_backup.user_version=$DATABASE_VERSION\\\")",
+                "                database.execSQL(\"PRAGMA app_state_backup.user_version=$DATABASE_VERSION\")",
                 r####"                database.execSQL(
                     "CREATE INDEX app_state_backup.snapshot_history_schema_guard " +
                         "ON snapshot_history(workspace_key, schema_version)"
