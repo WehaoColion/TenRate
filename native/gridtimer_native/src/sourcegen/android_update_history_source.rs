@@ -1,3 +1,4 @@
+// v3.0.2.4 - Prioritize authenticated current-only knowledge save verification.
 // v3.0.2.3 - Keep sticky summary short and independent from actions.
 // v3.0.2.2 - Scoped knowledge creation, bounded mirror retention and queue-stage feedback.
 // v3.0.2.1 - Optimize knowledge hierarchy create delta and keep durable save checks.
@@ -83,7 +84,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.3";
+pub const LATEST_VERSION: &str = "3.0.2.4";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -113,6 +114,22 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.4",
+        updatedAt = "2026-11-20 09:10",
+        summary = "知识保存验证聚焦当前快照，减少海量历史记录造成的等待",
+        sections = listOf(
+            AndroidUpdateSection("保存性能", listOf(
+                "正常保存时在同一 SQLite 事务中验证当前快照的数据摘要、完整性封套和双重版本号，避免每次重复读取大量历史正文。",
+                "历史元数据存在不受支持的版本或异常、当前快照不可信以及原生验证失败时，保留完整检查与恢复处理。",
+                "分别记录数据库事务等待和原生校验耗时，便于定位剩余的设备差异。"
+            )),
+            AndroidUpdateSection("数据保护与验收", listOf(
+                "隔离区数据、恢复镜像以及本地可靠提交机制保持独立安全检查，不改变 Windows 和同步协议。",
+                "使用真实签名 APK，在 Android 35 模拟器中构造 7200 条历史快照，检查保存完成和进程重启后的数据恢复。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.3",
         updatedAt = "2026-11-20 05:16",
