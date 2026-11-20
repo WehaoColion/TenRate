@@ -323,27 +323,31 @@ fn seed_history(root: &Path) -> Result<(), String> {
 }
 
 fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
-    // Some release emulators omit tag-filtered logcat output altogether.
-    // Capture the entire main ring and archive the app's independent
-    // diagnostic log; lack of a log line must not masquerade as a save failure.
+    // The signed release often omits Logcat. Use the application's durable
+    // diagnostic store to prove which transaction-bound receipt was used.
     let log = cmd(&["logcat", "-d", "-b", "main", "-v", "brief"])?;
-    let matches = log.lines()
+    let matching_logcat = log.lines()
         .filter(|line| line.contains("NoteSaveLatency")
-            || line.contains("savePreflight scope")
-            || line.contains("notes.local_save.latency"))
+            || line.contains("savePreflight scope"))
         .take(200).collect::<Vec<_>>().join("\n");
     fs::write(root.join("save_logcat_main.txt"), &log).map_err(|e| e.to_string())?;
-    fs::write(root.join("save_preflight_logcat.txt"), &matches).map_err(|e| e.to_string())?;
+    fs::write(root.join("save_preflight_logcat.txt"), &matching_logcat)
+        .map_err(|e| e.to_string())?;
     let device = "/data/user/0/com.ofairyo.gridtimer/files/diagnostic_events.log";
     let local = root.join("app_diagnostic_events.log");
     let local_str = local.to_str().ok_or("Diagnostic path is not UTF-8")?;
-    let _ = adb(&["pull", device, local_str]);
-    if matches.contains("savePreflight scope=current") {
-        Ok("current-only (logcat confirmed)")
-    } else if matches.contains("savePreflight scope=full") {
-        Err("App fell back to full-history scan on a legacy-envelope-only save fixture".into())
+    cmd(&["pull", device, local_str])?;
+    let recorded = fs::read_to_string(&local)
+        .map_err(|error| format!("App's durable scope proof unavailable: {error}"))?;
+    let last = recorded.lines()
+        .filter(|line| line.contains("| category=notes.local_save.preflight | scope="))
+        .last().ok_or("No durable Android save-preflight scope was recorded")?;
+    fs::write(root.join("last_preflight_scope.txt"), format!("{last}\n"))
+        .map_err(|error| error.to_string())?;
+    if last.contains("scope=current") {
+        Ok("authenticated current-only (application diagnostic confirmed)")
     } else {
-        Ok("logcat unavailable; durability and timed-save assertions used")
+        Err(format!("The measured save did not use current-only preflight: {last}"))
     }
 }
 
