@@ -190,7 +190,7 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<usize, String
     for extension in ["-wal", "-shm"] {
         let _ = adb(&["pull", &format!("{device}{extension}"), &format!("{local_str}{extension}")]);
     }
-    let escaped = page_name.replace(''', "''");
+    let escaped = page_name.replace('\'', "''");
     let matches = sqlite(&local,
         &format!("SELECT COUNT(*) FROM current_snapshot WHERE workspace_key='guest' AND instr(app_data_json, '{escaped}') > 0;"))?;
     if matches != "1" {
@@ -199,8 +199,7 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<usize, String
     let history: usize = sqlite(&local,
         "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
         .parse().map_err(|_| "Durable history count is invalid")?;
-    fs::write(root.join("durable_history_count.txt"), format!("{history}
-"))
+    fs::write(root.join("durable_history_count.txt"), format!("{history}\n"))
         .map_err(|e| e.to_string())?;
     if history < HISTORY_ROWS {
         return Err(format!("History was unexpectedly removed during saving: {history}"));
@@ -292,8 +291,7 @@ fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
         .filter(|line| line.contains("NoteSaveLatency")
             || line.contains("savePreflight scope")
             || line.contains("notes.local_save.latency"))
-        .take(200).collect::<Vec<_>>().join("
-");
+        .take(200).collect::<Vec<_>>().join("\n");
     fs::write(root.join("save_logcat_main.txt"), &log).map_err(|e| e.to_string())?;
     fs::write(root.join("save_preflight_logcat.txt"), &matches).map_err(|e| e.to_string())?;
     let device = "/data/user/0/com.ofairyo.gridtimer/files/diagnostic_events.log";
@@ -323,8 +321,7 @@ fn run(root: &Path) -> Result<String, String> {
     directory(root)?;
     cmd(&["logcat", "-c"])?;
     let saved_millis = create_page(root, CREATED)?;
-    fs::write(root.join("save_elapsed_ms.txt"), format!("{saved_millis}
-"))
+    fs::write(root.join("save_elapsed_ms.txt"), format!("{saved_millis}\n"))
         .map_err(|e| e.to_string())?;
     let scope = inspect_preflight_logs(root)?;
     if saved_millis > 20_000 {
