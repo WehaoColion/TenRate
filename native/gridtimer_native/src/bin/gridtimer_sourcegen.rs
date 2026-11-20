@@ -1,3 +1,4 @@
+// v3.0.2.3 - Bound the sticky home preview through the Rust-generated UI.
 // v2.23.2.56 - Open existing sticky notes in editable source by default.
 // v2.23.2.6 - Generate offline Markdown and formula reading with safe render boundaries.
 // v2.23.2.3 - Generate usable AI entry points, request boundaries and safe sync failures.
@@ -95,6 +96,8 @@ mod android_trash_retention;
 mod android_image_import_performance;
 #[path = "../sourcegen/android_note_collection_recovery.rs"]
 mod android_note_collection_recovery;
+#[path = "../sourcegen/android_sticky_home_summary.rs"]
+mod android_sticky_home_summary;
 #[path = "../sourcegen/android_note_latency.rs"]
 mod android_note_latency;
 #[path = "../sourcegen/android_note_list_performance.rs"]
@@ -515,6 +518,8 @@ fn run() -> io::Result<()> {
         let rendered = android_legal_integration::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_note_collection_recovery::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_sticky_home_summary::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let rendered = android_knowledge_filters::render(source.path, &rendered)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

@@ -1,0 +1,86 @@
+name: Android sticky summary API35 recheck
+
+on:
+  push:
+    branches: [fix/android-sticky-summary-v3.0.2.3]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  real-emulator:
+    name: Recheck 3.0.2.3 signed APK with current Rust probe
+    runs-on: ubuntu-22.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prove Android app source matches signed candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This signed artifact is from a526220d, whose release job passed.
+          # Only acceptance instrumentation may differ, not application code.
+          signed_source_commit=a526220d380bfa95e5213c799dfc0583e7c49e7a
+          git cat-file -e "$signed_source_commit^{commit}"
+          while IFS= read -r changed; do
+            case "$changed" in
+              tools/android_sticky_home_probe.rs|.github/workflows/android-sticky-home-recheck.yml)
+                printf 'Allow test-only change: %s\n' "$changed" ;;
+              *) printf 'Signed source differs at %s; refuse reuse\n' "$changed" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only "$signed_source_commit" "$GITHUB_SHA")
+      - name: Download already signed and validated 3.0.2.3 candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download 44620208259 --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
+          cd signed_apk
+          test -f tenfold_v3.0.2.3.apk
+          tr -d '\r' < tenfold_v3.0.2.3.apk.sha256 | sha256sum -c -
+      - name: Compile only the Rust device acceptance driver
+        run: rustc --edition=2021 -D warnings -O tools/android_sticky_home_probe.rs -o sticky_home_probe
+      - name: Enable KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Install Android app and test real long note on API35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v3.0.2.3.apk
+            ./sticky_home_probe sticky_summary_evidence
+      - name: Display simulator verdict
+        if: always()
+        shell: bash
+        run: |
+          if test -f sticky_summary_evidence/report.md; then
+            cat sticky_summary_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Simulator did not complete. No UI pass claim.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain screenshots and UI hierarchy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sticky-home-v3.0.2.3-real-emulator
+          path: sticky_summary_evidence/
+          if-no-files-found: warn
+          retention-days: 21

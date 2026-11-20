@@ -1,3 +1,4 @@
+// v3.0.2.3 - Keep sticky summary short and independent from actions.
 // v3.0.2.2 - Scoped knowledge creation, bounded mirror retention and queue-stage feedback.
 // v3.0.2.1 - Optimize knowledge hierarchy create delta and keep durable save checks.
 // v3.0.2 - Canvas AI answer-first display and precise navigable money summary.
@@ -82,7 +83,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.2";
+pub const LATEST_VERSION: &str = "3.0.2.3";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -112,6 +113,22 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.3",
+        updatedAt = "2026-11-20 05:16",
+        summary = "修复长便签摘要撑高首页、操作按钮随正文偏移的问题",
+        sections = listOf(
+            AndroidUpdateSection("便签首页", listOf(
+                "最近便签的更新时间独立展示，正文摘要最多显示两行，长段落不会再把首页和便签列表推到屏幕下方。",
+                "新建、文件夹和回收站入口独立于摘要排布，窄屏及系统字号放大时可自然换行。",
+                "最近便签摘要不修改原文，打开便签后仍可查看和编辑完整内容。"
+            )),
+            AndroidUpdateSection("兼容与验收", listOf(
+                "保留原有拟物卡片、便签创建、文件夹、回收站、加密和同步行为。",
+                "构建采用原有 Rust 源码生成链路，并在 GitHub Android 35 模拟器检查长便签与操作入口。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.2",
         updatedAt = "2026-11-19 14:36",
