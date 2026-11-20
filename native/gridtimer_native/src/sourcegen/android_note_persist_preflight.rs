@@ -55,13 +55,18 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 6) createHistoryGuardIndexes(database)")?;
             replace(&mut source, "    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {",
                 &format!("{HISTORY_GUARD_INDEXES}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{"))?;
+            // Saves may bypass a legacy row's body, but must NEVER prune
+            // unauthenticated history before an explicit recovery/verification.
+            replace(&mut source,
+                "              AND created_at_epoch_millis < ?\\n              AND id NOT IN (",
+                "              AND created_at_epoch_millis < ?\\n              AND sha256 IS NOT NULL AND sha256 != ''\\n              AND envelope_sha256 IS NOT NULL AND envelope_sha256 != ''\\n              AND id NOT IN (")?;
             // Startup and save use the same historical metadata safety guard.
             let startup = source.find("    private fun historyRequiresFullStartupScan(")
                 .ok_or("missing startup history metadata guard")?;
             let startup_end = startup + source[startup..].find("\n\n    fun <T> withVerifiedWorkspaceReads(")
                 .ok_or("missing startup history guard end")?;
             source.replace_range(startup..startup_end,
-                "    private fun historyRequiresFullStartupScan(workspaceKey: String): Boolean =\n        historyRequiresFullSaveVerification(workspaceKey)");
+                "    private fun historyRequiresFullStartupScan(workspaceKey: String): Boolean =\n        historyRequiresFullSaveVerification(workspaceKey) || historyHasUnsealedEnvelope(workspaceKey)");
             replace(&mut source, "    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()",
                 &format!("{DATABASE_PREFLIGHT}\n    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()"))?;
             source.push_str(POLICY);
@@ -78,9 +83,13 @@ const HISTORY_GUARD_INDEXES: &str = r####"    // Compact future-schema and unsea
                 "ON $HISTORY_TABLE(workspace_key, schema_version)"
         )
         database.execSQL(
-            "CREATE INDEX IF NOT EXISTS snapshot_history_unsealed_guard " +
+            "CREATE INDEX IF NOT EXISTS snapshot_history_digest_guard " +
                 "ON $HISTORY_TABLE(workspace_key) WHERE " +
-                "sha256 IS NULL OR sha256 = '' OR " +
+                "sha256 IS NULL OR sha256 = ''"
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS snapshot_history_envelope_guard " +
+                "ON $HISTORY_TABLE(workspace_key) WHERE " +
                 "envelope_sha256 IS NULL OR envelope_sha256 = ''"
         )
     }
@@ -88,7 +97,8 @@ const HISTORY_GUARD_INDEXES: &str = r####"    // Compact future-schema and unsea
 "####;
 
 const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeated per-row reads next to history JSON.
-    // Unknown schema and legacy/unsealed evidence still use full recovery scans.
+    // Unknown schema/digest triggers full verification; legacy envelopes
+    // are preserved unpruned and checked during startup or explicit recovery.
     private fun historyRequiresFullSaveVerification(workspaceKey: String): Boolean {
         val unsafeSchema = writableDatabase.rawQuery(
             "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
@@ -97,13 +107,21 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
         ).use { it.moveToFirst() }
         if (unsafeSchema) return true
         return writableDatabase.rawQuery(
-            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_unsealed_guard " +
-                "WHERE workspace_key = ? AND " +
-                "(sha256 IS NULL OR sha256 = '' OR " +
-                "envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1",
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_digest_guard " +
+                "WHERE workspace_key = ? AND (sha256 IS NULL OR sha256 = '') LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
     }
+
+    // Unsealed legacy history is read and authenticated at startup/recovery.
+    // It never needs to be decoded again on the hot-path save if the current
+    // snapshot is authenticated; retention must preserve those old rows.
+    private fun historyHasUnsealedEnvelope(workspaceKey: String): Boolean =
+        writableDatabase.rawQuery(
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_envelope_guard " +
+                "WHERE workspace_key = ? AND (envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1",
+            arrayOf(workspaceKey)
+        ).use { it.moveToFirst() }
 
     fun <T> withVerifiedSavePreflight(
         workspaceKey: String,
@@ -441,10 +459,12 @@ mod generated_preflight_diagnostics_tests {
             );
             CREATE INDEX snapshot_history_schema_guard
                 ON snapshot_history(workspace_key, schema_version);
-            CREATE INDEX snapshot_history_unsealed_guard
+            CREATE INDEX snapshot_history_digest_guard
                 ON snapshot_history(workspace_key)
-                WHERE sha256 IS NULL OR sha256 = ''
-                    OR envelope_sha256 IS NULL OR envelope_sha256 = '';
+                WHERE sha256 IS NULL OR sha256 = '';
+            CREATE INDEX snapshot_history_envelope_guard
+                ON snapshot_history(workspace_key)
+                WHERE envelope_sha256 IS NULL OR envelope_sha256 = '';
         "#).unwrap();
         for i in 0..7200 {
             db.execute("INSERT INTO snapshot_history VALUES (?1, 15, ?2, 'digest', 'envelope')",
@@ -452,16 +472,21 @@ mod generated_preflight_diagnostics_tests {
         }
         let schema = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
             WHERE workspace_key = ?1 AND (schema_version IS NULL OR schema_version > ?2) LIMIT 1";
-        let unsealed = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_unsealed_guard
-            WHERE workspace_key = ?1 AND (sha256 IS NULL OR sha256 = '' OR
-                 envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1";
+        let digest = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_digest_guard
+            WHERE workspace_key = ?1 AND (sha256 IS NULL OR sha256 = '') LIMIT 1";
+        let envelope = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_envelope_guard
+            WHERE workspace_key = ?1 AND (envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1";
         let unsafe_schema = |workspace: &str| -> bool {
             db.prepare(schema).unwrap().exists(rusqlite::params![workspace, 15]).unwrap()
         };
+        let unsafe_digest = |workspace: &str| -> bool {
+            db.prepare(digest).unwrap().exists([workspace]).unwrap()
+        };
         let unsafe_envelope = |workspace: &str| -> bool {
-            db.prepare(unsealed).unwrap().exists([workspace]).unwrap()
+            db.prepare(envelope).unwrap().exists([workspace]).unwrap()
         };
         assert!(!unsafe_schema("guest"));
+        assert!(!unsafe_digest("guest"));
         assert!(!unsafe_envelope("guest"));
         let plan = |statement: &str, args: Vec<&dyn rusqlite::ToSql>| -> String {
             let mut prepared = db.prepare(&format!("EXPLAIN QUERY PLAN {statement}")).unwrap();
@@ -472,15 +497,20 @@ mod generated_preflight_diagnostics_tests {
         let version: &dyn rusqlite::ToSql = &15_i64;
         let workspace: &dyn rusqlite::ToSql = &"guest";
         let schema_plan = plan(schema, vec![workspace, version]);
-        let unsealed_plan = plan(unsealed, vec![workspace]);
+        let digest_plan = plan(digest, vec![workspace]);
+        let envelope_plan = plan(envelope, vec![workspace]);
         assert!(schema_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{schema_plan}");
-        assert!(unsealed_plan.contains("INDEX snapshot_history_unsealed_guard"), "{unsealed_plan}");
+        assert!(digest_plan.contains("INDEX snapshot_history_digest_guard"), "{digest_plan}");
+        assert!(envelope_plan.contains("INDEX snapshot_history_envelope_guard"), "{envelope_plan}");
         db.execute("INSERT INTO snapshot_history VALUES ('other', 16, 'x', 'digest', 'envelope')", []).unwrap();
         assert!(!unsafe_schema("guest"));
         db.execute("INSERT INTO snapshot_history VALUES ('guest', 16, 'x', 'digest', 'envelope')", []).unwrap();
         assert!(unsafe_schema("guest"));
         db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', 'digest', '')", []).unwrap();
         assert!(unsafe_envelope("guest"));
+        assert!(!unsafe_digest("guest"));
+        db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', '', 'envelope')", []).unwrap();
+        assert!(unsafe_digest("guest"));
     }
 
 
@@ -491,8 +521,9 @@ mod generated_preflight_diagnostics_tests {
         assert!(DATABASE_PREFLIGHT.contains("verifyNativeSnapshotRows(workspaceKey, currentOnly = true)"));
         assert!(DATABASE_PREFLIGHT.contains("historyRequiresFullSaveVerification(workspaceKey)"));
         assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_schema_guard"));
-        assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_unsealed_guard"));
-        assert!(HISTORY_GUARD_INDEXES.contains("CREATE INDEX IF NOT EXISTS snapshot_history_unsealed_guard"));
+        assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_digest_guard"));
+        assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_envelope_guard"));
+        assert!(HISTORY_GUARD_INDEXES.contains("CREATE INDEX IF NOT EXISTS snapshot_history_digest_guard"));
         assert!(DATABASE_PREFLIGHT.contains("envelope_sha256 IS NULL OR envelope_sha256 = ''"));
         assert!(DATABASE_PREFLIGHT.contains("schema_version IS NULL OR schema_version > ?"));
         assert!(DATABASE_PREFLIGHT.contains("sha256 IS NULL OR sha256 = ''"));
