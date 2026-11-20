@@ -1,3 +1,4 @@
+// v3.0.2.6 - Record queued draft persistence and resumable legacy validation.
 // v3.0.2.5 - Index save safety metadata and isolate outer database wait.
 // v3.0.2.4 - Prioritize authenticated current-only knowledge save verification.
 // v3.0.2.3 - Keep sticky summary short and independent from actions.
@@ -85,7 +86,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.5";
+pub const LATEST_VERSION: &str = "3.0.2.6";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -115,6 +116,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.6",
+        updatedAt = "2026-11-21 06:02",
+        summary = "缩短知识保存等待，支持分批校验旧快照",
+        sections = listOf(
+            AndroidUpdateSection("本地保存", listOf(
+                "退出编辑和锁定便签时，草稿检查点由后台保存队列处理。",
+                "数据库事务结束后写入预检诊断，分别记录等待、预检与提交耗时。",
+                "旧历史逐条校验和压缩，保留原有恢复状态与进度。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.5",
         updatedAt = "2026-11-21 03:51",

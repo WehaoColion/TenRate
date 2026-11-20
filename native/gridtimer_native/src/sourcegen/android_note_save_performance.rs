@@ -1,6 +1,5 @@
+// v3.0.2.6 - Queue final sticky draft checkpoints before the SQLite commit.
 // v2.22.49.11 - Speed up Android note draft and local snapshot saves.
-// Keep note edits responsive while preserving a synchronous final recovery
-// checkpoint and the existing full SQLite commit.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
 const EDITOR: &str = "com/ofairyo/gridtimer/ui/SmartisanNoteUi.kt";
 
@@ -41,6 +40,11 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "    var journalWriteFailed by remember(note.id) { mutableStateOf(false) }",
                 "    var journalWriteFailed by remember(note.id) { mutableStateOf(false) }\n    val journalWriteMutex = remember(note.id) { Mutex() }\n    val pendingJournalWrite = remember(note.id) { java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?>(null) }",
             )?;
+            replace_once(
+                &mut source,
+                "    var latestJournalCheckpoint by remember(note.id) {\n        mutableStateOf<NoteDraftJournalCheckpoint?>(null)\n    }\n",
+                "",
+            )?;
             let start = source
                 .find("    fun journalLatestDraft(\n")
                 .ok_or("missing note journal helper")?;
@@ -49,25 +53,18 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 .map(|offset| start + offset)
                 .ok_or("missing note journal helper end")?;
             source.replace_range(start..end, JOURNAL_HELPER);
+            let checkpoint = source
+                .find("        val checkpointForAttempt = journalLatestDraft(")
+                .ok_or("missing sticky exit checkpoint")?;
+            let completion = checkpoint + source[checkpoint..]
+                .find("        val completePersistence:")
+                .ok_or("missing sticky exit completion")?;
+            source.replace_range(checkpoint..completion, "");
+            replace_once(&mut source, STICKY_SAVE_OLD, STICKY_SAVE)?;
             replace_once(
                 &mut source,
-                "        val checkpointForAttempt = journalLatestDraft(\n            titleOverride = candidate.title,",
-                "        val exitAction = resolveSmartisanNoteExitAction(\n            base = editorBaseNote,\n            candidate = candidate,\n            deleteBlankDraft = deleteBlankDraft && blankDraftDeletionEligibleAtEntry\n        )\n        val checkpointForAttempt = if (exitAction == SmartisanNoteExitAction.SaveAndFlush) journalLatestDraft(\n            force = true,\n            titleOverride = candidate.title,",
-            )?;
-            replace_once(
-                &mut source,
-                "            richTextEnabledOverride = richTextEnabled\n        )\n\n        val completePersistence:",
-                "            richTextEnabledOverride = richTextEnabled\n        ) else null\n\n        val completePersistence:",
-            )?;
-            replace_once(
-                &mut source,
-                "        when (\n            resolveSmartisanNoteExitAction(\n                base = editorBaseNote,\n                candidate = candidate,\n                deleteBlankDraft = deleteBlankDraft && blankDraftDeletionEligibleAtEntry\n            )\n        ) {",
-                "        when (exitAction) {",
-            )?;
-            replace_once(
-                &mut source,
-                "                    draftCheckpoint = latestJournalCheckpoint\n                ) { persisted ->",
-                "                    draftCheckpoint = journalLatestDraft(force = true)\n                ) { persisted ->",
+                "                viewModel.upsertNoteAndFlush(\n                    note = previewNote,\n                    expectedWorkspaceKey = editorWorkspaceKey,\n                    reason = \"encrypted_sticky_lock\",\n                    draftCheckpoint = latestJournalCheckpoint\n                ) { persisted ->",
+                "                saveCapturedSticky(previewNote, \"encrypted_sticky_lock\", requireCheckpoint = false) { result ->\n                    val persisted = result.committed",
             )?;
         }
         _ => {}
@@ -83,13 +80,44 @@ fn replace_once(source: &mut String, old: &str, new: &str) -> Result<(), String>
     Ok(())
 }
 
-const JOURNAL_HELPER: &str = r####"    fun journalLatestDraft(
+const STICKY_SAVE_OLD: &str = r####"            SmartisanNoteExitAction.SaveAndFlush -> viewModel.upsertNoteAndFlushResult(
+                note = candidate,
+                expectedWorkspaceKey = editorWorkspaceKey,
+                reason = reason,
+                draftCheckpoint = checkpointForAttempt,
+                onComplete = completeNotePersistence
+            )"####;
+
+const STICKY_SAVE: &str = r####"            SmartisanNoteExitAction.SaveAndFlush ->
+                saveCapturedSticky(candidate, reason, onComplete = completeNotePersistence)"####;
+
+const JOURNAL_HELPER: &str = r####"    fun saveCapturedSticky(
+        draft: NoteEntry,
+        reason: String,
+        requireCheckpoint: Boolean = true,
+        onComplete: (com.ofairyo.gridtimer.data.NoteSaveResult) -> Unit
+    ) {
+        val sequence = ++nextJournalSequence
+        pendingJournalWrite.getAndSet(null)?.cancel()
+        viewModel.upsertCapturedNoteAndFlushResult(
+            note = draft,
+            baseNote = editorBaseNote,
+            expectedWorkspaceKey = editorWorkspaceKey,
+            reason = reason,
+            editorSessionId = editorSessionId,
+            sequence = sequence,
+            requireCheckpoint = requireCheckpoint,
+            draftWriteMutex = journalWriteMutex,
+            onComplete = onComplete
+        )
+    }
+
+    fun journalLatestDraft(
         titleOverride: String = titleText,
         plainBodyOverride: String = if (richTextEnabled) richPlainBody else bodyFieldValue.text,
         richBodyHtmlOverride: String = richBodyHtml,
-        richTextEnabledOverride: Boolean = richTextEnabled,
-        force: Boolean = false
-    ): NoteDraftJournalCheckpoint? {
+        richTextEnabledOverride: Boolean = richTextEnabled
+    ) {
         nextJournalSequence += 1L
         val sequence = nextJournalSequence
         val base = editorBaseNote
@@ -113,7 +141,6 @@ const JOURNAL_HELPER: &str = r####"    fun journalLatestDraft(
             )
         }
         fun publish(checkpoint: NoteDraftJournalCheckpoint?) {
-            latestJournalCheckpoint = checkpoint
             if (checkpoint == null) {
                 if (!journalWriteFailed) {
                     localizedToast(
@@ -131,18 +158,12 @@ const JOURNAL_HELPER: &str = r####"    fun journalLatestDraft(
         // Cancellation removes queued older edits; the journal's sequence guard also
         // rejects an older write that finishes after a newer one.
         pendingJournalWrite.getAndSet(null)?.cancel()
-        if (!force) {
-            pendingJournalWrite.set(scope.launch(Dispatchers.IO) {
-                val checkpoint = journalWriteMutex.withLock { write() }
-                withContext(Dispatchers.Main.immediate) {
-                    if (nextJournalSequence == sequence) publish(checkpoint)
-                }
-            })
-            return null
-        }
-        // Exit and lock actions still create a verified checkpoint before the
-        // durable SQLite save starts, including when a background edit is pending.
-        return write().also(::publish)
+        pendingJournalWrite.set(scope.launch(Dispatchers.IO) {
+            val checkpoint = journalWriteMutex.withLock { write() }
+            withContext(Dispatchers.Main.immediate) {
+                if (nextJournalSequence == sequence) publish(checkpoint)
+            }
+        })
     }
 
 "####;

@@ -208,7 +208,7 @@ jobs:
         run: |
           set -euo pipefail
           cd signed_apk
-          tr -d '\r' < tenfold_v3.0.2.5.apk.sha256 | sha256sum -c -
+          tr -d '\r' < tenfold_v3.0.2.6.apk.sha256 | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
       - name: Prepare SQLite for the Rust history-load fixture
@@ -236,7 +236,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r signed_apk/tenfold_v3.0.2.5.apk
+            adb install -r signed_apk/tenfold_v3.0.2.6.apk
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
             ./knowledge_save_probe knowledge_save_evidence
       - name: Summarize actual simulator acceptance
@@ -252,10 +252,33 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-knowledge-save-v3.0.2.5-evidence
-          path: knowledge_save_evidence/
+          name: android-knowledge-save-v3.0.2.6-evidence
+          path: |
+            knowledge_save_evidence/
+            !knowledge_save_evidence/*.db*
+            !knowledge_save_evidence/legacy_history_payload_sample.json
           if-no-files-found: warn
           retention-days: 21
+
+  publish-knowledge-save-candidate:
+    name: Publish emulator-verified knowledge save APK
+    if: github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
+    needs: [release, knowledge-save-emulator]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: package
+      - name: Publish immutable commit-scoped candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
+          ./android_candidate_publish
 
   publish-candidate:
     name: Publish signed prerelease

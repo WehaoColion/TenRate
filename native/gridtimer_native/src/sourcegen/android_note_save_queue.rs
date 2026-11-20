@@ -33,6 +33,9 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 "    fun upsertNoteAndFlush(\n",
                 &format!("{AUTOSAVE}{CAPTURED_SAVE}    fun upsertNoteAndFlush(\n"),
             )?;
+            replace(&mut source,
+                "        val sealedBase = appData.value.notes.firstOrNull { persisted ->\n            persisted.id == baseNote.id && persisted.hasAeadCiphertextRecoveryEnvelope()\n        } ?: noteForPersistence(baseNote, workspaceKey) ?: return null",
+                "        val sealedBase = draftBaseForPersistence(baseNote, workspaceKey) ?: return null")?;
         }
         EDITOR => {
             let start = source
@@ -61,19 +64,6 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 .map(|offset| start + offset)
                 .ok_or("missing durable draft capture end")?;
             let mut save = source[start..end].to_owned();
-            let checkpoint_start = save
-                .find("        val checkpointForAttempt = if (exitAction")
-                .ok_or("missing main-thread forced checkpoint")?;
-            let checkpoint_end = save[checkpoint_start..]
-                .find("        val completePersistence:")
-                .map(|offset| checkpoint_start + offset)
-                .ok_or("missing forced checkpoint end")?;
-            save.replace_range(checkpoint_start..checkpoint_end,
-                "        // Capture the exit draft before entering the independent IO queue.\n        // Disposal cannot cancel an already accepted checkpoint/commit.\n        val capturedBase = editorBaseNote\n        nextJournalSequence += 1L\n        val capturedSequence = nextJournalSequence\n        pendingJournalWrite.getAndSet(null)?.cancel()\n\n");
-            replace(&mut save, "SmartisanNoteExitAction.SaveAndFlush -> viewModel.upsertNoteAndFlushResult(",
-                "SmartisanNoteExitAction.SaveAndFlush -> viewModel.upsertCapturedNoteAndFlushResult(")?;
-            replace(&mut save, "                draftCheckpoint = checkpointForAttempt,",
-                "                baseNote = capturedBase,\n                editorSessionId = editorSessionId,\n                sequence = capturedSequence,")?;
             replace(&mut save, "        val completePersistence: (Boolean) -> Unit = { persisted ->\n            if (persisted) {",
                 "        val completePersistence: (Boolean) -> Unit = completion@ { saved ->\n            if (!editorSaveCallbackActive.get() || latestNote.id != candidate.id) return@completion\n            val persisted = saved && viewModel.currentWorkspaceKey() == editorWorkspaceKey\n            if (persisted) {")?;
             replace(&mut save,
@@ -254,50 +244,61 @@ const AUTOSAVE: &str = r####"    // Only the editor debounce uses replacement se
 
 "####;
 
-const CAPTURED_SAVE: &str = r####"    fun upsertCapturedNoteAndFlushResult(
+const CAPTURED_SAVE: &str = r####"    private fun draftBaseForPersistence(base: NoteEntry, workspaceKey: String): NoteEntry? =
+        appData.value.notes.firstOrNull { persisted ->
+            persisted.id == base.id && persisted.hasAeadCiphertextRecoveryEnvelope()
+        } ?: noteForPersistence(base, workspaceKey)
+
+    fun upsertCapturedNoteAndFlushResult(
         note: NoteEntry,
         baseNote: NoteEntry,
         expectedWorkspaceKey: String,
         reason: String,
         editorSessionId: String,
         sequence: Long,
+        requireCheckpoint: Boolean = true,
+        draftWriteMutex: Mutex? = null,
         onComplete: (NoteSaveResult) -> Unit
     ) {
-        if (note.encryption != null) {
-            // Preserve ciphertext sealing before the existing timed background
-            // lock. The ordinary document path below never does checkpoint IO on Main.
-            val checkpoint = journalNoteDraft(expectedWorkspaceKey, baseNote, note, editorSessionId, sequence)
-            if (checkpoint == null) {
-                onComplete(NoteSaveResult.failed(NoteSaveFailure.FLUSH_FAILED))
-                return
-            }
-            upsertNoteAndFlushResult(note, expectedWorkspaceKey, reason, checkpoint, onComplete)
+        if (currentWorkspaceKey() != expectedWorkspaceKey || note.id != baseNote.id) {
+            onComplete(NoteSaveResult.failed(NoteSaveFailure.WORKSPACE_CHANGED))
             return
         }
-        // Accept one immutable request on the main dispatcher. Checkpoint IO,
-        // protection preparation and durable commit execute as one FIFO barrier.
+        // Capture ciphertext before the lifecycle can revoke the unlock token.
+        // The captured copy goes through the same FIFO as unprotected drafts.
+        val protected = note.encryption != null
+        val sealedNote = if (protected) noteForPersistence(note, expectedWorkspaceKey) else null
+        val sealedBase = if (protected) draftBaseForPersistence(baseNote, expectedWorkspaceKey) else null
+        if (protected && (sealedNote?.hasAeadCiphertextRecoveryEnvelope() != true || sealedBase == null)) {
+            onComplete(NoteSaveResult.failed(NoteSaveFailure.FLUSH_FAILED))
+            return
+        }
         enqueueNoteSaveMutation(onComplete = { result ->
             if (currentWorkspaceKey() == expectedWorkspaceKey) onComplete(result)
             else onComplete(NoteSaveResult.failed(NoteSaveFailure.WORKSPACE_CHANGED))
         }) {
-            if (currentWorkspaceKey() != expectedWorkspaceKey || note.id != baseNote.id) {
+            if (currentWorkspaceKey() != expectedWorkspaceKey) {
                 return@enqueueNoteSaveMutation NoteSaveResult.failed(NoteSaveFailure.WORKSPACE_CHANGED)
             }
-            val persistedNote = noteForPersistence(note, expectedWorkspaceKey)
+            val persistedNote = sealedNote ?: noteForPersistence(note, expectedWorkspaceKey)
                 ?: return@enqueueNoteSaveMutation NoteSaveResult.failed(NoteSaveFailure.SERIALIZATION_FAILED)
-            runRequiredNoteCheckpointSave(
-                checkpoint = {
-                    journalNoteDraft(expectedWorkspaceKey, baseNote, note, editorSessionId, sequence)
-                },
-                commit = { checkpoint ->
-                    repository.upsertNoteDurablyResult(
-                        note = persistedNote,
-                        expectedWorkspaceKey = expectedWorkspaceKey,
-                        reason = reason,
-                        draftCheckpoint = checkpoint
-                    )
+            val writeCheckpoint = {
+                (sealedBase ?: draftBaseForPersistence(baseNote, expectedWorkspaceKey))?.let { base ->
+                    repository.journalNoteDraft(expectedWorkspaceKey, base, persistedNote, editorSessionId, sequence)
                 }
-            )
+            }
+            val checkpoint = if (draftWriteMutex == null) writeCheckpoint()
+                else draftWriteMutex.withLock { writeCheckpoint() }
+            val commit: suspend (NoteDraftJournalCheckpoint?) -> NoteSaveResult = { receipt ->
+                repository.upsertNoteDurablyResult(
+                    note = persistedNote,
+                    expectedWorkspaceKey = expectedWorkspaceKey,
+                    reason = reason,
+                    draftCheckpoint = receipt
+                )
+            }
+            if (requireCheckpoint) runRequiredNoteCheckpointSave({ checkpoint }, commit)
+            else commit(checkpoint)
         }
     }
 

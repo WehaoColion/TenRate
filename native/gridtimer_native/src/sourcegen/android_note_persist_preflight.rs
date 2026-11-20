@@ -1,3 +1,4 @@
+// v3.0.2.6 - Flush save diagnostics after SQLite unlock and resume legacy authentication.
 // v3.0.2.5 - Make preflight guards index-seeking and expose outer transaction wait.
 // v3.0.2.4 - Use a transaction-pinned authenticated current snapshot for ordinary saves.
 // v2.23.2.54 - Report native preflight separately from schema and mirror checks.
@@ -33,38 +34,41 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             replace(&mut source,
                 "                // Preflight and the authoritative write share one primary transaction;",
                 REPOSITORY_CACHE_DIAGNOSTIC)?;
-            // Time the outer save transaction; nested preflight starts too late.
             replace(&mut source,
-                "            val committedStamp = stateDatabase.withSnapshotWriteTransaction {",
-                r####"            val committedStamp = stateDatabase.withSnapshotWriteTransactionTracked(
-                onMonitorWait = { millis ->
-                    logDiagnosticEvent(
-                        category = "notes.local_save.latency",
-                        message = "phase=outer_database_monitor_wait durationMs=$millis"
-                    )
-                },
-                onSqliteBeginWait = { millis ->
-                    logDiagnosticEvent(
-                        category = "notes.local_save.latency",
-                        message = "phase=outer_sqlite_begin_wait durationMs=$millis"
-                    )
-                }
-            ) {"####)?;
-
+                "val futureSchema = futureSchemaVersionOnAnySurface(workspaceKey)",
+                "val futureSchema = futureSchemaVersionOnAnySurface(workspaceKey, diagnostic = ::recordPreflight)")?;
+            replace(&mut source,
+                "                stageFinished(\"snapshot_preflight\")",
+                r####"                val preflightMillis = (System.nanoTime() - stageStarted) / 1_000_000L
+                if (preflightMillis >= 1_000L) recordPreflight(
+                    "notes.local_save.latency", "phase=snapshot_preflight durationMs=$preflightMillis"
+                )
+                commitStarted = System.nanoTime()"####)?;
+            let transaction = source.find("            val committedStamp = stateDatabase.withSnapshotWriteTransaction {")
+                .ok_or("missing save transaction for deferred diagnostics")?;
+            let transaction_end = transaction + source[transaction..].find("            stageFinished(\"sqlite_commit\")")
+                .ok_or("missing end of save transaction for deferred diagnostics")?;
+            let transaction_body = source[transaction..transaction_end]
+                .strip_prefix("            val committedStamp = stateDatabase.withSnapshotWriteTransaction {\n")
+                .and_then(|body| body.strip_suffix("            }\n"))
+                .ok_or("unexpected save transaction shape")?;
+            let transaction_body: String = transaction_body.lines().map(|line| format!("    {line}\n")).collect();
+            source.replace_range(transaction..transaction_end + "            stageFinished(\"sqlite_commit\")\n".len(),
+                &format!("{TRACKED_TRANSACTION}{transaction_body}{FLUSH_DIAGNOSTICS}"));
         }
         DATABASE => {
             // Sourcegen unit tests also render a pre-migration v4 fragment.
             // Full production generation has the v5 history codec already installed.
             if source.contains("const val DATABASE_VERSION = 5") {
             // Migrate existing v5 history storage in place, retaining all payloads.
-            replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 6")?;
+            replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 7")?;
             replace(&mut source, "        createHistoryEncodingSchema(database)\n    }\n\n    override fun onUpgrade",
                 "        createHistoryEncodingSchema(database)\n        createHistoryGuardIndexes(database)\n    }\n\n    override fun onUpgrade")?;
             replace(&mut source, "        if (oldVersion < 5) createHistoryEncodingSchema(database)",
-                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 6) createHistoryGuardIndexes(database)")?;
+                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 7) {\n            if (oldVersion == 6) database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_envelope_guard\")\n            createHistoryGuardIndexes(database)\n        }")?;
             replace(&mut source, "    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {",
                 &format!("{HISTORY_GUARD_INDEXES}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{"))?;
-            // A database backup stamped with v6 must contain v6 guard indexes;
+            // An exported database stamped with v7 must contain the same guards;
             // otherwise restoring it would skip onUpgrade and fail INDEXED BY.
             replace(&mut source,
                 "                database.execSQL(\"PRAGMA app_state_backup.user_version=$DATABASE_VERSION\")",
@@ -78,7 +82,8 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 )
                 database.execSQL(
                     "CREATE INDEX app_state_backup.snapshot_history_envelope_guard " +
-                        "ON snapshot_history(workspace_key) WHERE envelope_sha256 IS NULL OR envelope_sha256 = ''"
+                        "ON snapshot_history(workspace_key) WHERE envelope_sha256 IS NULL OR " +
+                        "(envelope_sha256 = '' AND storage_encoding != 1)"
                 )
                 database.execSQL("PRAGMA app_state_backup.user_version=$DATABASE_VERSION")"####)?;
             // Saves may bypass a legacy row's body, but must NEVER prune
@@ -93,7 +98,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             let startup_end = startup + source[startup..].find("\n\n    fun <T> withVerifiedWorkspaceReads(")
                 .ok_or("missing startup history guard end")?;
             source.replace_range(startup..startup_end,
-                "    private fun historyRequiresFullStartupScan(workspaceKey: String): Boolean =\n        historyRequiresFullSaveVerification(workspaceKey) || historyHasUnsealedEnvelope(workspaceKey)");
+                "    private fun historyRequiresFullStartupScan(workspaceKey: String): Boolean =\n        historyRequiresFullSaveVerification(workspaceKey) || historyHasUncheckedLegacyRows(workspaceKey)");
             replace(&mut source, "    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()",
                 &format!("{DATABASE_PREFLIGHT}\n    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()"))?;
             source.push_str(POLICY);
@@ -104,14 +109,41 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
 }
 
 const REPOSITORY_CACHE_DIAGNOSTIC: &str = r####"                if (cached?.first == workspaceKey && cached?.second == stamp) {
-                    logDiagnosticEvent(
-                        category = "notes.local_save.preflight",
-                        message = "scope=cached"
-                    )
+                    recordPreflight("notes.local_save.preflight", "scope=cached")
                 }
                 // Preflight and the authoritative write share one primary transaction;"####;
 
-const HISTORY_GUARD_INDEXES: &str = r####"    // Compact future-schema and unsealed-envelope probes for every workspace.
+const TRACKED_TRANSACTION: &str = r####"            val preflightDiagnostics = mutableListOf<Pair<String, String>>()
+            var commitStarted: Long? = null
+            fun recordPreflight(category: String, message: String) {
+                preflightDiagnostics.add(category to message)
+            }
+            val committedStamp = try {
+                stateDatabase.withSnapshotWriteTransactionTracked(
+                    onMonitorWait = { millis -> recordPreflight(
+                        "notes.local_save.latency", "phase=outer_database_monitor_wait durationMs=$millis"
+                    ) },
+                    onSqliteBeginWait = { millis -> recordPreflight(
+                        "notes.local_save.latency", "phase=outer_sqlite_begin_wait durationMs=$millis"
+                    ) }
+                ) {
+                    stageStarted = System.nanoTime()
+"####;
+
+const FLUSH_DIAGNOSTICS: &str = r####"                }
+            } finally {
+                commitStarted?.let { started ->
+                    val commitMillis = (System.nanoTime() - started) / 1_000_000L
+                    if (commitMillis >= 1_000L) recordPreflight(
+                        "notes.local_save.latency", "phase=sqlite_commit durationMs=$commitMillis"
+                    )
+                }
+                preflightDiagnostics.forEach { (category, message) -> logDiagnosticEvent(category, message) }
+            }
+            stageStarted = System.nanoTime()
+"####;
+
+const HISTORY_GUARD_INDEXES: &str = r####"    // Compact probes for unsafe headers and legacy payloads still awaiting validation.
     private fun createHistoryGuardIndexes(database: SQLiteDatabase) {
         database.execSQL(
             "CREATE INDEX IF NOT EXISTS snapshot_history_schema_guard " +
@@ -125,7 +157,7 @@ const HISTORY_GUARD_INDEXES: &str = r####"    // Compact future-schema and unsea
         database.execSQL(
             "CREATE INDEX IF NOT EXISTS snapshot_history_envelope_guard " +
                 "ON $HISTORY_TABLE(workspace_key) WHERE " +
-                "envelope_sha256 IS NULL OR envelope_sha256 = ''"
+                "envelope_sha256 IS NULL OR (envelope_sha256 = '' AND storage_encoding != 1)"
         )
     }
 
@@ -154,13 +186,15 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
         ).use { it.moveToFirst() }
     }
 
-    // Unsealed legacy history is read and authenticated at startup/recovery.
-    // It never needs to be decoded again on the hot-path save if the current
-    // snapshot is authenticated; retention must preserve those old rows.
-    private fun historyHasUnsealedEnvelope(workspaceKey: String): Boolean =
+    // The existing codec writes storage_encoding=1 only after validating the
+    // original digest and both schema declarations, packing and reading back
+    // the payload. Legacy rows retain their empty envelopes and remain recovery
+    // evidence. Export resets the packing queue, so imports revalidate them.
+    private fun historyHasUncheckedLegacyRows(workspaceKey: String): Boolean =
         writableDatabase.rawQuery(
             "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_envelope_guard " +
-                "WHERE workspace_key = ? AND (envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1",
+                "WHERE workspace_key = ? AND (envelope_sha256 IS NULL OR " +
+                "(envelope_sha256 = '' AND storage_encoding != 1)) LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
 
@@ -231,25 +265,26 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
 
 const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySurface(
         workspaceKey: String,
-        includeUnmigratedLegacy: Boolean = false
+        includeUnmigratedLegacy: Boolean = false,
+        diagnostic: (String, String) -> Unit = { _, _ -> }
     ): Int? = stateDatabase.withVerifiedSavePreflight(
         workspaceKey,
         onNativeVerification = { millis, rows ->
-            logDiagnosticEvent(
-                category = "notes.local_save.latency",
-                message = "phase=preflight_native_verification durationMs=$millis rows=$rows"
+            diagnostic(
+                "notes.local_save.latency",
+                "phase=preflight_native_verification durationMs=$millis rows=$rows"
             )
         },
         onTransactionWait = { millis ->
-            logDiagnosticEvent(
-                category = "notes.local_save.latency",
-                message = "phase=preflight_transaction_wait durationMs=$millis"
+            diagnostic(
+                "notes.local_save.latency",
+                "phase=preflight_transaction_wait durationMs=$millis"
             )
         },
         onScope = { current ->
-            logDiagnosticEvent(
-                category = "notes.local_save.preflight",
-                message = if (current) "scope=current" else "scope=full"
+            diagnostic(
+                "notes.local_save.preflight",
+                if (current) "scope=current" else "scope=full"
             )
         }
     ) {
@@ -511,7 +546,8 @@ mod generated_preflight_diagnostics_tests {
                 schema_version INTEGER,
                 app_data_json TEXT,
                 sha256 TEXT,
-                envelope_sha256 TEXT
+                envelope_sha256 TEXT,
+                storage_encoding INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX snapshot_history_schema_guard
                 ON snapshot_history(workspace_key, schema_version);
@@ -520,10 +556,10 @@ mod generated_preflight_diagnostics_tests {
                 WHERE sha256 IS NULL OR sha256 = '';
             CREATE INDEX snapshot_history_envelope_guard
                 ON snapshot_history(workspace_key)
-                WHERE envelope_sha256 IS NULL OR envelope_sha256 = '';
+                WHERE envelope_sha256 IS NULL OR (envelope_sha256 = '' AND storage_encoding != 1);
         "#).unwrap();
         for i in 0..7200 {
-            db.execute("INSERT INTO snapshot_history VALUES (?1, 15, ?2, 'digest', 'envelope')",
+            db.execute("INSERT INTO snapshot_history VALUES (?1, 15, ?2, 'digest', 'envelope', 0)",
                 rusqlite::params![if i % 113 == 0 { "other" } else { "guest" }, "note-content"]).unwrap();
         }
         let schema_null = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
@@ -533,7 +569,8 @@ mod generated_preflight_diagnostics_tests {
         let digest = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_digest_guard
             WHERE workspace_key = ?1 AND (sha256 IS NULL OR sha256 = '') LIMIT 1";
         let envelope = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_envelope_guard
-            WHERE workspace_key = ?1 AND (envelope_sha256 IS NULL OR envelope_sha256 = '') LIMIT 1";
+            WHERE workspace_key = ?1 AND (envelope_sha256 IS NULL OR
+                (envelope_sha256 = '' AND storage_encoding != 1)) LIMIT 1";
         let unsafe_schema = |workspace: &str| -> bool {
             db.prepare(schema_null).unwrap().exists([workspace]).unwrap() ||
                 db.prepare(schema_future).unwrap().exists(rusqlite::params![workspace, 15]).unwrap()
@@ -565,16 +602,20 @@ mod generated_preflight_diagnostics_tests {
         assert!(null_plan.contains("schema_version=?"), "{null_plan}");
         assert!(digest_plan.contains("INDEX snapshot_history_digest_guard"), "{digest_plan}");
         assert!(envelope_plan.contains("INDEX snapshot_history_envelope_guard"), "{envelope_plan}");
-        db.execute("INSERT INTO snapshot_history VALUES ('other', 16, 'x', 'digest', 'envelope')", []).unwrap();
+        db.execute("INSERT INTO snapshot_history VALUES ('other', 16, 'x', 'digest', 'envelope', 0)", []).unwrap();
         assert!(!unsafe_schema("guest"));
-        db.execute("INSERT INTO snapshot_history VALUES ('guest', 16, 'x', 'digest', 'envelope')", []).unwrap();
+        db.execute("INSERT INTO snapshot_history VALUES ('guest', 16, 'x', 'digest', 'envelope', 0)", []).unwrap();
         assert!(unsafe_schema("guest"));
-        db.execute("INSERT INTO snapshot_history VALUES ('guest', NULL, 'x', 'digest', 'envelope')", []).unwrap();
+        db.execute("INSERT INTO snapshot_history VALUES ('guest', NULL, 'x', 'digest', 'envelope', 0)", []).unwrap();
         assert!(unsafe_schema("guest"));
-        db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', 'digest', '')", []).unwrap();
+        db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', 'digest', '', 0)", []).unwrap();
+        assert!(unsafe_envelope("guest"));
+        db.execute("UPDATE snapshot_history SET storage_encoding = 1 WHERE envelope_sha256 = ''", []).unwrap();
+        assert!(!unsafe_envelope("guest"));
+        db.execute("UPDATE snapshot_history SET storage_encoding = 0 WHERE envelope_sha256 = ''", []).unwrap();
         assert!(unsafe_envelope("guest"));
         assert!(!unsafe_digest("guest"));
-        db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', '', 'envelope')", []).unwrap();
+        db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', '', 'envelope', 0)", []).unwrap();
         assert!(unsafe_digest("guest"));
     }
 
@@ -589,7 +630,8 @@ mod generated_preflight_diagnostics_tests {
         assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_digest_guard"));
         assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_envelope_guard"));
         assert!(HISTORY_GUARD_INDEXES.contains("CREATE INDEX IF NOT EXISTS snapshot_history_digest_guard"));
-        assert!(DATABASE_PREFLIGHT.contains("envelope_sha256 IS NULL OR envelope_sha256 = ''"));
+        assert!(DATABASE_PREFLIGHT.contains("envelope_sha256 IS NULL OR "));
+        assert!(DATABASE_PREFLIGHT.contains("envelope_sha256 = '' AND storage_encoding != 1"));
         assert!(DATABASE_PREFLIGHT.contains("schema_version IS NULL LIMIT 1"));
         assert!(DATABASE_PREFLIGHT.contains("schema_version > ? LIMIT 1"));
         assert!(DATABASE_PREFLIGHT.contains("sha256 IS NULL OR sha256 = ''"));

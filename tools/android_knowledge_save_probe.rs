@@ -1,16 +1,29 @@
+// v3.0.2.6 - Time real confirmation on a cold preflight after upgrading a large v5 database.
 // v3.0.2.5 - Distinguish conservative legacy fallback from healthy current-only fast path.
 // v3.0.2.4 - Verify on-disk durability, bounded save latency and optional logcat proof with 7200 history rows.
 //! Android API 35 signed-APK acceptance: new knowledge page must persist after restart.
 //! The driver runs only against an installed signed APK, never a mocked UI.
-use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
+use std::{
+    env, fs,
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
+    thread::{self, sleep, JoinHandle},
+    time::Duration,
+};
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "3.0.2.5";
+const VERSION: &str = "3.0.2.6";
 const CREATED: &str = "KnowledgeSaveProbe";
 const SEED: &str = "KnowledgeSeedProbe";
+const CONTENDED: &str = "KnowledgeWriterProbe";
 const HISTORY_ROWS: usize = 7_200;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
+const DATABASE: &str = "/data/user/0/com.ofairyo.gridtimer/databases/app_state.db";
+const PRIMARY_MIRROR: &str =
+    "/data/user/0/com.ofairyo.gridtimer/files/state_workspaces/guest/timer_state.json";
+const DIAGNOSTIC_LOG: &str = "/data/user/0/com.ofairyo.gridtimer/files/diagnostic_events.log";
 
 #[derive(Clone)]
 struct Node {
@@ -87,10 +100,14 @@ fn find(labels: &[&str]) -> Result<Option<Node>, String> {
     }
     Ok(None)
 }
-fn tap(node: &Node) -> Result<(), String> {
+fn send_tap(node: &Node) -> Result<(), String> {
     let x = (node.bounds[0] + node.bounds[2]) / 2;
     let y = (node.bounds[1] + node.bounds[3]) / 2;
     cmd(&["shell", "input", "tap", &x.to_string(), &y.to_string()])?;
+    Ok(())
+}
+fn tap(node: &Node) -> Result<(), String> {
+    send_tap(node)?;
     sleep(Duration::from_millis(950));
     Ok(())
 }
@@ -131,7 +148,11 @@ fn directory(root: &Path) -> Result<(), String> {
     capture(root, "02_directory_not_found");
     Err("Could not reach the Android knowledge hierarchy and its create actions".into())
 }
-fn create_page(root: &Path, page_name: &str) -> Result<u128, String> {
+fn create_page(
+    root: &Path,
+    page_name: &str,
+    before_confirm: impl FnOnce() -> Result<(), String>,
+) -> Result<u128, String> {
     if !tap_any(&["新建子页面", "新建页面", "New subpage"])? {
         capture(root, "03_no_create_action");
         return Err("Knowledge directory has no accessible create-page control".into());
@@ -153,10 +174,11 @@ fn create_page(root: &Path, page_name: &str) -> Result<u128, String> {
     cmd(&["shell", "input", "text", page_name])?;
     sleep(Duration::from_millis(450));
     capture(root, "04_title_entered");
-    if !tap_any(&["确定", "Confirm", "OK"])? {
-        return Err("New-page confirmation is missing".into());
-    }
+    let confirmation = find(&["确定", "Confirm", "OK"])?
+        .ok_or("New-page confirmation is missing")?;
+    before_confirm()?;
     let started = std::time::Instant::now();
+    send_tap(&confirmation)?;
     let mut saved = false;
     for tick in 0..28 {
         let current = dump()?;
@@ -168,33 +190,38 @@ fn create_page(root: &Path, page_name: &str) -> Result<u128, String> {
         }
         sleep(Duration::from_secs(1));
     }
+    let elapsed = started.elapsed().as_millis();
     capture(root, "06_after_create");
     if !saved {
         return Err(format!(
             "Create-page confirmation failed to finish in the emulator ({} ms)",
-            started.elapsed().as_millis()
+            elapsed
         ));
     }
     if cmd(&["shell", "pidof", PACKAGE])?.trim().is_empty() {
         return Err("App process exited after knowledge page creation".into());
     }
-    Ok(started.elapsed().as_millis())
+    Ok(elapsed)
 }
 
-fn persisted_after_restart(root: &Path, page_name: &str) -> Result<usize, String> {
+fn pull_database(local: &Path) -> Result<(), String> {
+    let local_str = local.to_str().ok_or("Database fixture path is not UTF-8")?;
+    cmd(&["pull", DATABASE, local_str])?;
+    for extension in ["-wal", "-shm"] {
+        let _ = adb(&["pull", &format!("{DATABASE}{extension}"), &format!("{local_str}{extension}")]);
+    }
+    Ok(())
+}
+
+fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize), String> {
     cmd(&["shell", "am", "force-stop", PACKAGE])?;
     // A visible "Saved" label is not proof: read the authoritative SQLite
     // snapshot after process death, including its WAL, before reopening the UI.
-    let device = "/data/user/0/com.ofairyo.gridtimer/databases/app_state.db";
     let local = root.join("durable_app_state.db");
-    let local_str = local.to_str().ok_or("Durability fixture path is not UTF-8")?;
-    cmd(&["pull", device, local_str])?;
-    for extension in ["-wal", "-shm"] {
-        let _ = adb(&["pull", &format!("{device}{extension}"), &format!("{local_str}{extension}")]);
-    }
+    pull_database(&local)?;
     let escaped = page_name.replace('\'', "''");
     let matches = sqlite(&local,
-        &format!("SELECT COUNT(*) FROM current_snapshot WHERE workspace_key='guest' AND instr(app_data_json, '{escaped}') > 0;"))?;
+        &format!("SELECT COUNT(*) FROM current_snapshot WHERE workspace_key='guest' AND instr(app_data_json, '{escaped}') > 0 AND instr(app_data_json, '{CONTENDED}') > 0;"))?;
     if matches != "1" {
         return Err(format!("Visible Saved status was not durable in SQLite after force-stop: {matches} current matches"));
     }
@@ -206,13 +233,22 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<usize, String
     if history < HISTORY_ROWS {
         return Err(format!("History was unexpectedly removed during saving: {history}"));
     }
+    let version = sqlite(&local, "PRAGMA user_version;")?;
+    let indexes = sqlite(&local, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('snapshot_history_schema_guard','snapshot_history_digest_guard','snapshot_history_envelope_guard');")?;
+    if version != "7" || indexes != "3" {
+        return Err(format!("Database upgrade did not install all guards: version={version}, indexes={indexes}"));
+    }
+    let packed = packed_legacy_rows(&local)?;
+    if packed == 0 || packed >= HISTORY_ROWS {
+        return Err(format!("Expected work remaining after partial legacy authentication, got {packed} packed rows"));
+    }
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
     for attempt in 0..18 {
         if find(&[page_name])?.is_some() {
             capture(root, "07_persisted_after_restart");
-            return Ok(history);
+            return Ok((history, packed));
         }
         if attempt == 9 {
             // Reverse scroll once, because the folder can restore a previous offset.
@@ -234,6 +270,15 @@ fn sqlite(db: &Path, statement: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
+fn packed_legacy_rows(db: &Path) -> Result<usize, String> {
+    let state = sqlite(db,
+        "SELECT COUNT(*) || ':' || COUNT(CASE WHEN storage_encoding=1 AND app_data_json GLOB '!gridtimer-history-v1:*' THEN 1 END) FROM snapshot_history WHERE workspace_key='guest' AND envelope_sha256='';")?;
+    let (total, packed) = state.split_once(':').ok_or("Invalid legacy row counts")?;
+    if total.parse::<usize>() != Ok(HISTORY_ROWS) {
+        return Err(format!("Legacy history was deleted or promoted: expected {HISTORY_ROWS} unsealed rows, got {total}"));
+    }
+    packed.parse().map_err(|_| "Invalid packed legacy row count".into())
+}
 
 // Expand only the historical JSON with legal whitespace, retaining the exact
 // AppData object. An independently calculated digest keeps each row valid;
@@ -273,13 +318,9 @@ fn seed_history(root: &Path) -> Result<(), String> {
     cmd(&["shell", "am", "force-stop", PACKAGE])?;
     cmd(&["root"])?;
     cmd(&["wait-for-device"])?;
-    let device = "/data/user/0/com.ofairyo.gridtimer/databases/app_state.db";
     let local = root.join("fixture_app_state.db");
     let local_str = local.to_str().ok_or("Fixture path is not UTF-8")?;
-    cmd(&["pull", device, local_str])?;
-    for extension in ["-wal", "-shm"] {
-        let _ = adb(&["pull", &format!("{device}{extension}"), &format!("{local_str}{extension}")]);
-    }
+    pull_database(&local)?;
     let current = sqlite(&local, "SELECT COUNT(*) FROM current_snapshot WHERE workspace_key = 'guest';")?;
     if current != "1" {
         return Err(format!("Expected one guest current snapshot before seeding, found {current}"));
@@ -293,6 +334,10 @@ fn seed_history(root: &Path) -> Result<(), String> {
     let digest = padded_history_digest(&local, root)?;
     let sql = format!(
         "PRAGMA wal_checkpoint(TRUNCATE); \
+         DROP INDEX snapshot_history_schema_guard; \
+         DROP INDEX snapshot_history_digest_guard; \
+         DROP INDEX snapshot_history_envelope_guard; \
+         PRAGMA user_version=5; \
          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < {HISTORY_ROWS}) \
          INSERT INTO snapshot_history (workspace_key, schema_version, revision, item_count, \
              app_data_json, sha256, envelope_sha256, created_at_epoch_millis) \
@@ -311,9 +356,9 @@ fn seed_history(root: &Path) -> Result<(), String> {
     }
     let temporary = "/data/local/tmp/tenrate_history_fixture.db";
     cmd(&["push", local_str, temporary])?;
-    cmd(&["shell", "cp", temporary, device])?;
-    let _ = cmd(&["shell", "rm", "-f", &format!("{device}-wal"), &format!("{device}-shm")]);
-    let _ = cmd(&["shell", "restorecon", device]);
+    cmd(&["shell", "cp", temporary, DATABASE])?;
+    let _ = cmd(&["shell", "rm", "-f", &format!("{DATABASE}-wal"), &format!("{DATABASE}-shm")]);
+    let _ = cmd(&["shell", "restorecon", DATABASE]);
     cmd(&["shell", "rm", "-f", temporary])?;
     fs::write(root.join("fixture_history_count.txt"), format!("{count}\n"))
         .map_err(|e| e.to_string())?;
@@ -333,10 +378,9 @@ fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
     fs::write(root.join("save_logcat_main.txt"), &log).map_err(|e| e.to_string())?;
     fs::write(root.join("save_preflight_logcat.txt"), &matching_logcat)
         .map_err(|e| e.to_string())?;
-    let device = "/data/user/0/com.ofairyo.gridtimer/files/diagnostic_events.log";
     let local = root.join("app_diagnostic_events.log");
     let local_str = local.to_str().ok_or("Diagnostic path is not UTF-8")?;
-    cmd(&["pull", device, local_str])?;
+    cmd(&["pull", DIAGNOSTIC_LOG, local_str])?;
     let recorded = fs::read_to_string(&local)
         .map_err(|error| format!("App's durable scope proof unavailable: {error}"))?;
     let last = recorded.lines()
@@ -346,11 +390,36 @@ fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
         .map_err(|error| error.to_string())?;
     if last.contains("scope=current") {
         Ok("authenticated current-only (application diagnostic confirmed)")
-    } else if last.contains("scope=cached") {
-        Ok("unchanged authenticated workspace stamp (application diagnostic confirmed)")
     } else {
         Err(format!("The measured save did not use current-only preflight: {last}"))
     }
+}
+
+fn hold_sqlite_writer() -> Result<JoinHandle<Result<(), String>>, String> {
+    let mut child = Command::new("adb")
+        .args(["shell", "-T", "sqlite3", "-batch", DATABASE])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn().map_err(|error| error.to_string())?;
+    let mut input = child.stdin.take().ok_or("SQLite writer stdin unavailable")?;
+    let mut output = BufReader::new(child.stdout.take().ok_or("SQLite writer stdout unavailable")?);
+    input.write_all(b".bail on\n.timeout 8000\nBEGIN IMMEDIATE;\n.print writer-ready\n")
+        .map_err(|error| error.to_string())?;
+    let mut ready = String::new();
+    output.read_line(&mut ready).map_err(|error| error.to_string())?;
+    if ready.trim() != "writer-ready" {
+        return Err(format!("Could not acquire the competing SQLite writer: {ready}"));
+    }
+    Ok(thread::spawn(move || {
+        sleep(Duration::from_millis(2_000));
+        input.write_all(b"ROLLBACK;\n.quit\n").map_err(|error| error.to_string())?;
+        drop(input);
+        if child.wait().map_err(|error| error.to_string())?.success() {
+            Ok(())
+        } else {
+            Err("The competing SQLite writer failed to release".into())
+        }
+    }))
 }
 
 fn run(root: &Path) -> Result<String, String> {
@@ -362,20 +431,53 @@ fn run(root: &Path) -> Result<String, String> {
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
-    let _ = create_page(root, SEED)?;
+    create_page(root, SEED, || Ok(()))?;
     seed_history(root)?;
     directory(root)?;
     cmd(&["logcat", "-c"])?;
-    let saved_millis = create_page(root, CREATED)?;
+    let saved_millis = create_page(root, CREATED, || {
+        // A metadata-only change invalidates the in-process preflight stamp.
+        // Clear earlier scope lines so this confirmation must supply its own proof.
+        cmd(&["shell", "touch", "-m", "-t", "200001010000.00", PRIMARY_MIRROR])?;
+        cmd(&["shell", &format!(": > {DIAGNOSTIC_LOG}")])?;
+        Ok(())
+    })?;
     fs::write(root.join("save_elapsed_ms.txt"), format!("{saved_millis}\n"))
         .map_err(|e| e.to_string())?;
     let scope = inspect_preflight_logs(root)?;
     if saved_millis > 20_000 {
         return Err(format!("Saving a page with {HISTORY_ROWS} historical snapshots was too slow: {saved_millis} ms"));
     }
-    let durable_history = persisted_after_restart(root, CREATED)?;
+    directory(root)?;
+    let mut writer = None;
+    let contended_save = create_page(root, CONTENDED, || {
+        cmd(&["shell", &format!(": > {DIAGNOSTIC_LOG}")])?;
+        writer = Some(hold_sqlite_writer()?);
+        Ok(())
+    });
+    if let Some(writer) = writer {
+        writer.join().map_err(|_| "SQLite writer thread panicked")??;
+    }
+    let contended_millis = contended_save?;
+    let diagnostics = cmd(&["exec-out", "cat", DIAGNOSTIC_LOG])?;
+    fs::write(root.join("contended_save_diagnostics.txt"), &diagnostics)
+        .map_err(|error| error.to_string())?;
+    if !diagnostics.contains("phase=outer_sqlite_begin_wait")
+        && !diagnostics.contains("phase=hierarchy_write_lock")
+    {
+        return Err("The competing SQLite writer did not exercise a recorded save wait".into());
+    }
+    let (durable_history, packed_before) = persisted_after_restart(root, CREATED)?;
+    sleep(Duration::from_secs(4));
+    cmd(&["shell", "am", "force-stop", PACKAGE])?;
+    let after = root.join("resumed_app_state.db");
+    pull_database(&after)?;
+    let packed_after = packed_legacy_rows(&after)?;
+    if packed_after <= packed_before {
+        return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
+    }
     Ok(format!(
-        "PASS: Android {VERSION} saved a knowledge page with {durable_history} historical SQLite snapshots in {saved_millis} ms; on-disk current snapshot and UI both survived force-stop/restart. Preflight trace: {scope}. Legacy-envelope fixture retains historical data; current-only routing must be corroborated by diagnostics where available."
+        "PASS: Android {VERSION} upgraded a v5 database with {durable_history} retained SQLite snapshots. Click-to-visible save took {saved_millis} ms with {scope}. A competing SQLite writer produced a recorded save wait; that save took {contended_millis} ms. Both pages were durable in SQLite after force-stop, and the first reappeared in the UI. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {
