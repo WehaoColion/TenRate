@@ -213,7 +213,6 @@ const DRAG_STATE: &str = r####"    var editorViewportHeightPx by remember(note.i
 const DRAG_LIST_START: &str = r####"        } else items(displayedBlocks, key = NoteBlock::id) { block ->
             Column(modifier = Modifier
                 .zIndex(if (draggedBlockId == block.id) 1f else 0f)
-                .animateItemPlacement()
             ) {
             if (dropBeforeId == block.id) {
                 Spacer(Modifier.fillMaxWidth().height(2.dp).background(editorAccent))

@@ -14,7 +14,7 @@ const AFTER_BOX: &str = r#"                            decorationBox = { innerFi
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 52.dp),
+                                        .heightIn(min = 36.dp),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
                                     if (textFieldState.text.isBlank()) {"#;
@@ -63,7 +63,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     let mut text_branch = canvas[text_start..text_end].to_owned();
     replace_once(&mut text_branch, BEFORE_BOX, AFTER_BOX)?;
     // This wrapper has the input node's size and origin, including RTL placement.
-    // The outer minimum-height box may center it without shifting caret-local rectangles.
+    // The compact outer minimum-height box keeps the caret in text-local coordinates.
     replace_once(&mut text_branch, BEFORE_INNER, AFTER_INNER)?;
     let mut source = source.to_owned();
     source.replace_range(

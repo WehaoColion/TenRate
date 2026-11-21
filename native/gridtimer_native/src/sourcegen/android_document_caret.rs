@@ -111,11 +111,12 @@ const LIST_FOCUS: &str = r####"    val showingMarkdownPreview = markdownPreview 
         it.id == pendingFocusBlockId && it.type == NoteBlockType.TEXT
     }
     LaunchedEffect(note.id, workspaceKey, pendingFocusBlockId, pendingBlockIndex,
-        showingMarkdownPreview) {
+        showingMarkdownPreview, markdownPreviewText != null) {
         val targetId = pendingFocusBlockId ?: return@LaunchedEffect
         val targetIndex = documentFocusItemIndex(
             pendingBlockIndex, showingMarkdownPreview,
-            editorListState.layoutInfo.visibleItemsInfo.any { it.key == targetId }
+            editorListState.layoutInfo.visibleItemsInfo.any { it.key == targetId },
+            markdownPreviewText != null
         ) ?: return@LaunchedEffect
         // A newly split block may not be composed at all. Materialize it first;
         // its own focus/layout effect then reveals the precise caret rectangle.
@@ -171,9 +172,10 @@ internal fun documentCaretRevealBounds(
 internal fun documentFocusItemIndex(
     blockIndex: Int,
     showingPreview: Boolean,
-    alreadyVisible: Boolean
+    alreadyVisible: Boolean,
+    hasPreviewToggle: Boolean
 ): Int? = if (blockIndex < 0 || showingPreview || alreadyVisible) null
-    else 4 + blockIndex
+    else (if (hasPreviewToggle) 4 else 3) + blockIndex
 "####;
 
 pub const UI_CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
@@ -325,16 +327,19 @@ class DocumentCaretPolicyTest {
         assertNull(documentCaretRevealBounds(DocumentCaretBounds(0f, 0f, 2f, 26f), 280, Float.NaN))
     }
     @Test fun offscreenNewlineAndInsertionIncludeAllPrecedingBlocks() {
-        assertEquals(4, documentFocusItemIndex(0, false, false))
-        assertEquals(5, documentFocusItemIndex(1, false, false))
-        assertEquals(24, documentFocusItemIndex(20, false, false))
+        assertEquals(4, documentFocusItemIndex(0, false, false, true))
+        assertEquals(3, documentFocusItemIndex(0, false, false, false))
+        assertEquals(5, documentFocusItemIndex(1, false, false, true))
+        assertEquals(4, documentFocusItemIndex(1, false, false, false))
+        assertEquals(24, documentFocusItemIndex(20, false, false, true))
+        assertEquals(23, documentFocusItemIndex(20, false, false, false))
     }
     @Test fun visibleBlockNeverJumpsToItsTop() {
-        assertNull(documentFocusItemIndex(20, false, true))
+        assertNull(documentFocusItemIndex(20, false, true, true))
     }
     @Test fun removedBlockOrPreviewModeCannotStealFocus() {
-        assertNull(documentFocusItemIndex(-1, false, false))
-        assertNull(documentFocusItemIndex(2, true, false))
+        assertNull(documentFocusItemIndex(-1, false, false, false))
+        assertNull(documentFocusItemIndex(2, true, false, true))
     }
     @Test fun consecutiveLinesStayWithinTheAvailableHeight() {
         for (line in 0..200) for (height in listOf(32, 64, 180, 280, 640)) {

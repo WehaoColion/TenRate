@@ -1,3 +1,4 @@
+// v3.0.2.7 - 知识编辑稳定输入、空块原位标题化与紧凑段落排版。
 // v3.0.2.6 - 草稿后台落盘，旧历史分批验证，SQLite 锁外写入诊断。
 // v3.0.2.5 - 保存历史安全查询改为索引定位，新增外层事务锁等待诊断。
 // v3.0.2.4 - 知识保存当前快照预校验减负，维持完整异常恢复保护。
@@ -202,8 +203,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30008
-        versionName '3.0.2.6'
+        versionCode 30009
+        versionName '3.0.2.7'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
