@@ -5,22 +5,21 @@
 //! The driver runs only against an installed signed APK, never a mocked UI.
 use std::{
     env, fs,
-    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Command, Output},
     thread::{self, sleep, JoinHandle},
     time::Duration,
 };
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "3.0.2.6";
+mod android_save_probe_fixture;
+use android_save_probe_fixture::{installed_version, SqliteWriter, DATABASE};
 const CREATED: &str = "KnowledgeSaveProbe";
 const SEED: &str = "KnowledgeSeedProbe";
 const CONTENDED: &str = "KnowledgeWriterProbe";
 const HISTORY_ROWS: usize = 7_200;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
-const DATABASE: &str = "/data/user/0/com.ofairyo.gridtimer/databases/app_state.db";
 const PRIMARY_MIRROR: &str =
     "/data/user/0/com.ofairyo.gridtimer/files/state_workspaces/guest/timer_state.json";
 const DIAGNOSTIC_LOG: &str = "/data/user/0/com.ofairyo.gridtimer/files/diagnostic_events.log";
@@ -183,7 +182,10 @@ fn create_page(
     for tick in 0..28 {
         let current = dump()?;
         if tick == 2 || tick == 10 { capture(root, &format!("05_saving_{tick}")); }
-        if current.contains(page_name) && !current.contains("正在保存") &&
+        let confirmation_open = elements(&current).iter().any(|node|
+            node.class_name.ends_with("EditText") && node.label == page_name) &&
+            elements(&current).iter().any(|node| ["确定", "Confirm", "OK"].contains(&node.label.as_str()));
+        if !confirmation_open && current.contains(page_name) && !current.contains("正在保存") &&
             !current.contains("等待前序保存") && !current.contains("正在写入本地数据") {
             saved = true;
             break;
@@ -214,7 +216,6 @@ fn pull_database(local: &Path) -> Result<(), String> {
 }
 
 fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize), String> {
-    cmd(&["shell", "am", "force-stop", PACKAGE])?;
     // A visible "Saved" label is not proof: read the authoritative SQLite
     // snapshot after process death, including its WAL, before reopening the UI.
     let local = root.join("durable_app_state.db");
@@ -396,38 +397,17 @@ fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
 }
 
 fn hold_sqlite_writer() -> Result<JoinHandle<Result<(), String>>, String> {
-    let mut child = Command::new("adb")
-        .args(["shell", "-T", "sqlite3", "-batch", DATABASE])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn().map_err(|error| error.to_string())?;
-    let mut input = child.stdin.take().ok_or("SQLite writer stdin unavailable")?;
-    let mut output = BufReader::new(child.stdout.take().ok_or("SQLite writer stdout unavailable")?);
-    input.write_all(b".bail on\n.timeout 8000\nBEGIN IMMEDIATE;\n.print writer-ready\n")
-        .map_err(|error| error.to_string())?;
-    let mut ready = String::new();
-    output.read_line(&mut ready).map_err(|error| error.to_string())?;
-    if ready.trim() != "writer-ready" {
-        return Err(format!("Could not acquire the competing SQLite writer: {ready}"));
-    }
+    let writer = SqliteWriter::acquire()?;
     Ok(thread::spawn(move || {
         sleep(Duration::from_millis(2_000));
-        input.write_all(b"ROLLBACK;\n.quit\n").map_err(|error| error.to_string())?;
-        drop(input);
-        if child.wait().map_err(|error| error.to_string())?.success() {
-            Ok(())
-        } else {
-            Err("The competing SQLite writer failed to release".into())
-        }
+        writer.release()
     }))
 }
 
 fn run(root: &Path) -> Result<String, String> {
     cmd(&["wait-for-device"])?;
     let info = cmd(&["shell", "dumpsys", "package", PACKAGE])?;
-    if !info.contains(&format!("versionName={VERSION}")) {
-        return Err(format!("Installed package is not signed candidate {VERSION}"));
-    }
+    let version = installed_version(&info)?;
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
@@ -449,6 +429,9 @@ fn run(root: &Path) -> Result<String, String> {
         return Err(format!("Saving a page with {HISTORY_ROWS} historical snapshots was too slow: {saved_millis} ms"));
     }
     directory(root)?;
+    let mirror_dir = PRIMARY_MIRROR.rsplit_once('/').unwrap().0;
+    let original_mode = cmd(&["shell", "stat", "-c", "%a", mirror_dir])?;
+    cmd(&["shell", "chmod", "0555", mirror_dir])?;
     let mut writer = None;
     let contended_save = create_page(root, CONTENDED, || {
         cmd(&["shell", &format!(": > {DIAGNOSTIC_LOG}")])?;
@@ -458,7 +441,12 @@ fn run(root: &Path) -> Result<String, String> {
     if let Some(writer) = writer {
         writer.join().map_err(|_| "SQLite writer thread panicked")??;
     }
+    cmd(&["shell", "am", "force-stop", PACKAGE])?;
+    cmd(&["shell", "chmod", original_mode.trim(), mirror_dir])?;
     let contended_millis = contended_save?;
+    if cmd(&["exec-out", "cat", PRIMARY_MIRROR])?.contains(CONTENDED) {
+        return Err("Expected the blocked recovery copy to lag behind the visible save".into());
+    }
     let diagnostics = cmd(&["exec-out", "cat", DIAGNOSTIC_LOG])?;
     fs::write(root.join("contended_save_diagnostics.txt"), &diagnostics)
         .map_err(|error| error.to_string())?;
@@ -468,6 +456,15 @@ fn run(root: &Path) -> Result<String, String> {
         return Err("The competing SQLite writer did not exercise a recorded save wait".into());
     }
     let (durable_history, packed_before) = persisted_after_restart(root, CREATED)?;
+    let mut repaired = false;
+    for _ in 0..25 {
+        if cmd(&["exec-out", "cat", PRIMARY_MIRROR])?.contains(CONTENDED) {
+            repaired = true;
+            break;
+        }
+        sleep(Duration::from_millis(400));
+    }
+    if !repaired { return Err("Verified startup did not repair the stale recovery copy".into()); }
     sleep(Duration::from_secs(4));
     cmd(&["shell", "am", "force-stop", PACKAGE])?;
     let after = root.join("resumed_app_state.db");
@@ -477,7 +474,7 @@ fn run(root: &Path) -> Result<String, String> {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
     Ok(format!(
-        "PASS: Android {VERSION} upgraded a v5 database with {durable_history} retained SQLite snapshots. Click-to-visible save took {saved_millis} ms with {scope}. A competing SQLite writer produced a recorded save wait; that save took {contended_millis} ms. Both pages were durable in SQLite after force-stop, and the first reappeared in the UI. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. Click-to-visible save took {saved_millis} ms with {scope}. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {

@@ -3996,6 +3996,18 @@ pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nat
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeTextBlocksStorageContent(
+    mut env: JNIEnv,
+    _class: JClass,
+    texts: JObjectArray,
+) -> jstring {
+    let Some(blocks) = string_array_values(&mut env, &texts) else {
+        return std::ptr::null_mut();
+    };
+    new_java_string(&mut env, &note_documents::text_blocks_storage_content(&blocks))
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeRichTextAttachmentIds(
     mut env: JNIEnv,
     _class: JClass,
@@ -4349,6 +4361,7 @@ fn string_array_values(env: &mut JNIEnv, values: &JObjectArray) -> Option<Vec<St
         let raw_value = env.get_object_array_element(values, index as i32).ok()?;
         let java_string = JString::from(raw_value);
         let value: String = env.get_string(&java_string).ok()?.into();
+        env.delete_local_ref(java_string).ok()?;
         result.push(value);
     }
     Some(result)

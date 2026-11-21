@@ -4,6 +4,9 @@ use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sl
 
 const APP: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
+mod android_save_probe_fixture;
+use android_save_probe_fixture::{installed_version, SqliteWriter};
+
 const GRIP: &str = "拖动调整块顺序，点击打开操作菜单";
 const TITLE: &str = "TypingStabilityCheck";
 
@@ -173,9 +176,9 @@ fn grips()->Result<Vec<Node>,String>{
 fn run(out:&Path)->Result<String,String>{
     command(&["wait-for-device"])?;
     let info=command(&["shell","dumpsys","package",APP])?;
-    if !info.contains("versionName=3.0.2.7"){
-        return Err("Expected signed Android 3.0.2.7 APK not installed".into());
-    }
+    installed_version(&info)?;
+    command(&["root"])?;
+    command(&["wait-for-device"])?;
     command(&["shell","am","start","-W","-n",ACTIVITY])?;
     sleep(Duration::from_secs(7));
     evidence(out,"01_app_launched");
@@ -227,8 +230,22 @@ fn run(out:&Path)->Result<String,String>{
     evidence(out,"05_editor_before_regular_typing");
 
     // Same-line typing must not move the surrounding paragraph stack.
+    let writer = SqliteWriter::acquire()?;
     write_text("NoJump")?;
-    sleep(Duration::from_millis(1000));
+    let pending = tree()?;
+    writer.release()?;
+    fs::write(out.join("receipt_while_locked.xml"), &pending).map_err(|e| e.to_string())?;
+    let has_state = |xml: &str, state: &str| xml.split("<node ").any(|node|
+        attr(node.split('>').next().unwrap_or(""), "resource-id").ends_with(state));
+    if !has_state(&pending, "document_save_saving") || has_state(&pending, "document_save_local_saved") {
+        return Err("The edited document did not show a pending receipt while SQLite was locked".into());
+    }
+    let mut committed = false;
+    for _ in 0..12 {
+        if has_state(&tree()?, "document_save_local_saved") { committed = true; break; }
+        sleep(Duration::from_millis(250));
+    }
+    if !committed { return Err("No durable receipt after SQLite writer release".into()); }
     let first_after=seek(&["StableHeading"])?.ok_or("Heading lost during typing")?;
     let second_after=seek(&["StableParagraphNoJump"])?.ok_or("Typed text lost")?;
     let after_y=(center(&first_after).1,center(&second_after).1);
@@ -238,8 +255,6 @@ fn run(out:&Path)->Result<String,String>{
     }
     evidence(out,"06_editor_after_regular_typing");
 
-    sleep(Duration::from_secs(4)); // Let the existing debounced save complete.
-    key("4")?; // Hide keyboard.
     command(&["shell","am","force-stop",APP])?;
     command(&["shell","am","start","-W","-n",ACTIVITY])?;
     sleep(Duration::from_secs(6));
@@ -252,7 +267,7 @@ fn run(out:&Path)->Result<String,String>{
     if command(&["shell","pidof",APP])?.trim().is_empty() {
         return Err("App did not remain running after reopening the document".into());
     }
-    Ok("PASS: installed and launched the matching signed app; H1 reused an empty block; Enter created one paragraph; typing kept both block positions; heading and body survived process restart.".into())
+    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. The heading and full paragraph survived force-stop after local confirmation."))
 }
 fn main(){
     let path=env::args_os().nth(1).map(PathBuf::from)

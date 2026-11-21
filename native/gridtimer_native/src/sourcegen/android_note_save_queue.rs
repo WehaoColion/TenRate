@@ -222,19 +222,15 @@ const AUTOSAVE: &str = r####"    // Only the editor debounce uses replacement se
         // revoke the session. Preserve that protection path and do not retain an
         // unsealed encrypted draft in a replaceable queue entry.
         if (note.encryption != null) {
-            upsertNote(note, expectedWorkspaceKey, onComplete)
+            upsertNoteAndFlush(note, expectedWorkspaceKey, reason = "protected_document_autosave", onComplete = onComplete)
             return
         }
         val completion = noteMutationController.enqueueAutosave(expectedWorkspaceKey, note.id) {
-            // Prepare only the surviving draft on the IO worker. A workspace switch
-            // is still rejected by repository.upsertNote before any publication.
+            // Only a surviving draft reaches SQLite. Its UI receipt belongs to
+            // this exact write, including storage and workspace failures.
             val persistedNote = noteForPersistence(note, expectedWorkspaceKey)
                 ?: return@enqueueAutosave NoteSaveResult.failed(NoteSaveFailure.SERIALIZATION_FAILED)
-            if (repository.upsertNote(persistedNote, expectedWorkspaceKey)) {
-                NoteSaveResult.committed()
-            } else {
-                NoteSaveResult.failed(NoteSaveFailure.FLUSH_FAILED)
-            }
+            repository.upsertNoteDurablyResult(persistedNote, expectedWorkspaceKey, reason = "document_autosave")
         }
         viewModelScope.launch {
             val result = completion.await()

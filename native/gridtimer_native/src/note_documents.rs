@@ -149,7 +149,7 @@ impl NoteDocumentTextInput {
             .collect()
     }
 
-    fn plain_text(&self, preserve_structure: bool) -> String {
+    pub(crate) fn plain_text(&self, preserve_structure: bool) -> String {
         let text_sections = if let Some(rich_text) = self.rich_text_plain_text_or_null() {
             let section = rich_text
                 .lines()
@@ -174,9 +174,7 @@ impl NoteDocumentTextInput {
         };
         let mut sections = text_sections;
         sections.extend(self.non_text_summaries(preserve_structure));
-        collapse_triple_newlines(&sections.join("\n\n"))
-            .trim()
-            .to_string()
+        join_storage_sections(&sections)
     }
 
     fn searchable_text(&self) -> String {
@@ -205,15 +203,7 @@ impl NoteDocumentTextInput {
 impl NoteBlockTextInput {
     fn summary_text(&self, preserve_structure: bool) -> Option<String> {
         match self.type_code {
-            BLOCK_TYPE_TEXT => Some(
-                normalize_newlines(&self.text)
-                    .lines()
-                    .map(|line| display_note_line(line, preserve_structure))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .trim()
-                    .to_string(),
-            ),
+            BLOCK_TYPE_TEXT => Some(text_section(&self.text, preserve_structure)),
             BLOCK_TYPE_IMAGE => {
                 let caption = self.caption.trim();
                 if caption.is_empty() {
@@ -252,6 +242,24 @@ impl NoteBlockTextInput {
             _ => None,
         }
     }
+}
+
+fn text_section(text: &str, preserve_structure: bool) -> String {
+    normalize_newlines(text).lines()
+        .map(|line| display_note_line(line, preserve_structure))
+        .collect::<Vec<_>>().join("\n").trim().to_owned()
+}
+
+fn join_storage_sections(sections: &[String]) -> String {
+    collapse_triple_newlines(&sections.join("\n\n")).trim().to_owned()
+}
+
+/// Plain Android documents need only the body for storage. Share the exact same
+/// section and separator rules as rich and mixed documents.
+pub fn text_blocks_storage_content(blocks: &[String]) -> String {
+    let sections = blocks.iter().map(|block| text_section(block, true))
+        .filter(|text| !text.is_empty()).collect::<Vec<_>>();
+    join_storage_sections(&sections)
 }
 
 fn display_note_line(line: &str, preserve_structure: bool) -> String {
@@ -370,6 +378,23 @@ mod tests {
         NoteDocumentTextInput, BLOCK_TYPE_CALL, BLOCK_TYPE_CONTACT, BLOCK_TYPE_IMAGE,
         BLOCK_TYPE_TEXT,
     };
+
+    #[test]
+    fn plain_storage_preserves_existing_documents_and_empty_content() {
+        let mut texts: Vec<String> = ["", "# 标题", "\r\n", "**正文🙂**\r\n\r\n\r\n下一行", "- [x] 完成", ""]
+            .iter().map(|text| (*text).to_owned()).collect();
+        assert_eq!(super::text_blocks_storage_content(&texts), "标题\n\n正文🙂\n\n下一行\n\n☑ 完成");
+        assert!(super::text_blocks_storage_content(&[]).is_empty());
+        texts.extend((0..1024).map(|index| format!("段落 {index}")));
+        let old = NoteDocumentTextInput {
+            rich_text_enabled: false,
+            rich_text_plain_text: String::new(),
+            blocks: texts.iter().map(|text| NoteBlockTextInput {
+                text: text.clone(), ..NoteBlockTextInput::empty_with_type(BLOCK_TYPE_TEXT)
+            }).collect(),
+        };
+        assert_eq!(super::text_blocks_storage_content(&texts), old.plain_text(true));
+    }
 
     #[test]
     fn display_note_line_matches_kotlin_markers() {

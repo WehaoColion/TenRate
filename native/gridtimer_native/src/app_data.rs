@@ -4,9 +4,7 @@
 // v2.22.52 - Preserve structured knowledge pages through editing and persistence.
 // v2.22.38 - Preserve Unicode and unrelated content during attachment deletion.
 use crate::finance_profile::FinanceProfile;
-use crate::note_documents::{
-    build_note_document_text_digest, NoteBlockTextInput, NoteDocumentTextInput,
-};
+use crate::note_documents::{NoteBlockTextInput, NoteDocumentTextInput};
 use crate::rich_text_security::sanitize_rich_text_html_for_storage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -4103,7 +4101,7 @@ impl NoteDocument {
     }
 
     fn storage_content(&self) -> String {
-        build_note_document_text_digest(&self.to_text_input(), true, false, "").plain_text
+        self.to_text_input().plain_text(true)
     }
 
     fn is_blank(&self) -> bool {

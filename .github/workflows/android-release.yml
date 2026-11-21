@@ -2,7 +2,7 @@ name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11, feat/android-legal-knowledge-exclusions-20261108, feat/android-startup-shell-refresh-v2.23.4.14, feat/android-customer-network-canvas-ux-20261111, feat/android-universal-canvas-entry-20261111, feat/android-canvas-zoom-1percent-20261111, feat/android-document-block-drag-v2.23.4.18, feat/android-referral-forest-layout-v2.13.5.1, feat/android-knowledge-skeuomorphic-ui-v2.13.5.2, fix/android-home-today-badge-v2.13.5.3, feat/android-customer-payment-v2.13.5.5, feat/android-client-payment-ledger-v2.13.5.6, feat/android-knowledge-workspace-design-v2.13.5.8, feat/android-ai-durable-conversation-v2.13.5.9, feat/android-knowledge-actions-v2.13.5.10, feat/android-knowledge-motion-v2.13.5.11, feat/android-knowledge-atelier-v2.13.5.12, feat/android-canvas-ai-question-v2.13.5.13, feat/android-canvas-qa-redesign-v3.0, feat/android-canvas-answer-ux-v3.0.2, perf/android-knowledge-create-delta-v3.0.2.1, fix/android-sticky-summary-v3.0.2.3, perf/android-save-preflight-current-v3.0.2.4, fix/android-document-typing-stability-v3.0.2.7]
+    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11, feat/android-legal-knowledge-exclusions-20261108, feat/android-startup-shell-refresh-v2.23.4.14, feat/android-customer-network-canvas-ux-20261111, feat/android-universal-canvas-entry-20261111, feat/android-canvas-zoom-1percent-20261111, feat/android-document-block-drag-v2.23.4.18, feat/android-referral-forest-layout-v2.13.5.1, feat/android-knowledge-skeuomorphic-ui-v2.13.5.2, fix/android-home-today-badge-v2.13.5.3, feat/android-customer-payment-v2.13.5.5, feat/android-client-payment-ledger-v2.13.5.6, feat/android-knowledge-workspace-design-v2.13.5.8, feat/android-ai-durable-conversation-v2.13.5.9, feat/android-knowledge-actions-v2.13.5.10, feat/android-knowledge-motion-v2.13.5.11, feat/android-knowledge-atelier-v2.13.5.12, feat/android-canvas-ai-question-v2.13.5.13, feat/android-canvas-qa-redesign-v3.0, feat/android-canvas-answer-ux-v3.0.2, perf/android-knowledge-create-delta-v3.0.2.1, fix/android-sticky-summary-v3.0.2.3, perf/android-save-preflight-current-v3.0.2.4, fix/android-document-typing-stability-v3.0.2.7, perf/android-knowledge-commit-*]
   workflow_dispatch:
 
 permissions:
@@ -77,6 +77,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Source generator tests failed' }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib product_identity::tests
           if ($LASTEXITCODE -ne 0) { throw 'Product identity tests failed' }
+          cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib note_documents::tests
+          if ($LASTEXITCODE -ne 0) { throw 'Document storage compatibility failed' }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_canvas::tests
           if ($LASTEXITCODE -ne 0) { throw 'Rust customer canvas and graph tests failed' }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_ai_conversation::tests
@@ -188,8 +190,8 @@ jobs:
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.der')
 
   knowledge-save-emulator:
-    name: Boot Android 35 and verify knowledge page save survives restart
-    if: github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
+    name: Android 35 signed APK knowledge save and editor acceptance
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 100
@@ -208,9 +210,13 @@ jobs:
         run: |
           set -euo pipefail
           cd signed_apk
-          tr -d '\r' < tenfold_v3.0.2.6.apk.sha256 | sha256sum -c -
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
+          rustc --edition=2021 -D warnings -O tools/android_document_typing_probe.rs -o document_typing_probe
       - name: Prepare SQLite for the Rust history-load fixture
         shell: bash
         run: |
@@ -236,13 +242,17 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r signed_apk/tenfold_v3.0.2.6.apk
+            adb install -r signed_apk/tenfold_v*.apk
+            ./document_typing_probe document_typing_evidence || touch document_typing_failed
+            adb shell pm clear com.ofairyo.gridtimer
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
             ./knowledge_save_probe knowledge_save_evidence
+            test ! -f document_typing_failed
       - name: Summarize actual simulator acceptance
         if: always()
         shell: bash
         run: |
+          if test -f document_typing_evidence/report.md; then cat document_typing_evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
           if test -f knowledge_save_evidence/report.md; then
             cat knowledge_save_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
           else
@@ -252,8 +262,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-knowledge-save-v3.0.2.6-evidence
+          name: android-knowledge-save-and-typing-${{ github.sha }}
           path: |
+            document_typing_evidence/
             knowledge_save_evidence/
             !knowledge_save_evidence/*.db*
             !knowledge_save_evidence/legacy_history_payload_sample.json
@@ -262,7 +273,7 @@ jobs:
 
   publish-knowledge-save-candidate:
     name: Publish emulator-verified knowledge save APK
-    if: github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
+    if: startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
     needs: [release, knowledge-save-emulator]
     runs-on: ubuntu-latest
     permissions:
