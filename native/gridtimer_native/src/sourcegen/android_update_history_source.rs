@@ -1,3 +1,4 @@
+// v3.0.2.7 - Keep document typing stationary and reuse empty heading blocks.
 // v3.0.2.6 - Record queued draft persistence and resumable legacy validation.
 // v3.0.2.5 - Index save safety metadata and isolate outer database wait.
 // v3.0.2.4 - Prioritize authenticated current-only knowledge save verification.
@@ -86,7 +87,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.6";
+pub const LATEST_VERSION: &str = "3.0.2.7";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -116,6 +117,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.7",
+        updatedAt = "2026-11-22 00:06",
+        summary = "稳定知识页输入位置，一级标题不再附带多余空行",
+        sections = listOf(
+            AndroidUpdateSection("知识编辑", listOf(
+                "普通文字输入不再伴随块排序动画，正文块高度和块间距按实际行高收紧。",
+                "空块插入一级、二级标题时直接转为标题，保留手动输入的空段落。",
+                "格式化标题保留其他块的光标、选区和输入法编辑状态，并修正条件工具栏造成的焦点索引偏差。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.6",
         updatedAt = "2026-11-21 06:02",
