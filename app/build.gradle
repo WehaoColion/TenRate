@@ -1,3 +1,6 @@
+// v3.0.2.6 - 草稿后台落盘，旧历史分批验证，SQLite 锁外写入诊断。
+// v3.0.2.5 - 保存历史安全查询改为索引定位，新增外层事务锁等待诊断。
+// v3.0.2.4 - 知识保存当前快照预校验减负，维持完整异常恢复保护。
 // v3.0.2.3 - 便签首页限制预览高度并固定操作区，不更改保存与同步。
 // v3.0.2.2 - 仅新增节点规范化与保存阶段交互，保留原安全提交规则。
 // v3.0.2.1 - Rust 单节点知识创建与安全回退，保留数据库与历史校验。
@@ -199,8 +202,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30005
-        versionName '3.0.2.3'
+        versionCode 30008
+        versionName '3.0.2.6'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
