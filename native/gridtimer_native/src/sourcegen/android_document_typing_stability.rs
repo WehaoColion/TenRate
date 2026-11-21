@@ -97,18 +97,18 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
     )?;
     replace_once(
         &mut source,
-        r#"if (!applyActiveTextAction(NoteTextAction.HEADING)) insertTextBlockAfterActive("# ")"#,
-        r#"if (!applyActiveTextAction(NoteTextAction.HEADING)) insertHeadingAtActive("# ")"#,
+        r###"if (!applyActiveTextAction(NoteTextAction.HEADING)) insertTextBlockAfterActive("# ")"###,
+        r###"if (!applyActiveTextAction(NoteTextAction.HEADING)) insertHeadingAtActive("# ")"###,
     )?;
     replace_once(
         &mut source,
-        r#"onAddHeadingOne = { insertTextBlockAfterActive("# ") }"#,
-        r#"onAddHeadingOne = { insertHeadingAtActive("# ") }"#,
+        r###"onAddHeadingOne = { insertTextBlockAfterActive("# ") }"###,
+        r###"onAddHeadingOne = { insertHeadingAtActive("# ") }"###,
     )?;
     replace_once(
         &mut source,
-        r#"onAddHeadingTwo = { insertTextBlockAfterActive("## ") }"#,
-        r#"onAddHeadingTwo = { insertHeadingAtActive("## ") }"#,
+        r###"onAddHeadingTwo = { insertTextBlockAfterActive("## ") }"###,
+        r###"onAddHeadingTwo = { insertHeadingAtActive("## ") }"###,
     )?;
 
     // The drag grip is not a 44dp-high text line. Smaller minimum height and
@@ -175,8 +175,8 @@ mod tests {
         let output = editor();
         assert!(output.contains("text?.isEmpty() != true || field?.composition != null"));
         assert!(output.contains("updated[index] = updated[index].copy(text = prefix)"));
-        assert!(output.contains(r#"onAddHeadingOne = { insertHeadingAtActive("# ") }"#));
-        assert!(output.contains(r#"onAddHeadingTwo = { insertHeadingAtActive("## ") }"#));
+        assert!(output.contains(r###"onAddHeadingOne = { insertHeadingAtActive("# ") }"###));
+        assert!(output.contains(r###"onAddHeadingTwo = { insertHeadingAtActive("## ") }"###));
     }
 
     #[test]
