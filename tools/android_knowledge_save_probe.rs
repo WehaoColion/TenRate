@@ -15,9 +15,11 @@ const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 mod android_save_probe_fixture;
 use android_save_probe_fixture::{installed_version, SqliteWriter, DATABASE};
-const CREATED: &str = "KnowledgeSaveProbe";
-const SEED: &str = "KnowledgeSeedProbe";
-const CONTENDED: &str = "KnowledgeWriterProbe";
+// Numeric page titles commit on both Latin and Pinyin keyboards without
+// depending on the input method's candidate selection or word boundaries.
+const CREATED: &str = "7391804025006002";
+const SEED: &str = "7391804025006001";
+const CONTENDED: &str = "7391804025006003";
 const HISTORY_ROWS: usize = 7_200;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 const PRIMARY_MIRROR: &str =
@@ -171,8 +173,15 @@ fn create_page(
         .ok_or("New-page title field not accessible")?;
     tap(&edit)?;
     cmd(&["shell", "input", "text", page_name])?;
-    sleep(Duration::from_millis(450));
+    let title_in_field = |view: &str| elements(view).iter()
+        .any(|node| node.class_name.ends_with("EditText") && node.label == page_name);
+    if !title_in_field(&dump()?) {
+        cmd(&["shell", "input", "keyevent", "KEYCODE_ENTER"])?;
+    }
     capture(root, "04_title_entered");
+    if !title_in_field(&dump()?) {
+        return Err("The IME did not commit the complete page name in the editable field".into());
+    }
     let confirmation = find(&["确定", "Confirm", "OK"])?
         .ok_or("New-page confirmation is missing")?;
     before_confirm()?;
@@ -182,9 +191,8 @@ fn create_page(
     for tick in 0..28 {
         let current = dump()?;
         if tick == 2 || tick == 10 { capture(root, &format!("05_saving_{tick}")); }
-        let confirmation_open = elements(&current).iter().any(|node|
-            node.class_name.ends_with("EditText") && node.label == page_name) &&
-            elements(&current).iter().any(|node| ["确定", "Confirm", "OK"].contains(&node.label.as_str()));
+        let confirmation_open = title_in_field(&current) && elements(&current).iter()
+            .any(|node| ["确定", "Confirm", "OK"].contains(&node.label.as_str()));
         if !confirmation_open && current.contains(page_name) && !current.contains("正在保存") &&
             !current.contains("等待前序保存") && !current.contains("正在写入本地数据") {
             saved = true;
@@ -221,10 +229,13 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     let local = root.join("durable_app_state.db");
     pull_database(&local)?;
     let escaped = page_name.replace('\'', "''");
-    let matches = sqlite(&local,
-        &format!("SELECT COUNT(*) FROM current_snapshot WHERE workspace_key='guest' AND instr(app_data_json, '{escaped}') > 0 AND instr(app_data_json, '{CONTENDED}') > 0;"))?;
-    if matches != "1" {
-        return Err(format!("Visible Saved status was not durable in SQLite after force-stop: {matches} current matches"));
+    let matches = sqlite(&local, &format!(
+        "SELECT COUNT(DISTINCT json_extract(note.value, '$.title')) FROM current_snapshot AS s,
+         json_each(s.app_data_json, '$.notes') AS note WHERE s.workspace_key='guest'
+         AND json_extract(note.value, '$.title') IN ('{escaped}', '{CONTENDED}');"
+    ))?;
+    if matches != "2" {
+        return Err(format!("Expected two distinct saved page titles in SQLite after force-stop, found {matches}"));
     }
     let history: usize = sqlite(&local,
         "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
@@ -435,6 +446,7 @@ fn run(root: &Path) -> Result<String, String> {
     let mut writer = None;
     let contended_save = create_page(root, CONTENDED, || {
         cmd(&["shell", &format!(": > {DIAGNOSTIC_LOG}")])?;
+        cmd(&["logcat", "-c"])?;
         writer = Some(hold_sqlite_writer()?);
         Ok(())
     });
@@ -446,6 +458,11 @@ fn run(root: &Path) -> Result<String, String> {
     let contended_millis = contended_save?;
     if cmd(&["exec-out", "cat", PRIMARY_MIRROR])?.contains(CONTENDED) {
         return Err("Expected the blocked recovery copy to lag behind the visible save".into());
+    }
+    let trace = cmd(&["logcat", "-d", "-s", "NoteSaveLatency:I"])?;
+    fs::write(root.join("contended_receipt_trace.txt"), &trace).map_err(|e| e.to_string())?;
+    if !trace.contains("phase=sqlite_receipt mirrors=queued") {
+        return Err("The confirmed save did not exercise deferred recovery mirrors".into());
     }
     let diagnostics = cmd(&["exec-out", "cat", DIAGNOSTIC_LOG])?;
     fs::write(root.join("contended_save_diagnostics.txt"), &diagnostics)
