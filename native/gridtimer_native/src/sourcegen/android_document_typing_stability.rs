@@ -138,8 +138,8 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
         &mut source,
         "private fun DocumentCanvasBlock(",
         "private fun DocumentInlineField(",
-        "verticalArrangement = Arrangement.spacedBy(8.dp)",
-        "verticalArrangement = Arrangement.spacedBy(4.dp)",
+        ".weight(1f)\n                    .padding(end = 8.dp),\n                verticalArrangement = Arrangement.spacedBy(8.dp)",
+        ".weight(1f)\n                    .padding(end = 8.dp),\n                verticalArrangement = Arrangement.spacedBy(4.dp)",
     )?;
     // Keep a little rhythm between paragraphs, without an extra blank row.
     replace_once(
