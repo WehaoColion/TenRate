@@ -1,0 +1,90 @@
+name: Android document typing stability emulator acceptance
+
+on:
+  push:
+    branches: [fix/android-document-typing-stability-v3.0.2.7]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-document-typing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    name: API 35 signed APK document heading and typing acceptance
+    runs-on: ubuntu-22.04
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile the Rust-only emulator UI driver
+        run: |
+          rustc --edition=2021 -D warnings -O tools/android_document_typing_probe.rs -o android_document_typing_probe
+      - name: Download the signed APK from this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 220); do
+            response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-release.yml/runs?branch=$GITHUB_REF_NAME&per_page=100")"
+            match="$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | first | if . == null then "" else "\(.id) \(.status) \(.conclusion // "")" end')"
+            if test -n "$match"; then
+              read -r run_id status conclusion <<< "$match"
+              if test "$status" = completed; then
+                if test "$conclusion" != success; then
+                  echo "Signed candidate build $run_id failed: $conclusion" >&2
+                  exit 1
+                fi
+                echo "$run_id" > signed_build_run_id.txt
+                break
+              fi
+            fi
+            sleep 30
+          done
+          test -s signed_build_run_id.txt
+          gh run download "$(cat signed_build_run_id.txt)" --repo "$GITHUB_REPOSITORY" --name tenrate-signed-apk --dir signed_apk
+          cd signed_apk
+          test -f tenfold_v3.0.2.7.apk
+          tr -d '\r' < tenfold_v3.0.2.7.apk.sha256 | sha256sum -c -
+      - name: Enable Linux hardware virtualization
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Boot Android emulator and exercise live knowledge editor
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            adb install -r signed_apk/tenfold_v3.0.2.7.apk
+            ./android_document_typing_probe document_typing_evidence
+      - name: Attach the actual emulator acceptance report
+        if: always()
+        run: |
+          if test -f document_typing_evidence/report.md; then
+            cat document_typing_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Emulator acceptance did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload real screenshots and accessibility snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-document-typing-v3.0.2.7-evidence
+          path: |
+            document_typing_evidence/
+            signed_build_run_id.txt
+          if-no-files-found: warn
+          retention-days: 21
