@@ -1,3 +1,4 @@
+// v3.0.2.9 - Exercise root and nested folder creation after an ordinary page commit.
 // v3.0.2.6 - Time real confirmation on a cold preflight after upgrading a large v5 database.
 // v3.0.2.5 - Distinguish conservative legacy fallback from healthy current-only fast path.
 // v3.0.2.4 - Verify on-disk durability, bounded save latency and optional logcat proof with 7200 history rows.
@@ -20,6 +21,8 @@ use android_save_probe_fixture::{installed_version, SqliteWriter, DATABASE};
 const CREATED: &str = "7391804025006002";
 const SEED: &str = "7391804025006001";
 const CONTENDED: &str = "7391804025006003";
+const ROOT_FOLDER: &str = "7391804025006004";
+const NESTED_FOLDER: &str = "7391804025006005";
 const HISTORY_ROWS: usize = 7_200;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 const PRIMARY_MIRROR: &str =
@@ -154,16 +157,33 @@ fn create_page(
     page_name: &str,
     before_confirm: impl FnOnce() -> Result<(), String>,
 ) -> Result<u128, String> {
-    if !tap_any(&["新建子页面", "新建页面", "New subpage"])? {
+    create_node(root, page_name, false, before_confirm)
+}
+
+fn create_folder(root: &Path, title: &str) -> Result<u128, String> {
+    create_node(root, title, true, || Ok(()))
+}
+
+fn create_node(
+    root: &Path, page_name: &str, folder: bool,
+    before_confirm: impl FnOnce() -> Result<(), String>,
+) -> Result<u128, String> {
+    let labels: &[&str] = if folder {
+        &["新建子文件夹", "新建文件夹", "New subfolder"]
+    } else { &["新建子页面", "新建页面", "New subpage"] };
+    if !tap_any(labels)? {
         capture(root, "03_no_create_action");
         return Err("Knowledge directory has no accessible create-page control".into());
     }
     // Root screens may expose a direct button or a compact "新建" menu.
     // Require the actual dialog, not merely the menu's accessibility label.
     let before_dialog = dump()?;
-    if !before_dialog.contains("新建页面") && !before_dialog.contains("New page") {
-        if !tap_any(&["子页面", "Subpage"])? {
-            return Err("Tapped create entry, but no page action was offered".into());
+    let dialog_label = if folder { "新建文件夹" } else { "新建页面" };
+    let english_label = if folder { "New folder" } else { "New page" };
+    if !before_dialog.contains(dialog_label) && !before_dialog.contains(english_label) {
+        let menu: &[&str] = if folder { &["子文件夹", "Subfolder"] } else { &["子页面", "Subpage"] };
+        if !tap_any(menu)? {
+            return Err("Tapped create entry, but no requested action was offered".into());
         }
     }
     capture(root, "03_page_dialog");
@@ -236,6 +256,22 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     ))?;
     if matches != "2" {
         return Err(format!("Expected two distinct saved page titles in SQLite after force-stop, found {matches}"));
+    }
+    // Confirm exactly one typed node per operation and the durable parent ID.
+    let folders = sqlite(&local, &format!(
+        "WITH nodes AS (SELECT note.value AS n FROM current_snapshot AS s,
+          json_each(s.app_data_json, '$.notes') AS note WHERE s.workspace_key='guest'),
+          root AS (SELECT n FROM nodes WHERE json_extract(n,'$.title')='{ROOT_FOLDER}'),
+          child AS (SELECT n FROM nodes WHERE json_extract(n,'$.title')='{NESTED_FOLDER}')
+         SELECT (SELECT count(*) FROM root) || ':' || (SELECT count(*) FROM child) || ':' ||
+          (SELECT count(*) FROM root, child WHERE
+            coalesce(json_extract(root.n,'$.document.knowledge.parentId'),'')='' AND
+            json_extract(child.n,'$.document.knowledge.parentId')=json_extract(root.n,'$.id') AND
+            json_extract(root.n,'$.document.knowledge.properties.__tenrate_container_kind.value')='folder' AND
+            json_extract(child.n,'$.document.knowledge.properties.__tenrate_container_kind.value')='folder');"
+    ))?;
+    if folders != "1:1:1" {
+        return Err(format!("Folder identity, type or parent was not durably preserved: {folders}"));
     }
     let history: usize = sqlite(&local,
         "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
@@ -439,6 +475,19 @@ fn run(root: &Path) -> Result<String, String> {
     if saved_millis > 20_000 {
         return Err(format!("Saving a page with {HISTORY_ROWS} historical snapshots was too slow: {saved_millis} ms"));
     }
+    // Follow a page commit with root and nested folders under the same history load.
+    directory(root)?;
+    let folder_evidence = root.join("folder_creation");
+    fs::create_dir_all(&folder_evidence).map_err(|e| e.to_string())?;
+    create_folder(&folder_evidence, ROOT_FOLDER)?;
+    capture(&folder_evidence, "root_folder_committed");
+    create_folder(&folder_evidence, NESTED_FOLDER)?;
+    capture(&folder_evidence, "nested_folder_committed");
+    for _ in 0..2 {
+        if !tap_any(&["返回", "Back"])? {
+            return Err("Could not navigate from created folder to its parent".into());
+        }
+    }
     directory(root)?;
     let mirror_dir = PRIMARY_MIRROR.rsplit_once('/').unwrap().0;
     let original_mode = cmd(&["shell", "stat", "-c", "%a", mirror_dir])?;
@@ -491,7 +540,7 @@ fn run(root: &Path) -> Result<String, String> {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. Click-to-visible save took {saved_millis} ms with {scope}. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. Click-to-visible save took {saved_millis} ms with {scope}. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root and nested folders survived with exactly one typed node each and the correct parent ID. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {

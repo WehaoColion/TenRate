@@ -1,3 +1,4 @@
+// v3.0.2.9 - Exclude hierarchy containers from scoped normalization.
 // v3.0.2.2 - Scope ordinary knowledge-page creation normalization to the inserted
 // note. All other paths and any failed safety assertion retain full sanitization.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
@@ -186,6 +187,7 @@ const SCOPED_HELPER: &str = r####"    // Never trust a partial hierarchy update 
         if (notes.any { it.id == createdId } || candidate.notes.size != notes.size + 1) return null
         val position = candidate.notes.indexOfFirst { it.id == createdId }
         if (position < 0 || candidate.notes.count { it.id == createdId } != 1) return null
+        if (candidate.notes[position].isKnowledgeFolder()) return null
         // A complete AppData comparison catches unexpected folder, privacy,
         // tombstone, ledger, or sync mutation before accepting a narrow path.
         if (candidate.copy(notes = notes) != this) return null
