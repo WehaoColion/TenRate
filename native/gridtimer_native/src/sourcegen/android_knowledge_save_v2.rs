@@ -187,7 +187,8 @@ const SCOPED_HELPER: &str = r####"    // Never trust a partial hierarchy update 
         if (notes.any { it.id == createdId } || candidate.notes.size != notes.size + 1) return null
         val position = candidate.notes.indexOfFirst { it.id == createdId }
         if (position < 0 || candidate.notes.count { it.id == createdId } != 1) return null
-        if (candidate.notes[position].isKnowledgeFolder()) return null
+        // The single-node path also supports folders: only the new note is
+        // normalized, while every pre-existing document remains byte-for-byte intact.
         // A complete AppData comparison catches unexpected folder, privacy,
         // tombstone, ledger, or sync mutation before accepting a narrow path.
         if (candidate.copy(notes = notes) != this) return null

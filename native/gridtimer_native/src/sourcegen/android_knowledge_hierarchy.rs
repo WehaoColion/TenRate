@@ -133,6 +133,58 @@ internal class KnowledgeHierarchy internal constructor(
             ancestors(id).all { it.writable && it.id !in issues })
 }
 
+/** A hierarchy creation depends on the target ancestry, not on every unrelated
+ * note, historical version, finance item or timer record. The original AppData
+ * remains the sole persistence source; this projection is ONLY a Rust validator
+ * input and must never replace it.
+ */
+internal fun AppData.knowledgeCreationContext(createdId: String, parentId: String): AppData? {
+    if (schemaVersion > APP_DATA_SCHEMA_VERSION || createdId.isBlank() ||
+        createdId.length > 512 || parentId.length > 512 ||
+        notes.any { it.id == createdId } || noteFolders.any { it.id == createdId } ||
+        notes.any { note ->
+            (note.document.knowledge?.get("parentId") as? JsonPrimitive)?.contentOrNull == createdId
+        }) return null
+
+    val hierarchy = knowledgeHierarchy()
+    val target = parentId.takeIf(String::isNotBlank)
+    if (!hierarchy.mayCreateInside(target)) return null
+    val ancestors = target?.let(hierarchy::breadcrumbs).orEmpty()
+    val ancestorIds = ancestors.mapTo(hashSetOf()) { it.id }
+    val scopedNotes = ancestors.mapNotNull { node ->
+        val original = node.note ?: return@mapNotNull null
+        val metadata = original.document.knowledge
+        val sourceProperties = metadata?.get("properties") as? JsonObject
+        val page = buildJsonObject {
+            put("version", 1)
+            node.parentId?.let { put("parentId", it) }
+            val relevantProperties = buildJsonObject {
+                sourceProperties?.get(KNOWLEDGE_CONTAINER_KIND_PROPERTY)?.let {
+                    put(KNOWLEDGE_CONTAINER_KIND_PROPERTY, it)
+                }
+                sourceProperties?.get(KNOWLEDGE_LEGACY_FOLDER_PROPERTY)?.let {
+                    put(KNOWLEDGE_LEGACY_FOLDER_PROPERTY, it)
+                }
+            }
+            if (relevantProperties.isNotEmpty()) put("properties", relevantProperties)
+            metadata?.get("database")?.takeUnless { it == JsonNull }?.let { put("database", it) }
+        }
+        NoteEntry(
+            id = original.id,
+            kind = NoteEntryKind.DOCUMENT,
+            document = NoteDocument(knowledge = page),
+            createdAtEpochMillis = original.createdAtEpochMillis,
+            updatedAtEpochMillis = original.updatedAtEpochMillis
+        )
+    }
+    return AppData(
+        schemaVersion = schemaVersion,
+        notes = scopedNotes,
+        noteFolders = noteFolders.filter { it.id in ancestorIds },
+        tombstones = tombstones.filter { it.entityId == createdId || it.entityId in ancestorIds }
+    )
+}
+
 internal fun AppData.knowledgeHierarchy(): KnowledgeHierarchy = buildKnowledgeHierarchy(notes, noteFolders)
 
 internal fun buildKnowledgeHierarchy(notes: List<NoteEntry>, folders: List<NoteFolder>): KnowledgeHierarchy {
@@ -211,6 +263,34 @@ class KnowledgeHierarchyTest {
             })
         }, blocks = listOf(NoteBlock(id = "$id-body", text = "body of $id")))
     )
+
+    @Test fun scopedCreationIgnoresUnrelatedBrokenHierarchyWithoutDroppingOriginals() {
+        val parent = page("parent")
+        val bad = page("broken", "broken")
+        val original = AppData(notes = listOf(parent, bad))
+        val scoped = original.knowledgeCreationContext("created", "parent")
+        assertNotNull(scoped)
+        assertEquals(listOf("parent"), scoped!!.notes.map { it.id })
+        assertTrue(scoped.notes.single().document.blocks.isEmpty())
+        assertEquals(2, original.notes.size)
+        assertEquals("broken", original.notes[1].id)
+        assertNull(original.knowledgeCreationContext("created", "broken"))
+        assertNull(original.knowledgeCreationContext("parent", ""))
+        val rootScope = original.knowledgeCreationContext("root-folder", "")
+        assertNotNull(rootScope)
+        assertTrue(rootScope!!.notes.isEmpty())
+    }
+
+    @Test fun scopedCreationRetainsLegacyAncestorsAndDatabaseValidationMetadata() {
+        val oldFolder = NoteFolder(id = "flat", name = "旧目录")
+        val parent = page("parent", "flat")
+        val original = AppData(noteFolders = listOf(oldFolder), notes = listOf(parent, page("elsewhere")))
+        val scoped = original.knowledgeCreationContext("new-child", "parent")!!
+        assertEquals(listOf("parent"), scoped.notes.map { it.id })
+        assertEquals(listOf("flat"), scoped.noteFolders.map { it.id })
+        assertEquals("flat", (scoped.notes.single().document.knowledge?.get("parentId") as JsonPrimitive).content)
+        assertEquals(2, original.notes.size)
+    }
 
     @Test fun pageFolderAndMixedNestingExposeOnlyImmediateChildren() {
         val root = page("page")

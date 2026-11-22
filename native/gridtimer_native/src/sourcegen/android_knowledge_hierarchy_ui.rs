@@ -312,7 +312,7 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
         awaitInitialized()
         var applied = false
         var transformEntered = false
-        val rootPageCreate = action == "create_page" && parentId.isEmpty()
+        val creating = action == "create_page" || action == "create_folder"
         val operationStarted = System.nanoTime()
         fun recordHierarchyStage(phase: String, started: Long) {
             val elapsedMs = (System.nanoTime() - started).coerceAtLeast(0L) / 1_000_000L
@@ -327,19 +327,21 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
         try {
             val attempt = withContext(NonCancellable) {
                 updateDataDetailed(expectedWorkspaceKey = expectedWorkspaceKey,
-                    hierarchyCreateNoteId = if (rootPageCreate) id else null,
+                    hierarchyCreateNoteId = if (creating) id else null,
                     persistImmediately = true, publishAfterDurable = true) { data ->
                     transformEntered = true
                     val encodeStarted = System.nanoTime()
-                    val originalJson = json.encodeToString(data)
+                    // Only ancestors and their legacy projections are serialized to the Rust
+                    // create validator. Unrelated old records cannot reject this legal insertion.
+                    val createContext = if (creating) data.knowledgeCreationContext(id, parentId) else null
+                    val scopedJson = createContext?.let { json.encodeToString(it) }
                     recordHierarchyStage("hierarchy_encode", encodeStarted)
                     val mutationAt = now()
                     val fastStarted = System.nanoTime()
-                    // Structural creation retains the entire workspace and parent projection.
-                    val newNodeJson = if (rootPageCreate) {
+                    val newNodeJson = scopedJson?.let { raw ->
                         NativeOptimizerBridge.knowledgeContainerCreateNoteJson(
-                            originalJson, action, id, parentId, title, mutationAt)
-                    } else null
+                            raw, action, id, parentId, title, mutationAt)
+                    }
                     recordHierarchyStage("hierarchy_fast_create", fastStarted)
                     val createDelta = newNodeJson?.let { rawDelta ->
                         runCatching {
@@ -355,16 +357,17 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
                     }
                     if (createDelta != null) {
                         applied = true
-                        // Rust supplies the position after canonical sanitization;
-                        // preserving order is critical to pinned/recent hierarchy views.
+                        // A scoped Rust position refers only to ancestor notes. Insert the
+                        // new node without moving or serializing unrelated existing notes.
                         val notes = data.notes.toMutableList().apply {
-                            add(createDelta.first, createDelta.second)
+                            add(createDelta.second)
                         }
                         data.copy(notes = notes)
                     } else {
                         // Dangling descendants or an unrecognized/corrupt result must
                         // take the original lossless full-tree path, never a partial write.
                         val nativeStarted = System.nanoTime()
+                        val originalJson = json.encodeToString(data)
                         val mutatedJson = NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
                             originalJson, action, id, parentId, title, mutationAt)
                         recordHierarchyStage("hierarchy_rust_mutation", nativeStarted)
@@ -1829,9 +1832,12 @@ mod hierarchy_save_latency_tests {
             assert!(source.contains(phase), "{phase}");
         }
         assert!(source.contains("hierarchy_fast_create"));
+        assert!(source.contains("data.knowledgeCreationContext(id, parentId)"));
+        assert!(source.contains("scopedJson?.let"));
+        assert!(source.contains("val originalJson = json.encodeToString(data)"));
         assert!(source.contains("knowledgeContainerCreateNoteJson"));
         assert!(source.contains("json.decodeFromString(NoteEntry.serializer(), it.toString())"));
-        assert!(source.contains("add(createDelta.first, createDelta.second)"));
+        assert!(source.contains("add(createDelta.second)"));
         assert!(source.contains("position in 0..data.notes.size"));
         assert!(source.contains("knowledgeContainerActionAppDataJson("));
         assert!(source.contains("persistImmediately = true, publishAfterDurable = true"));
