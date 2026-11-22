@@ -1,3 +1,4 @@
+// v3.0.2.9 - Repair knowledge hierarchy creation.
 // v3.0.2.8 - Confirm local knowledge saves at the SQLite commit.
 // v3.0.2.6 - Backfill legacy history validation and remove file I/O from save locks.
 // v3.0.2.5 - Index historical save guards and measure outer SQLite lock contention.
@@ -157,8 +158,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.8";
-pub const ANDROID_VERSION_CODE: i32 = 30010;
+pub const ANDROID_APP_VERSION: &str = "3.0.2.9";
+pub const ANDROID_VERSION_CODE: i32 = 30011;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

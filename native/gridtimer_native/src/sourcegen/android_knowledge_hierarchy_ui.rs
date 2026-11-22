@@ -1,3 +1,4 @@
+// v3.0.2.9 - Preserve full hierarchy creation and report the failed save stage.
 // v2.13.5.12 - Unified paper and archival surface design on Android knowledge screens.
 // v2.13.5.11 - Consistent tactile rows, hierarchy disclosure and contextual entry motion.
 // v2.13.5.10 - Prioritize knowledge creation and nest management/legal settings by intent.
@@ -307,9 +308,11 @@ const BRIDGE: &str = r####"    fun knowledgeContainerActionAppDataJson(raw: Stri
         id: String, parentId: String, title: String, now: Long): String?
 "####;
 const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction(action: String, id: String, parentId: String,
-        title: String, expectedWorkspaceKey: String): Boolean {
+        title: String, expectedWorkspaceKey: String): Pair<Boolean, String> {
         awaitInitialized()
         var applied = false
+        var transformEntered = false
+        val creating = action == "create_page" || action == "create_folder"
         val operationStarted = System.nanoTime()
         fun recordHierarchyStage(phase: String, started: Long) {
             val elapsedMs = (System.nanoTime() - started).coerceAtLeast(0L) / 1_000_000L
@@ -324,17 +327,21 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
         try {
             val attempt = withContext(NonCancellable) {
                 updateDataDetailed(expectedWorkspaceKey = expectedWorkspaceKey,
-                    hierarchyCreateNoteId = if (action == "create_page" || action == "create_folder") id else null,
+                    hierarchyCreateNoteId = if (creating) id else null,
                     persistImmediately = true, publishAfterDurable = true) { data ->
+                    transformEntered = true
                     val encodeStarted = System.nanoTime()
-                    val originalJson = json.encodeToString(data)
+                    // Only ancestors and their legacy projections are serialized to the Rust
+                    // create validator. Unrelated old records cannot reject this legal insertion.
+                    val createContext = if (creating) data.knowledgeCreationContext(id, parentId) else null
+                    val scopedJson = createContext?.let { json.encodeToString(it) }
                     recordHierarchyStage("hierarchy_encode", encodeStarted)
                     val mutationAt = now()
                     val fastStarted = System.nanoTime()
-                    val newNodeJson = if (action == "create_page" || action == "create_folder") {
+                    val newNodeJson = scopedJson?.let { raw ->
                         NativeOptimizerBridge.knowledgeContainerCreateNoteJson(
-                            originalJson, action, id, parentId, title, mutationAt)
-                    } else null
+                            raw, action, id, parentId, title, mutationAt)
+                    }
                     recordHierarchyStage("hierarchy_fast_create", fastStarted)
                     val createDelta = newNodeJson?.let { rawDelta ->
                         runCatching {
@@ -350,16 +357,17 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
                     }
                     if (createDelta != null) {
                         applied = true
-                        // Rust supplies the position after canonical sanitization;
-                        // preserving order is critical to pinned/recent hierarchy views.
+                        // A scoped Rust position refers only to ancestor notes. Insert the
+                        // new node without moving or serializing unrelated existing notes.
                         val notes = data.notes.toMutableList().apply {
-                            add(createDelta.first, createDelta.second)
+                            add(createDelta.second)
                         }
                         data.copy(notes = notes)
                     } else {
                         // Dangling descendants or an unrecognized/corrupt result must
                         // take the original lossless full-tree path, never a partial write.
                         val nativeStarted = System.nanoTime()
+                        val originalJson = json.encodeToString(data)
                         val mutatedJson = NativeOptimizerBridge.knowledgeContainerActionAppDataJson(
                             originalJson, action, id, parentId, title, mutationAt)
                         recordHierarchyStage("hierarchy_rust_mutation", nativeStarted)
@@ -370,7 +378,23 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
                     }
                 }
             }
-            return applied && attempt.succeeded
+            val committed = applied && attempt.succeeded
+            val failureStage = when {
+                committed -> "committed"
+                !transformEntered -> "before_mutation"
+                !applied -> "native_validation"
+                else -> "durable_write"
+            }
+            if (!committed) logDiagnosticEvent(
+                category = "notes.local_save.hierarchy_failure", message = "stage=$failureStage"
+            )
+            val detail = when (failureStage) {
+                "committed" -> "本地已保存"
+                "before_mutation" -> "本地资料暂不可写，或工作区已变化。请保留输入并导出诊断日志。"
+                "native_validation" -> "目录结构或本地资料校验未通过。请保留输入并导出诊断日志。"
+                else -> "本地保存未完成。请重试；若仍失败，请导出诊断日志。"
+            }
+            return committed to detail
         } finally {
             recordHierarchyStage("hierarchy_action_total", operationStarted)
         }
@@ -379,10 +403,12 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
 const VIEW_MODEL: &str = r####"    internal fun knowledgeContainerAction(action: String, id: String, parentId: String,
         title: String, expectedWorkspaceKey: String = currentWorkspaceKey(),
         onStage: (String) -> Unit = {}, onComplete: (Boolean, String) -> Unit) {
-        enqueueNoteMutation(onComplete = { ok -> onComplete(ok,
-            if (ok) "本地已保存" else "操作未完成。请核对当前位置、页面权限及存储后重试。") }) {
+        var detail = "保存任务未完成，请保留当前输入并导出诊断日志。"
+        enqueueNoteMutation(onComplete = { ok -> onComplete(ok, if (ok) "本地已保存" else detail) }) {
             withContext(kotlinx.coroutines.Dispatchers.Main.immediate) { onStage("writing") }
-            repository.knowledgeContainerAction(action, id, parentId, title, expectedWorkspaceKey)
+            val result = repository.knowledgeContainerAction(action, id, parentId, title, expectedWorkspaceKey)
+            detail = result.second
+            result.first
         }
     }
 "####;
@@ -467,6 +493,8 @@ const STUDIO_DIALOG: &str = r####"    // A document and the directory manager ar
     // This also handles unlocked documents and restored editor selections.
     hierarchyRequest?.let { request ->
         val requestLocation = request.id?.let(hierarchyIndex::location)
+        // Preserve the identity of a creation when its confirmation is retried.
+        val operationId = remember(request, workspaceKey) { request.id ?: java.util.UUID.randomUUID().toString() }
         KnowledgeHierarchyActionDialog(request = request, index = hierarchyIndex, workspaceKey = workspaceKey, busy = hierarchyBusy, stage = hierarchyStage,
             error = hierarchyMessage, onDismiss = { if (!hierarchyBusy) { hierarchyRequest = null; hierarchyMessage = "" } },
             onSubmit = submit@ { parent, title ->
@@ -482,7 +510,7 @@ const STUDIO_DIALOG: &str = r####"    // A document and the directory manager ar
                         }
                     }
                     hierarchyBusy = true; hierarchyStage = "waiting"; hierarchyMessage = ""
-                    val id = request.id ?: java.util.UUID.randomUUID().toString()
+                    val id = operationId
                     viewModel.knowledgeContainerAction(request.action, id, parent.orEmpty(), title, workspaceKey,
                         onStage = { phase -> if (hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) hierarchyStage = phase }) { ok, detail ->
                         if (hierarchyCallbacksAlive.get() && viewModel.currentWorkspaceKey() == workspaceKey) {
@@ -1804,9 +1832,12 @@ mod hierarchy_save_latency_tests {
             assert!(source.contains(phase), "{phase}");
         }
         assert!(source.contains("hierarchy_fast_create"));
+        assert!(source.contains("data.knowledgeCreationContext(id, parentId)"));
+        assert!(source.contains("scopedJson?.let"));
+        assert!(source.contains("val originalJson = json.encodeToString(data)"));
         assert!(source.contains("knowledgeContainerCreateNoteJson"));
         assert!(source.contains("json.decodeFromString(NoteEntry.serializer(), it.toString())"));
-        assert!(source.contains("add(createDelta.first, createDelta.second)"));
+        assert!(source.contains("add(createDelta.second)"));
         assert!(source.contains("position in 0..data.notes.size"));
         assert!(source.contains("knowledgeContainerActionAppDataJson("));
         assert!(source.contains("persistImmediately = true, publishAfterDurable = true"));

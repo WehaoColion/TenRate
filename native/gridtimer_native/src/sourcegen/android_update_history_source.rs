@@ -1,3 +1,4 @@
+// v3.0.2.9 - Knowledge hierarchy creation and failure feedback.
 // v3.0.2.8 - Acknowledge committed documents and defer recovery projection.
 // v3.0.2.6 - Record queued draft persistence and resumable legacy validation.
 // v3.0.2.5 - Index save safety metadata and isolate outer database wait.
@@ -87,7 +88,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.8";
+pub const LATEST_VERSION: &str = "3.0.2.9";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -117,6 +118,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.9",
+        updatedAt = "2026-11-22 14:04",
+        summary = "修订知识文件夹创建和目录保存反馈",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "新建文件夹与嵌套页面使用完整目录校验和持久化，不再混入根级页面局部规范化。",
+                "失败时保留输入，区分目录校验和本地写入阶段；同一对话框重试使用同一操作标识。",
+                "签名 APK 验收覆盖页面保存后创建根级与嵌套文件夹、重启及数据库父子关系校验。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.8",
         updatedAt = "2026-11-22 06:45",
