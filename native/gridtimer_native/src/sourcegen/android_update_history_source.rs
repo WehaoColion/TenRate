@@ -1,4 +1,4 @@
-// v3.0.2.7 - Keep document typing stationary and reuse empty heading blocks.
+// v3.0.2.8 - Acknowledge committed documents and defer recovery projection.
 // v3.0.2.6 - Record queued draft persistence and resumable legacy validation.
 // v3.0.2.5 - Index save safety metadata and isolate outer database wait.
 // v3.0.2.4 - Prioritize authenticated current-only knowledge save verification.
@@ -87,7 +87,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.7";
+pub const LATEST_VERSION: &str = "3.0.2.8";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -117,6 +117,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.8",
+        updatedAt = "2026-11-22 06:45",
+        summary = "知识页在本地写入完成后确认保存，连续输入时减少整篇文档处理",
+        sections = listOf(
+            AndroidUpdateSection("知识编辑", listOf(
+                "自动保存等待数据库提交成功，再显示本地已保存。",
+                "普通文本页优先写入数据库，随后更新恢复副本。中途退出后可从数据库恢复。",
+                "输入停顿后整理正文，打开分享和预览时读取当前草稿。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.7",
         updatedAt = "2026-11-22 00:06",

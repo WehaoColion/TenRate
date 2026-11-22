@@ -897,7 +897,9 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_document_drag_reorder::render(relative_path, &contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let contents = android_document_typing_stability::render(relative_path, &contents)
+    let mut contents = android_document_typing_stability::render(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    android_document_typing_stability::project_after_debounce(relative_path, &mut contents)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = contents
         .replace("十倍率", "tenfold")

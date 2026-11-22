@@ -150,6 +150,94 @@ pub fn render(path: &str, input: &str) -> Result<String, String> {
     Ok(source)
 }
 
+// Apply to the fully assembled editor, after its workspace handoff and restore gates.
+pub fn project_after_debounce(path: &str, source: &mut String) -> Result<(), String> {
+    if path != SCREEN { return Ok(()); }
+    let effect = source.find("        if (hierarchyHandedOff || isSavingDraft || pendingRevisionRestore != null) return@LaunchedEffect")
+        .ok_or("missing document autosave effect")?;
+    let start = source[effect..].find("        if (editorSession.canLeaveUnmodified(")
+        .map(|index| effect + index).ok_or("missing document autosave entry guard")?;
+    let end = source[start..].find("    val lastDurableExitDraft = editorSession.lastDurableExitDraft")
+        .map(|index| start + index).ok_or("missing document autosave boundary")?;
+    source.replace_range(start..end, AUTOSAVE_AND_PREVIEW);
+    replace_once(source, "import androidx.compose.ui.semantics.semantics\n",
+        "import androidx.compose.ui.semantics.semantics\nimport androidx.compose.ui.semantics.testTag\nimport androidx.compose.ui.semantics.testTagsAsResourceId\n")?;
+    replace_once(source, "modifier = Modifier.weight(1f).onSizeChanged { editorViewportHeightPx = it.height },",
+        "modifier = Modifier.weight(1f).documentSaveReceipt(saveState).onSizeChanged { editorViewportHeightPx = it.height },")?;
+    let helper = "private fun NoteDocument.ensureEditableBlocks(): NoteDocument {";
+    replace_once(source, helper, &format!(r#"@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+private fun Modifier.documentSaveReceipt(state: DocumentEditorSaveState): Modifier = semantics {{
+    testTagsAsResourceId = true
+    testTag = "document_save_${{state.name.lowercase()}}"
+}}
+
+{helper}"#))?;
+    replace_once(source, "encrypted = previewNote.encryption != null,", "encrypted = note.encryption != null,")?;
+    replace_between(source, "            DocumentCanvasBlock(", "                active = ",
+        "note = previewNote,", "note = note,")?;
+    replace_once(source, "    fun ensureTextStates(currentBlocks: List<NoteBlock>) {",
+        r#"    val reconciledBlocks = remember(editorSession) { java.util.concurrent.atomic.AtomicReference<List<NoteBlock>?>() }
+    val lastTextIndex = remember(editorSession) { intArrayOf(-1) }
+
+    fun ensureTextStates(currentBlocks: List<NoteBlock>) {"#)?;
+    replace_once(source, "    LaunchedEffect(blocks) {\n        ensureTextStates(blocks)\n    }",
+        r#"    LaunchedEffect(blocks) {
+        if (reconciledBlocks.get() !== blocks) {
+            ensureTextStates(blocks)
+            reconciledBlocks.set(blocks)
+        }
+    }"#)?;
+    replace_between(source, "    fun updateTextBlock(", "    fun insertBlockAfterActive(",
+        "        val index = blocks.indexOfFirst { block -> block.id == blockId && block.type == NoteBlockType.TEXT }",
+        r#"        val cached = lastTextIndex[0]
+        val index = if (blocks.getOrNull(cached)?.let { it.id == blockId && it.type == NoteBlockType.TEXT } == true) cached
+            else blocks.indexOfFirst { it.id == blockId && it.type == NoteBlockType.TEXT }.also { lastTextIndex[0] = it }"#)?;
+    replace_between(source, "    fun updateTextBlock(", "    fun insertBlockAfterActive(",
+        "        blocks = nextBlocks",
+        "        reconciledBlocks.compareAndSet(blocks, nextBlocks)\n        blocks = nextBlocks")?;
+    Ok(())
+}
+
+const AUTOSAVE_AND_PREVIEW: &str = r#"        val entry = editorSession.initialContentSnapshot
+        if (saveRequestGeneration == 0L && editorSession.canLeaveUnmodified(
+                current = entry.copy(title = titleText, accentSeed = accentSeed, pinned = pinned,
+                    folderId = folderId, markdownEnabled = markdownEnabled, blocks = blocks),
+                requiresBlankDeletion = false,
+                workspaceMatches = viewModel.currentWorkspaceKey() == editorWorkspaceKey
+            )) return@LaunchedEffect
+        saveState = DocumentEditorSaveState.SAVING
+        saveRequestGeneration += 1L
+        val generation = saveRequestGeneration
+        delay(520L)
+        if (hierarchyHandedOff || isSavingDraft || pendingRevisionRestore != null ||
+            generation != saveRequestGeneration || viewModel.currentWorkspaceKey() != editorWorkspaceKey) return@LaunchedEffect
+        val base = latestNote
+        val document = base.document.copy(markdownEnabled = markdownEnabled, blocks = blocks.ifEmpty { listOf(NoteBlock(type = NoteBlockType.TEXT)) })
+        val draft = base.copy(title = titleText, document = document, accentSeed = accentSeed, pinned = pinned)
+        val nextNote = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            draft.copy(content = document.toStorageContent())
+        }
+        if (hierarchyHandedOff || isSavingDraft || pendingRevisionRestore != null ||
+            generation != saveRequestGeneration || viewModel.currentWorkspaceKey() != editorWorkspaceKey) return@LaunchedEffect
+        viewModel.upsertNoteAutosave(nextNote, expectedWorkspaceKey = editorWorkspaceKey) { saved ->
+            if (editorSaveCallbackActive.get() && viewModel.currentWorkspaceKey() == editorWorkspaceKey &&
+                generation == saveRequestGeneration) {
+                saveState = if (saved) DocumentEditorSaveState.LOCAL_SAVED else DocumentEditorSaveState.FAILED
+            }
+        }
+    }
+
+    val editorAccent = accentFor(accentSeed)
+    val previewNote by remember(editorSession) {
+        derivedStateOf {
+            val base = latestNote
+            val document = base.document.copy(markdownEnabled = markdownEnabled, blocks = blocks)
+            base.copy(title = titleText, content = document.toStorageContent(), document = document,
+                accentSeed = accentSeed, pinned = pinned)
+        }
+    }
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;

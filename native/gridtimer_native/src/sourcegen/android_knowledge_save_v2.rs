@@ -12,6 +12,26 @@ fn replace_one(source: &mut String, before: &str, after: &str) -> Result<(), Str
 }
 
 pub fn render(path: &str, base: &str) -> Result<String, String> {
+    if path == "com/ofairyo/gridtimer/core/NativeOptimizerBridge.kt" {
+        let mut source = base.to_owned();
+        let anchor = "    fun buildNoteDocumentTextDigest(";
+        replace_one(&mut source, anchor, &format!(r#"    private external fun nativeTextBlocksStorageContent(texts: Array<String>): String?
+
+    fun textBlocksStorageContent(texts: Array<String>): String? =
+        if (nativeAvailable) runCatching {{ nativeTextBlocksStorageContent(texts) }}.getOrNull() else null
+
+{anchor}"#))?;
+        return Ok(source);
+    }
+    if path == "com/ofairyo/gridtimer/data/NoteDocuments.kt" {
+        let mut source = base.to_owned();
+        let anchor = "internal fun NoteDocument.toStorageContent(): String {";
+        replace_one(&mut source, anchor, &format!(r#"{anchor}
+    if (!richTextEnabled && blocks.all {{ it.type == NoteBlockType.TEXT }}) {{
+        NativeOptimizerBridge.textBlocksStorageContent(Array(blocks.size) {{ blocks[it].text }})?.let {{ return it }}
+    }}"#))?;
+        return Ok(source);
+    }
     if path != REPOSITORY {
         return Ok(base.to_owned());
     }
@@ -64,8 +84,96 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         "    // Sanitization remains authoritative.",
         &format!("{SCOPED_HELPER}    // Sanitization remains authoritative."),
     )?;
+    install_commit_receipts(&mut source)?;
     Ok(source)
 }
+
+fn install_commit_receipts(source: &mut String) -> Result<(), String> {
+    replace_one(source, "            var transformFailure: DataUpdateAttempt? = null",
+        "            var deferRecoveryMirrors = false\n            var transformFailure: DataUpdateAttempt? = null")?;
+    replace_one(source, "                        val normalized = scopedCreated ?:",
+        "                        deferRecoveryMirrors = scopedCreated?.notes?.firstOrNull { it.id == hierarchyCreateNoteId }?.isPlainRecoveryDocument() == true\n                        val normalized = scopedCreated ?:")?;
+    replace_one(source, "                            noteMutationId != null -> current.acceptNoteMutation(normalized, noteMutationId)",
+        r#"                            noteMutationId != null -> current.acceptNoteMutation(normalized, noteMutationId).also {
+                                deferRecoveryMirrors = mutationBase.notes.singleOrNull()?.isPlainRecoveryDocument() == true &&
+                                    normalized.notes.singleOrNull()?.isPlainRecoveryDocument() == true
+                            }"#)?;
+    for (before, after) in [
+        ("val persistAttempt = persistSafelyDetailed(updated)", "val persistAttempt = persistSafelyDetailed(updated, deferRecoveryMirrors)"),
+        ("fun persistSafelyDetailed(appData: AppData):", "fun persistSafelyDetailed(appData: AppData, deferRecoveryMirrors: Boolean = false):"),
+        ("            persist(appData)\n            PersistAttempt", "            persist(appData, deferRecoveryMirrors)\n            PersistAttempt"),
+        ("fun persist(appData: AppData) {", "fun persist(appData: AppData, deferRecoveryMirrors: Boolean = false) {"),
+        ("        persistToWorkspace(activeWorkspaceKey, appData)", "        persistToWorkspace(activeWorkspaceKey, appData, deferRecoveryMirrors)"),
+        ("fun persistToWorkspace(workspaceKey: String, appData: AppData) {", "fun persistToWorkspace(workspaceKey: String, appData: AppData, deferRecoveryMirrors: Boolean = false) {"),
+        ("            val committedStamp = try {", "            val receipt = try {"),
+        ("                    stateDatabase.snapshotWriteStamp()\n                }\n            } finally", "                    stamp.copy(database = stateDatabase.snapshotWriteStamp())\n                }\n            } finally"),
+        ("            // Only publish the cache after commit AND successful recovery mirrors.\n            // Any failure leaves it invalid, so the next attempt checks every surface.\n            runCatching {",
+         "            fun refresh(committedStamp: AppStateDatabase.SnapshotWriteStamp): Boolean = runCatching {"),
+        ("            }\n            stageFinished(\"recovery_mirror\")", r#"            }.isSuccess
+            pendingRecoveryMirrorJob?.cancel()
+            pendingRecoveryMirrorJob = null
+            if (deferRecoveryMirrors && receipt.primary.size >= 0L && receipt.backup.size >= 0L) {
+                scheduleRecoveryMirrors(workspaceKey, receipt, encoded, snapshotRevision, snapshotItemCount, ::refresh)
+                Log.i("NoteSaveLatency", "phase=sqlite_receipt mirrors=queued")
+            } else {
+                refresh(receipt.database)
+                stageFinished("recovery_mirror")
+            }"#),
+        ("            redactEncryptedNoteRecoveryCopiesLocked(workspaceKey, protectedNote, draftCheckpoint)",
+         "            pendingRecoveryMirrorJob?.cancel()\n            pendingRecoveryMirrorJob = null\n            redactEncryptedNoteRecoveryCopiesLocked(workspaceKey, protectedNote, draftCheckpoint)"),
+    ] {
+        replace_one(source, before, after)?;
+    }
+    let anchor = "    private var verifiedWritePreflight: Pair<String, PersistPreflightStamp>? = null";
+    replace_one(source, anchor, &format!("{anchor}\n{RECOVERY_WORKER}"))
+}
+
+const RECOVERY_WORKER: &str = r#"
+    private var pendingRecoveryMirrorJob: Job? = null
+
+    private fun NoteEntry.isPlainRecoveryDocument(): Boolean =
+        kind == NoteEntryKind.DOCUMENT && encryption == null && !isDeleted() && attachments.isEmpty() &&
+            !document.richTextEnabled && !isKnowledgeFolder() && !requiresStructuredKnowledgeReader() &&
+            document.blocks.all { it.type == NoteBlockType.TEXT }
+
+    // Called under the repository writer. A new commit or privacy redaction cancels
+    // the preceding ticket. On process death, verified SQLite startup repairs mirrors.
+    private fun scheduleRecoveryMirrors(
+        workspaceKey: String, receipt: PersistPreflightStamp, encoded: String,
+        revision: Long, itemCount: Int, refresh: (AppStateDatabase.SnapshotWriteStamp) -> Boolean
+    ) {
+        pendingRecoveryMirrorJob = scope.launch {
+            var retryMillis = 250L
+            while (true) {
+                delay(retryMillis)
+                val finished = writeMutex.withLock {
+                    if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
+                        persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@withLock true
+                    runCatching {
+                        stateDatabase.withSnapshotWriteTransaction {
+                            val files = workspaceFiles(workspaceKey)
+                            // Never overwrite a file changed by an independent recovery or privacy operation.
+                            if (persistFileStamp(files.state) != receipt.primary ||
+                                persistFileStamp(files.backup) != receipt.backup) return@withSnapshotWriteTransaction true
+                            val current = stateDatabase.snapshotWriteStamp()
+                            if (current != receipt.database &&
+                                (futureSchemaVersionOnAnySurface(workspaceKey) != null ||
+                                    !stateDatabase.currentSnapshotMatches(workspaceKey, encoded,
+                                        APP_DATA_SCHEMA_VERSION, revision, itemCount))) return@withSnapshotWriteTransaction true
+                            val start = System.nanoTime()
+                            refresh(current).also { recordNoteSaveStage("recovery_mirror", start) }
+                        }
+                    }.getOrElse { error ->
+                        Log.w(TAG, "Recovery mirror verification will retry.", error)
+                        false
+                    }
+                }
+                if (finished) return@launch
+                retryMillis = (retryMillis * 2L).coerceAtMost(30_000L)
+            }
+        }
+    }
+"#;
 
 const SCOPED_HELPER: &str = r####"    // Never trust a partial hierarchy update unless the entire original
     // workspace (except the one insertion) is byte-for-byte represented by the

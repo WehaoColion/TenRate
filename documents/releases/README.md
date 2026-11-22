@@ -1,3 +1,5 @@
+Android 3.0.2.8 知识页保存回执与编辑性能：[说明](android/release_notes_v3.0.2.8.md)。
+
 Android 3.0.2.7 知识文档输入稳定性、标题与段落间距修复候选：[说明](android/release_notes_v3.0.2.7.md)。
 Android 3.0.2.6 草稿后台落盘、旧历史分批验证与知识保存候选：[说明](android/release_notes_v3.0.2.6.md)。
 Android 3.0.2.3 便签首页长摘要约束与操作区稳定布局候选：[说明](android/release_notes_v3.0.2.3.md)。
