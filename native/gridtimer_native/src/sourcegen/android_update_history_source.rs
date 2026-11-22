@@ -1,3 +1,4 @@
+// v3.0.2.10 - Reduce peak memory while validating history snapshots.
 // v3.0.2.9 - Knowledge hierarchy creation and failure feedback.
 // v3.0.2.8 - Acknowledge committed documents and defer recovery projection.
 // v3.0.2.6 - Record queued draft persistence and resumable legacy validation.
@@ -88,7 +89,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.9";
+pub const LATEST_VERSION: &str = "3.0.2.10";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -118,6 +119,17 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.10",
+        updatedAt = "2026-11-23 07:44",
+        summary = "减少保存历史快照时的内存占用",
+        sections = listOf(
+            AndroidUpdateSection("本地存储", listOf(
+                "整理历史记录时分块核对压缩前后的正文，大页面无需再创建一份完整的正文副本。",
+                "恢复历史记录时按实际解压进度分配内存，并核对压缩流、摘要和数据版本。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.9",
         updatedAt = "2026-11-22 14:04",

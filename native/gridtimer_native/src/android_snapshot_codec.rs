@@ -1,4 +1,4 @@
-// v2.22.49.8 - Authenticate compact history bytes without reloading full JSON at launch.
+// v3.0.2.10 - Seal and recover Android history with bounded decoding.
 use crate::android_snapshot_verifier::verify_snapshot;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::{write::ZlibEncoder, Compression, Decompress, FlushDecompress, Status};
@@ -14,6 +14,7 @@ const MAX_RAW: usize = 128 * 1024 * 1024;
 const MAX_COMPRESSED: usize = MAX_RAW + 1024 * 1024;
 const MAX_PREFIX: usize = 16 * 1024;
 const HEADER_LEN: usize = 20;
+const INFLATE_CHUNK: usize = 32 * 1024;
 const TAG_LEN: usize = 32;
 const MAX_BINARY: usize = HEADER_LEN + MAX_PREFIX + 128 + MAX_COMPRESSED + TAG_LEN;
 const MAX_ENCODED: usize = MAX_BINARY.div_ceil(3) * 4;
@@ -23,16 +24,10 @@ pub fn is_packed(raw: &[u8]) -> bool {
 }
 
 fn history_prefix(prefix: &str, supported: i32) -> bool {
-    let fields: Vec<_> = prefix.split('\0').collect();
     prefix.len() <= MAX_PREFIX
         && supported >= 0
-        && fields.len() == 9
-        && fields[0] == "gridtimer-snapshot-envelope-v1"
-        && fields[1] == "snapshot_history"
-        && fields[8].is_empty()
-        && fields[4]
-            .parse::<i64>()
-            .is_ok_and(|schema| schema <= i64::from(supported))
+        && crate::android_snapshot_verifier::snapshot_table(prefix, supported)
+            == Some("snapshot_history")
 }
 
 fn valid_digest(value: &str) -> bool {
@@ -64,22 +59,18 @@ impl Packed {
         if encoded.len() > MAX_ENCODED {
             return None;
         }
-        let mut authenticated_bytes =
-            Vec::with_capacity(DOMAIN.len() + base64::decoded_len_estimate(encoded.len()));
-        authenticated_bytes.extend_from_slice(DOMAIN);
+        // Decode whole Base64 quanta covering the header before allocating for the frame.
+        const GROUPS: usize = HEADER_LEN.div_ceil(3);
+        let mut header = [0; GROUPS * 3];
         STANDARD
-            .decode_vec(encoded, &mut authenticated_bytes)
+            .decode_slice(encoded.get(..GROUPS * 4)?, &mut header)
             .ok()?;
-        let bytes = &authenticated_bytes[DOMAIN.len()..];
-        if bytes.len() < HEADER_LEN + TAG_LEN || bytes.len() > MAX_BINARY {
-            return None;
-        }
-        let raw_len = u32::from_le_bytes(bytes[0..4].try_into().ok()?) as usize;
-        let sealed_supported = i32::from_le_bytes(bytes[4..8].try_into().ok()?);
-        let prefix_len = u32::from_le_bytes(bytes[8..12].try_into().ok()?) as usize;
-        let digest_len = u16::from_le_bytes(bytes[12..14].try_into().ok()?) as usize;
-        let envelope_len = u16::from_le_bytes(bytes[14..16].try_into().ok()?) as usize;
-        let payload_len = u32::from_le_bytes(bytes[16..20].try_into().ok()?) as usize;
+        let raw_len = u32::from_le_bytes(header[0..4].try_into().ok()?) as usize;
+        let sealed_supported = i32::from_le_bytes(header[4..8].try_into().ok()?);
+        let prefix_len = u32::from_le_bytes(header[8..12].try_into().ok()?) as usize;
+        let digest_len = u16::from_le_bytes(header[12..14].try_into().ok()?) as usize;
+        let envelope_len = u16::from_le_bytes(header[14..16].try_into().ok()?) as usize;
+        let payload_len = u32::from_le_bytes(header[16..20].try_into().ok()?) as usize;
         if raw_len == 0
             || raw_len > MAX_RAW
             || sealed_supported < 0
@@ -96,7 +87,19 @@ impl Packed {
         let digest_end = prefix_end + digest_len;
         let envelope_end = digest_end + envelope_len;
         let payload_end = envelope_end + payload_len;
-        if payload_end + TAG_LEN != bytes.len() {
+        let frame_len = payload_end + TAG_LEN;
+        if encoded.len() != base64::encoded_len(frame_len, true)? {
+            return None;
+        }
+        let mut authenticated_bytes = Vec::new();
+        authenticated_bytes
+            .try_reserve_exact(DOMAIN.len() + base64::decoded_len_estimate(encoded.len()))
+            .ok()?;
+        authenticated_bytes.extend_from_slice(DOMAIN);
+        STANDARD
+            .decode_vec(encoded, &mut authenticated_bytes)
+            .ok()?;
+        if authenticated_bytes.len() != DOMAIN.len() + frame_len {
             return None;
         }
         let packed = Self {
@@ -147,23 +150,56 @@ impl Packed {
         .is_ok()
     }
 
+    fn matches_row(&self, prefix: &str, expected: &str, envelope: &str) -> bool {
+        self.prefix() == Some(prefix)
+            && self.expected() == Some(expected)
+            && self.envelope() == Some(envelope)
+    }
+
+    /// Deliver only bytes produced by one complete zlib stream of the declared length.
+    fn inflate_chunks(&self, mut accept: impl FnMut(&[u8]) -> Option<()>) -> Option<()> {
+        let payload = &self.bytes()[self.envelope_end..self.payload_end];
+        let mut decoder = Decompress::new(true);
+        let mut chunk = [0; INFLATE_CHUNK];
+        loop {
+            let input = decoder.total_in() as usize;
+            let output = decoder.total_out() as usize;
+            // One extra byte distinguishes an overlong stream from its final checksum.
+            let room = chunk.len().min(self.raw_len - output + 1);
+            let status = decoder
+                .decompress(&payload[input..], &mut chunk[..room], FlushDecompress::None)
+                .ok()?;
+            let consumed = decoder.total_in() as usize;
+            let produced = decoder.total_out() as usize;
+            if produced > self.raw_len {
+                return None;
+            }
+            if produced > output {
+                accept(&chunk[..produced - output])?;
+            }
+            if status == Status::StreamEnd {
+                return (consumed == payload.len() && produced == self.raw_len).then_some(());
+            }
+            if input == consumed && output == produced {
+                return None;
+            }
+        }
+    }
+
     fn decode_verified(&self, supported: i32) -> Option<String> {
         if self.sealed_supported > supported || supported < 0 {
             return None;
         }
-        let payload = &self.bytes()[self.envelope_end..self.payload_end];
-        let mut decoder = Decompress::new(true);
-        let mut raw = vec![0; self.raw_len + 1];
-        let status = decoder
-            .decompress(payload, &mut raw, FlushDecompress::Finish)
-            .ok()?;
-        if status != Status::StreamEnd
-            || decoder.total_out() != self.raw_len as u64
-            || decoder.total_in() != payload.len() as u64
-        {
-            return None;
-        }
-        raw.truncate(self.raw_len);
+        let mut raw = Vec::new();
+        self.inflate_chunks(|chunk| {
+            let needed = raw.len() + chunk.len();
+            if needed > raw.capacity() {
+                let capacity = needed.max(raw.capacity() * 2).min(self.raw_len);
+                raw.try_reserve_exact(capacity - raw.len()).ok()?;
+            }
+            raw.extend_from_slice(chunk);
+            Some(())
+        })?;
         if !verify_snapshot(
             &raw,
             self.prefix()?,
@@ -197,35 +233,47 @@ pub fn seal(
     {
         return None;
     }
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
-    encoder.write_all(raw).ok()?;
-    let compressed = encoder.finish().ok()?;
-    if compressed.len() > MAX_COMPRESSED {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(
-        HEADER_LEN + prefix.len() + expected.len() + envelope.len() + compressed.len() + TAG_LEN,
-    );
+    let payload_start = HEADER_LEN + prefix.len() + expected.len() + envelope.len();
+    let mut bytes = Vec::with_capacity(payload_start);
     bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&supported.to_le_bytes());
     bytes.extend_from_slice(&(prefix.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(expected.len() as u16).to_le_bytes());
     bytes.extend_from_slice(&(envelope.len() as u16).to_le_bytes());
-    bytes.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(prefix.as_bytes());
     bytes.extend_from_slice(expected.as_bytes());
     bytes.extend_from_slice(envelope.as_bytes());
-    bytes.extend_from_slice(&compressed);
+    let mut encoder = ZlibEncoder::new(bytes, Compression::fast());
+    encoder.write_all(raw).ok()?;
+    let mut bytes = encoder.finish().ok()?;
+    let payload_len = bytes.len() - payload_start;
+    if payload_len > MAX_COMPRESSED {
+        return None;
+    }
+    bytes[16..20].copy_from_slice(&(payload_len as u32).to_le_bytes());
     bytes.extend_from_slice(tag(&bytes, key).as_ref());
-    let encoded = format!(
-        "{}{}",
-        std::str::from_utf8(MARKER).ok()?,
-        STANDARD.encode(bytes)
-    );
-    // Never issue a reusable receipt until the codec round trip has been checked.
+    let mut encoded = String::new();
+    encoded
+        .try_reserve_exact(MARKER.len() + base64::encoded_len(bytes.len(), true)?)
+        .ok()?;
+    encoded.push_str(std::str::from_utf8(MARKER).ok()?);
+    STANDARD.encode_string(bytes, &mut encoded);
+    // Check the final stored representation against the already verified original.
     let packed = Packed::parse(encoded.as_bytes())?;
-    let restored = packed.decode_verified(supported)?;
-    (restored.as_bytes() == raw).then_some(encoded)
+    if packed.sealed_supported != supported
+        || packed.raw_len != raw.len()
+        || !packed.matches_row(prefix, expected, envelope)
+        || !packed.authenticated(key)
+    {
+        return None;
+    }
+    let mut remaining = raw;
+    packed.inflate_chunks(|chunk| {
+        remaining = remaining.strip_prefix(chunk)?;
+        Some(())
+    })?;
+    remaining.is_empty().then_some(encoded)
 }
 
 /// Every startup authenticates actual compressed bytes. A missing key merely
@@ -241,12 +289,7 @@ pub fn verify(
     let Some(packed) = Packed::parse(packed) else {
         return false;
     };
-    if packed.sealed_supported > supported
-        || !history_prefix(prefix, supported)
-        || packed.prefix() != Some(prefix)
-        || packed.expected() != Some(expected)
-        || packed.envelope() != Some(envelope)
-    {
+    if packed.sealed_supported > supported || !packed.matches_row(prefix, expected, envelope) {
         return false;
     }
     packed.authenticated(key) || packed.decode_verified(supported).is_some()
@@ -406,6 +449,33 @@ mod tests {
     }
 
     #[test]
+    fn history_written_by_3_0_2_9_recovers_after_key_loss() {
+        // Produced by the 3.0.2.9 writer for this row and KEY.
+        let stored = concat!(
+            "!gridtimer-history-v1:HwAAAA8AAABCAAAAQABAACcAAABncmlkdGltZXItc25hcHNob3Qt",
+            "ZW52ZWxvcGUtdjEAc25hcHNob3RfaGlzdG9yeQAxAG93bmVyADE1ADcAMgA5OQAyNmZiODhh",
+            "OWFlNWYzNTRhZGU1ZTM5MWMxYzJlY2UwNTk1MzM2MmY4NDEwNDIzMmQ4OTZkYjQwY2RkMzE4",
+            "Y2EwMjUyMDcyNjkzZWZhZGYzNmQyYWJjNjFlM2U1YTcwYWRiNWNiYTYwMGQzNWVhZjQ1M2Y4",
+            "YzY5YzI5MDdiOWM3Y3gBq1YqTs5IzU0MSy0qzszPU7IyNNVRyssvSS1WsoqOrQUAsQQKvw1b",
+            "NS+qGu8j08UN4JxjUziTrcRhBkQch6R6oVaTLCIn"
+        );
+        let raw = r#"{"schemaVersion":15,"notes":[]}"#;
+        let (prefix, digest, envelope) = metadata(raw.as_bytes(), 15);
+        assert!(Packed::parse(stored.as_bytes())
+            .unwrap()
+            .authenticated(&KEY));
+        assert!(verify(
+            stored.as_bytes(),
+            &prefix,
+            &digest,
+            &envelope,
+            15,
+            &KEY
+        ));
+        assert_eq!(decode(stored, &[], 15).as_deref(), Some(raw));
+    }
+
+    #[test]
     #[ignore = "Opt-in host microbenchmark; not a device startup latency assertion"]
     fn startup_authentication_copy_benchmark() {
         use std::{hint::black_box, time::Instant};
@@ -502,6 +572,28 @@ mod tests {
             assert_eq!(decode(&packed, key, 15).as_deref(), Some(raw.as_str()));
         }
         assert!(seal(raw.as_bytes(), &prefix, &expected, &envelope, 15, &[]).is_none());
+    }
+
+    #[test]
+    fn recovered_history_requires_every_chunk_and_the_exact_original_length() {
+        for length in [
+            INFLATE_CHUNK - 1,
+            INFLATE_CHUNK,
+            INFLATE_CHUNK + 1,
+            3 * INFLATE_CHUNK,
+        ] {
+            let mut raw = String::from(r#"{"schemaVersion":15}"#);
+            raw.extend(std::iter::repeat_n(' ', length - raw.len()));
+            let (encoded_row, _, _, _) = fixture(raw.as_bytes());
+            assert_eq!(decode(&encoded_row, &[], 15).as_deref(), Some(raw.as_str()));
+
+            let packed = Packed::parse(encoded_row.as_bytes()).unwrap();
+            for declared in [length - 1, length + 1] {
+                let mut bytes = packed.bytes().to_vec();
+                bytes[..4].copy_from_slice(&(declared as u32).to_le_bytes());
+                assert!(decode(&encoded(&bytes), &[], 15).is_none());
+            }
+        }
     }
 
     #[test]

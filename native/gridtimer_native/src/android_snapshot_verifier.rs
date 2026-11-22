@@ -1,4 +1,4 @@
-// v2.22.49 - Verify exact payload ranges in reusable Android read buffers.
+// v3.0.2.10 - Parse plain and packed snapshot row metadata with the same rules.
 use jni::objects::{JByteArray, JClass, JString, ReleaseMode};
 use jni::sys::{jboolean, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
@@ -25,6 +25,21 @@ fn hex_matches(digest: &[u8], expected: &str) -> bool {
         })
 }
 
+pub(super) fn snapshot_table(prefix: &str, supported: i32) -> Option<&str> {
+    // Domain, table, row ID, owner, schema, revision, count, timestamp, final NUL.
+    let mut fields = prefix.splitn(9, '\0');
+    if fields.next()? != "gridtimer-snapshot-envelope-v1" {
+        return None;
+    }
+    let table = fields.next()?;
+    if !matches!(table, "current_snapshot" | "snapshot_history") {
+        return None;
+    }
+    let schema = fields.nth(2)?.parse::<i64>().ok()?;
+    let terminator = fields.nth(3)?;
+    (terminator.is_empty() && schema <= i64::from(supported)).then_some(table)
+}
+
 /// Android owns the only SQLite connection/transaction used for this read. The
 /// prefix is the original envelope's small metadata part, including its final NUL.
 /// Every payload and its envelope are verified, and the entire JSON is scanned for
@@ -36,20 +51,9 @@ pub fn verify_snapshot(
     envelope: &str,
     supported: i32,
 ) -> bool {
-    let fields: Vec<_> = prefix.split('\0').collect();
-    if fields.len() != 9
-        || fields[0] != "gridtimer-snapshot-envelope-v1"
-        || !matches!(fields[1], "current_snapshot" | "snapshot_history")
-        || !fields[8].is_empty()
-    {
-        return false;
-    }
-    let Ok(schema) = fields[4].parse::<i64>() else {
+    let Some(table) = snapshot_table(prefix, supported) else {
         return false;
     };
-    if schema > i64::from(supported) {
-        return false;
-    }
     if !hex_matches(ring::digest::digest(&SHA256, raw).as_ref(), expected) {
         return false;
     }
@@ -57,7 +61,7 @@ pub fn verify_snapshot(
     // by this fast path: verify their payload and BOTH schema barriers, but do not
     // use their unsealed revision/item count as authority. An unsealed current or
     // a present-but-invalid envelope must still use the original recovery path.
-    let legacy_history = envelope.is_empty() && fields[1] == "snapshot_history";
+    let legacy_history = envelope.is_empty() && table == "snapshot_history";
     if !legacy_history {
         let mut digest = Context::new(&SHA256);
         digest.update(prefix.as_bytes());
