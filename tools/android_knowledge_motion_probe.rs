@@ -171,6 +171,12 @@ fn capture_motion_frame(dir: &Path, title: &str) {
 // Record multiple navigation directions with animations enabled. The recording and
 // actual Android frame timing report are required evidence, not optional screenshots.
 fn open_folder_with_motion(root: &Path) -> Result<(), String> {
+    // Creation automatically opens the folder; start the recording at its parent
+    // so the first tap is a real navigation, not a tap on the current title.
+    if dump()?.contains("文件夹设置") {
+        cmd(&["shell", "input", "keyevent", "4"])?;
+        sleep(Duration::from_millis(800));
+    }
     let folder = find(&[FOLDER])?.ok_or("New knowledge folder cannot be opened")?;
     let x = ((folder.bounds[0] + folder.bounds[2]) / 2).to_string();
     let y = ((folder.bounds[1] + folder.bounds[3]) / 2).to_string();
@@ -220,7 +226,40 @@ fn open_folder_with_motion(root: &Path) -> Result<(), String> {
     fs::write(root.join("motion_metrics.txt"), frames.lines().filter(|line|
         line.contains("Total frames rendered:") || line.contains("Janky frames:") ||
         line.contains("percentile:")).collect::<Vec<_>>().join("\n")).map_err(|e| e.to_string())?;
-    result
+    result?;
+    // Separate performance from screen recording and accessibility dumps. Both
+    // stress SwiftShader and can hide the real application animation behavior.
+    cmd(&["shell", "input", "keyevent", "4"])?;
+    sleep(Duration::from_millis(900));
+    let row = find(&[FOLDER])?.ok_or("Folder missing from parent before timing")?;
+    let rx = ((row.bounds[0] + row.bounds[2]) / 2).to_string();
+    let ry = ((row.bounds[1] + row.bounds[3]) / 2).to_string();
+    cmd(&["shell", "dumpsys", "gfxinfo", PACKAGE, "reset"])?;
+    for _ in 0..6 {
+        cmd(&["shell", "input", "tap", &rx, &ry])?;
+        sleep(Duration::from_millis(900));
+        cmd(&["shell", "input", "keyevent", "4"])?;
+        sleep(Duration::from_millis(900));
+    }
+    cmd(&["shell", "input", "tap", &rx, &ry])?;
+    sleep(Duration::from_millis(900));
+    let timing = cmd(&["shell", "dumpsys", "gfxinfo", PACKAGE, "framestats"])?;
+    fs::write(root.join("motion_unrecorded_framestats.txt"), &timing).map_err(|e| e.to_string())?;
+    let metric = |prefix: &str| timing.lines().find_map(|line|
+        line.trim().strip_prefix(prefix)?.trim().split(|c: char| !c.is_ascii_digit()).next()?.parse::<u32>().ok());
+    let total = metric("Total frames rendered:").ok_or("Missing unrecorded frame count")?;
+    let janky = metric("Janky frames:").ok_or("Missing unrecorded janky frames")?;
+    let p90 = metric("90th percentile:").ok_or("Missing unrecorded p90")?;
+    let summary = format!("Unrecorded navigation: {total} frames, {janky} janky, p90 {p90}ms");
+    fs::write(root.join("motion_unrecorded_metrics.txt"), &summary).map_err(|e| e.to_string())?;
+    println!("{summary}");
+    if !dump()?.contains("文件夹设置") { return Err("Repeated navigation did not return to the folder".into()); }
+    // Conservative emulator gate; this is not a claim of production 60fps.
+    // Do not pass a sparse or overwhelmingly janky sample.
+    if total < 40 || janky.saturating_mul(100) > total.saturating_mul(25) || p90 > 50 {
+        return Err(format!("Motion frame budget not met: {summary}"));
+    }
+    Ok(())
 }
 fn run(root: &Path) -> Result<String, String> {
     assert_animations_enabled()?;
@@ -269,7 +308,7 @@ fn run(root: &Path) -> Result<String, String> {
     if !settings_menu.contains("排除法律风险分析") {
         return Err("Folder legal exclusion is not reachable from its settings".into());
     }
-    Ok(format!("PASS: signed Android {VERSION} launched with animation scales 1.0; knowledge directory, folder creation, management and exclusion controls passed; forward/back/re-entry passed; MP4 and frame timings captured. Visual smoothness still requires reviewing evidence."))
+    Ok(format!("PASS: signed Android {VERSION} launched with animation scales 1.0; knowledge directory, folder creation, management and exclusion controls passed; forward/back/re-entry passed; MP4 captured and independent unrecorded frame budget passed. Visual smoothness still requires reviewing evidence."))
 }
 fn main() {
     let path = env::args_os().nth(1).map(PathBuf::from)
