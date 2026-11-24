@@ -1,3 +1,4 @@
+// v3.0.2.15 - Defer large history compression, retaining the canonical authenticated row.
 // v2.22.49.8 - Authenticate compact canonical history without expanding it at launch.
 const DATABASE: &str = "com/ofairyo/gridtimer/data/AppStateDatabase.kt";
 const DIAGNOSTICS: &str = "com/ofairyo/gridtimer/diagnostics/DiagnosticsExporter.kt";
@@ -61,7 +62,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     replace(&mut source, "    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()",
         &format!("{MIGRATION}\n    private val snapshotReadWindow = ThreadLocal<SnapshotVerificationWindow>()"))?;
     replace(&mut source, "ContentValues().apply { put(\"envelope_sha256\", historyEnvelope) }",
-        "ContentValues().apply {\n                        put(\"envelope_sha256\", historyEnvelope)\n                        val packed = packHistory(current.appDataJson, historyId.toString(), workspaceKey, current.schemaVersion, current.revision, current.itemCount, now, currentDigest, historyEnvelope)\n                        put(\"app_data_json\", packed)\n                        put(\"storage_encoding\", if (SnapshotPayload.isPacked(packed)) 1 else 0)\n                    }")?;
+        "ContentValues().apply {\n                        put(\"envelope_sha256\", historyEnvelope)\n                        // The canonical old current row and its envelope are already durable.\n                        // Avoid whole-workspace compression inside the foreground transaction for large payloads.\n                        if (current.appDataJson.length <= 262_144) {\n                            val packed = packHistory(current.appDataJson, historyId.toString(), workspaceKey, current.schemaVersion, current.revision, current.itemCount, now, currentDigest, historyEnvelope)\n                            put(\"app_data_json\", packed)\n                            put(\"storage_encoding\", if (SnapshotPayload.isPacked(packed)) 1 else 0)\n                        } else {\n                            put(\"storage_encoding\", 0)\n                            android.util.Log.i(\"NoteSaveLatency\", \"phase=history_pack_deferred\")\n                        }\n                    }")?;
     let history_start = source
         .find("            historyIds.forEach { id ->")
         .ok_or("missing history rewrite")?;
