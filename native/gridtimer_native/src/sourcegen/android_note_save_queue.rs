@@ -486,10 +486,8 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                     true
                 }
             }
-            if (admitted) {
-                acceptedMutationEpoch += 1L
-                onAcceptedEpoch?.invoke(acceptedMutationEpoch)
-            }
+            if (admitted) acceptedMutationEpoch += 1L
+            if (admitted) onAcceptedEpoch?.invoke(acceptedMutationEpoch)
             admitted
         }
         if (!accepted) completion.complete(queueUnavailableResult())
