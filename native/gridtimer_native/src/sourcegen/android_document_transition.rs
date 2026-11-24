@@ -71,7 +71,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         return Ok(source);
     }
     replace_once(&mut source, "package com.ofairyo.gridtimer.ui\n",
-        "package com.ofairyo.gridtimer.ui\nimport androidx.compose.animation.fadeIn\nimport androidx.compose.animation.fadeOut\nimport androidx.compose.animation.slideInHorizontally\nimport androidx.compose.animation.slideOutHorizontally\nimport androidx.compose.animation.togetherWith\nimport androidx.compose.animation.core.FastOutSlowInEasing\nimport androidx.compose.animation.core.tween\nimport androidx.compose.foundation.background\nimport androidx.compose.ui.semantics.clearAndSetSemantics\n")?;
+        "package com.ofairyo.gridtimer.ui\nimport androidx.compose.animation.fadeIn\nimport androidx.compose.animation.fadeOut\nimport androidx.compose.animation.slideInHorizontally\nimport androidx.compose.animation.slideOutHorizontally\nimport androidx.compose.animation.togetherWith\nimport androidx.compose.animation.core.FastOutSlowInEasing\nimport androidx.compose.animation.core.tween\nimport androidx.compose.ui.semantics.clearAndSetSemantics\n")?;
     let start = source
         .find("internal fun NoteStudioSheet(")
         .ok_or("missing knowledge studio")?;
@@ -166,7 +166,7 @@ const TRANSITION_START: &str = r####"        } else androidx.compose.runtime.key
                 )
                 val interactiveFrame = currentFrame && (frame == null || frameAccess.mayInteract())
                 Box(modifier = (if (interactiveFrame) Modifier.fillMaxSize() else
-                    Modifier.fillMaxSize().clearAndSetSemantics {}).background(MaterialTheme.colorScheme.background)) {
+                    Modifier.fillMaxSize().clearAndSetSemantics {}).knowledgeNavigationSurface()) {
             if (frame == null) {"####;
 
 const TRANSITION_END: &str = r####"                )
@@ -205,6 +205,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.unit.IntOffset
@@ -218,6 +220,9 @@ import com.ofairyo.gridtimer.data.NoteEntry
 internal data class KnowledgeDocumentTransitionTarget(val note: NoteEntry, val entryKey: String)
 
 internal val LocalDocumentTransitionActive = compositionLocalOf { true }
+
+@Composable
+internal fun Modifier.knowledgeNavigationSurface(): Modifier = background(MaterialTheme.colorScheme.background)
 
 // One opaque foreground surface moves; the underlying surface only parallax-scrolls.
 // No opacity crossfade or independent timers. Springs preserve velocity on interruption.
