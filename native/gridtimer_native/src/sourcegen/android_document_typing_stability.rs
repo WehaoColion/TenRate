@@ -1,3 +1,4 @@
+// v3.0.2.13 - Retain exact autosave receipts for the full-entry exit guard.
 //! Android document editing: keep keystrokes stationary and avoid phantom heading blocks.
 //! This Rust source transform runs after the document drag and caret transforms.
 
@@ -219,7 +220,16 @@ const AUTOSAVE_AND_PREVIEW: &str = r#"        val entry = editorSession.initialC
         }
         if (hierarchyHandedOff || isSavingDraft || pendingRevisionRestore != null ||
             generation != saveRequestGeneration || viewModel.currentWorkspaceKey() != editorWorkspaceKey) return@LaunchedEffect
-        viewModel.upsertNoteAutosave(nextNote, expectedWorkspaceKey = editorWorkspaceKey) { saved ->
+        viewModel.upsertNoteAutosave(nextNote, expectedWorkspaceKey = editorWorkspaceKey,
+            onDurableEpoch = { epoch ->
+                if (editorSaveCallbackActive.get() && !isSavingDraft && !hierarchyHandedOff &&
+                    pendingRevisionRestore == null && generation == saveRequestGeneration &&
+                    viewModel.currentWorkspaceKey() == editorWorkspaceKey &&
+                    editorSession.exitSaveGate.recordAutosaveReceipt(epoch, viewModel.noteMutationEpoch())) {
+                    editorSession.lastDurableExitDraft.value = nextNote
+                }
+            }
+        ) { saved ->
             if (editorSaveCallbackActive.get() && viewModel.currentWorkspaceKey() == editorWorkspaceKey &&
                 generation == saveRequestGeneration) {
                 saveState = if (saved) DocumentEditorSaveState.LOCAL_SAVED else DocumentEditorSaveState.FAILED
