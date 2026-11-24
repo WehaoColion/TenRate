@@ -275,20 +275,45 @@ fn run(out:&Path)->Result<String,String>{
     }
     evidence(out,"06_editor_after_regular_typing");
 
+    // Reproduce a final edit followed immediately by the visible toolbar Back.
+    // Do not treat an inaccessible editor (the saving barrier) as a completed exit.
+    let back = seek(&["返回","Back"])?.ok_or("Document back action missing")?;
+    let (back_x, back_y) = center(&back);
+    command(&["shell","input","text","ExitSave"])?;
+    let exit_start = std::time::Instant::now();
+    command(&["shell","input","tap",&back_x.to_string(),&back_y.to_string()])?;
+    let mut exited = false;
+    while exit_start.elapsed() < Duration::from_secs(8) {
+        let ui = tree()?;
+        if ui.contains(TITLE) && !ui.contains(GRIP) &&
+            !ui.contains("正在保存") && !has_state(&ui, "document_save_saving") &&
+            !has_state(&ui, "document_save_local_saved") {
+            exited = true;
+            break;
+        }
+        sleep(Duration::from_millis(100));
+    }
+    let exit_ms = exit_start.elapsed().as_millis();
+    fs::write(out.join("edit_exit_save_ms.txt"), format!("{exit_ms}\n")).map_err(|e| e.to_string())?;
+    if !exited || exit_ms > 8_000 {
+        evidence(out,"edit_exit_save_timeout");
+        return Err(format!("Final edit followed by toolbar Back exceeded the exit budget: {exit_ms}ms"));
+    }
+
     command(&["shell","am","force-stop",APP])?;
     command(&["shell","am","start","-W","-n",ACTIVITY])?;
     sleep(Duration::from_secs(6));
     knowledge(out)?;
     open_persisted_page(out)?;
     evidence(out,"07_reopened_saved_heading");
-    if seek(&["StableHeading"])?.is_none() || seek(&["StableParagraphNoJumpHotSave"])?.is_none() {
+    if seek(&["StableHeading"])?.is_none() || seek(&["StableParagraphNoJumpHotSaveExitSave"])?.is_none() {
         return Err("Heading or paragraph disappeared after process restart".into());
     }
     if command(&["shell","pidof",APP])?.trim().is_empty() {
         return Err("App did not remain running after reopening the document".into());
     }
     let share_result = android_knowledge_share_probe::export_and_check(out)?;
-    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. Uncontended body edit reached a local receipt in {hot_ms} ms (including UIAutomator). The heading and full paragraph survived force-stop after local confirmation.\n\n{share_result}"))
+    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. Uncontended body edit reached a local receipt in {hot_ms} ms and final edit followed by Back exited in {exit_ms} ms (including UIAutomator). The heading and full paragraph survived force-stop after local confirmation.\n\n{share_result}"))
 }
 fn main(){
     let path=env::args_os().nth(1).map(PathBuf::from)
