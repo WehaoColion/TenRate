@@ -1,3 +1,4 @@
+// v3.0.2.15 - Settle programmed canvas motion with a critically damped spring.
 // v3.0.2 - Readable DeepSeek answers, exact local result cards and source-first navigation.
 // v3.0.1 - Render canvas QA as a real full-screen route for reliable IME layout and safe interactions.
 // v3.0.1 - Recover explicit question scope, safe exit, reliable new-answer position, and precise payment intent.
@@ -322,8 +323,8 @@ import android.text.Layout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
@@ -1586,8 +1587,8 @@ private fun CanvasSurface(canvas: CanvasBoard, pages: Map<String,NoteEntry>, mod
             val start = viewport
             if (start == target) return@launch
             Animatable(0f).animateTo(1f,
-                animationSpec = tween(240, easing = FastOutSlowInEasing)) {
-                val fraction = value
+                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium, visibilityThreshold = 0.001f)) {
+                val fraction = value.coerceIn(0f, 1f)
                 viewport = CanvasViewport(
                     start.x + (target.x - start.x) * fraction,
                     start.y + (target.y - start.y) * fraction,
