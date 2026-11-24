@@ -1,3 +1,4 @@
+// v3.0.2.12 - Give foreground document writes priority over deferred recovery mirrors.
 // v3.0.2.9 - Exclude hierarchy containers from scoped normalization.
 // v3.0.2.2 - Scope ordinary knowledge-page creation normalization to the inserted
 // note. All other paths and any failed safety assertion retain full sanitization.
@@ -144,12 +145,15 @@ const RECOVERY_WORKER: &str = r#"
         revision: Long, itemCount: Int, refresh: (AppStateDatabase.SnapshotWriteStamp) -> Boolean
     ) {
         pendingRecoveryMirrorJob = scope.launch {
-            var retryMillis = 250L
+            // Let a burst of editor commits settle before materializing full mirrors.
+            // A busy writer always wins; a recovery task must never join its FIFO.
+            var retryMillis = 1_800L
             while (true) {
                 delay(retryMillis)
-                val finished = writeMutex.withLock {
+                if (!writeMutex.tryLock()) continue
+                val finished = try {
                     if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
-                        persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@withLock true
+                        persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@launch
                     runCatching {
                         stateDatabase.withSnapshotWriteTransaction {
                             val files = workspaceFiles(workspaceKey)
@@ -168,6 +172,8 @@ const RECOVERY_WORKER: &str = r#"
                         Log.w(TAG, "Recovery mirror verification will retry.", error)
                         false
                     }
+                } finally {
+                    writeMutex.unlock()
                 }
                 if (finished) return@launch
                 retryMillis = (retryMillis * 2L).coerceAtMost(30_000L)
