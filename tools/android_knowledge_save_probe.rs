@@ -1,3 +1,4 @@
+// v3.0.2.15 - Repeated nested-page body edits, real writer contention and immediate durable exit under historical load.
 // v3.0.2.15 - Exercise folder-to-child-page persistence under the loaded history and assert actual latency.
 // v3.0.2.14 - Exercise a missing-digest history row in a live workspace.
 // v3.0.2.9 - Exercise root and nested folder creation after an ordinary page commit.
@@ -26,6 +27,9 @@ const CONTENDED: &str = "7391804025006003";
 const ROOT_FOLDER: &str = "7391804025006004";
 const NESTED_FOLDER: &str = "7391804025006005";
 const NESTED_PAGE: &str = "7391804025006006";
+const EDIT_ROUNDS: usize = 12;
+const EDIT_EXIT_MARKER: &str = "FinalExitDurable";
+const EDIT_BUDGET_MS: u128 = 8_000;
 const HISTORY_ROWS: usize = 7_200;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 const PRIMARY_MIRROR: &str =
@@ -246,6 +250,76 @@ fn pull_database(local: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn has_save_state(xml: &str, state: &str) -> bool {
+    xml.split("<node ").any(|node| attr(node.split('>').next().unwrap_or(""), "resource-id").ends_with(state))
+}
+fn nested_body_has(marker: &str) -> Result<bool, String> {
+    let count = live_sqlite(&format!(
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND instr(n.value,'{marker}')>0;"
+    ))?;
+    Ok(count.trim() == "1")
+}
+fn edit_nested_page(root: &Path) -> Result<(), String> {
+    let view = dump()?;
+    let mut fields: Vec<Node> = elements(&view).into_iter().filter(|n|
+        n.class_name.ends_with("EditText") && n.bounds[2] - n.bounds[0] > 80).collect();
+    fields.sort_by_key(|n| n.bounds[1]);
+    let body = fields.last().ok_or("Nested page body not editable")?;
+    if fields.len() < 2 { return Err("Nested page only exposes title, not body".into()); }
+    tap(body)?;
+    let mut measurements = String::from("round,elapsed_ms,writer_contention\n");
+    let mut expected = String::new();
+    for round in 0..EDIT_ROUNDS {
+        let marker = format!("R{round:02}Body");
+        expected.push_str(&marker);
+        let writer = if round % 4 == 1 { Some(hold_sqlite_writer()?) } else { None };
+        let started = std::time::Instant::now();
+        cmd(&["shell", "input", "text", &marker])?;
+        if let Some(writer) = writer {
+            writer.join().map_err(|_| "Body writer thread panicked")??;
+        }
+        let mut saved = false;
+        while started.elapsed().as_millis() < EDIT_BUDGET_MS {
+            let ui = dump()?;
+            if ui.contains(&expected) && has_save_state(&ui, "document_save_local_saved")
+                && nested_body_has(&expected)? {
+                saved = true;
+                break;
+            }
+            sleep(Duration::from_millis(120));
+        }
+        let elapsed = started.elapsed().as_millis();
+        measurements.push_str(&format!("{round},{elapsed},{}\n", round % 4 == 1));
+        fs::write(root.join("body_save_stress.csv"), &measurements).map_err(|e| e.to_string())?;
+        if !saved || elapsed > EDIT_BUDGET_MS {
+            capture(root, &format!("body_save_timeout_{round}"));
+            return Err(format!("Nested page body save round {round} exceeded {EDIT_BUDGET_MS}ms: {elapsed}ms; UI and SQLite receipt required"));
+        }
+    }
+    let back = find(&["返回", "Back"])?.ok_or("Nested editor Back missing")?;
+    cmd(&["shell", "input", "text", EDIT_EXIT_MARKER])?;
+    let started = std::time::Instant::now();
+    send_tap(&back)?;
+    let mut exited = false;
+    while started.elapsed().as_millis() < EDIT_BUDGET_MS {
+        let ui = dump()?;
+        if ui.contains(NESTED_FOLDER) && ui.contains("新建子页面") &&
+            !has_save_state(&ui, "document_save_saving") && nested_body_has(EDIT_EXIT_MARKER)? {
+            exited = true;
+            break;
+        }
+        sleep(Duration::from_millis(120));
+    }
+    let elapsed = started.elapsed().as_millis();
+    fs::write(root.join("body_exit_save_ms.txt"), format!("{elapsed}\n")).map_err(|e| e.to_string())?;
+    if !exited || elapsed > EDIT_BUDGET_MS {
+        capture(root, "body_exit_save_timeout");
+        return Err(format!("Immediate nested body exit not durable within {EDIT_BUDGET_MS}ms: {elapsed}ms"));
+    }
+    capture(root, "nested_body_stress_committed");
+    Ok(())
+}
+
 fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize), String> {
     // A visible "Saved" label is not proof: read the authoritative SQLite
     // snapshot after process death, including its WAL, before reopening the UI.
@@ -280,6 +354,11 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     if folders != "1:1:1:1" {
         return Err(format!("Folder identity, type or parent was not durably preserved: {folders}"));
     }
+    let expected = (0..EDIT_ROUNDS).map(|round| format!("R{round:02}Body")).collect::<String>();
+    let all_body = sqlite(&local, &format!(
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND instr(n.value,'{expected}{EDIT_EXIT_MARKER}')>0;"
+    ))?;
+    if all_body != "1" { return Err("One or more nested body edits were lost after restart".into()); }
     let history: usize = sqlite(&local,
         "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
         .parse().map_err(|_| "Durable history count is invalid")?;
@@ -526,9 +605,7 @@ fn run(root: &Path) -> Result<String, String> {
     if [root_folder_ms, nested_folder_ms, nested_page_ms].iter().any(|&elapsed| elapsed > 20_000) {
         return Err(format!("Folder -> child page save exceeded 20s: {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms"));
     }
-    if !tap_any(&["返回", "Back"])? {
-        return Err("Could not exit the newly committed child page".into());
-    }
+    edit_nested_page(&folder_evidence)?;
     let mut returned_to_folder = false;
     for _ in 0..12 {
         let current = dump()?;
@@ -607,7 +684,7 @@ fn run(root: &Path) -> Result<String, String> {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {
