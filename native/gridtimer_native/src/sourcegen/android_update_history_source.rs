@@ -1,3 +1,4 @@
+// v3.0.2.15 - Record continuous knowledge motion.
 // v3.0.2.14 - Record the bounded local save preflight.
 // v3.0.2.13 - Record exact autosave receipt reuse and exit measurement.
 // v3.0.2.11 - Record Markdown heading preservation in knowledge share images.
@@ -92,7 +93,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.14";
+pub const LATEST_VERSION: &str = "3.0.2.15";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -122,6 +123,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.15",
+        updatedAt = "2026-11-24 19:41",
+        summary = "改善知识模块转场与交互的连续性",
+        sections = listOf(
+            AndroidUpdateSection("知识动效", listOf(
+                "知识目录和文档采用同一方向性弹簧转场，移除整页叠加淡入淡出，返回沿原方向退出。",
+                "目录展开、按压和拖动归位采用无过冲弹簧；直接拖动和画布手势保持即时响应。",
+                "保留加密页面访问限制、本地保存、目录排序和原有同步格式。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.14",
         updatedAt = "2026-11-24 17:35",
