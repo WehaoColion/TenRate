@@ -339,6 +339,8 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
     fun mutationEpoch(): Long = synchronized(lifecycleLock) { acceptedMutationEpoch }
     private val shutdownRequested = AtomicBoolean(false)
     private val shutdownCompletion = CompletableDeferred<NoteSaveResult>()
+    private data class RunningMutation(val kind: String, val startedNanos: Long)
+    @Volatile private var runningMutation: RunningMutation? = null
     private val worker = scope.launch { runWorker() }
 
     private fun reportSlow(phase: String, startedNanos: Long) {
@@ -362,9 +364,14 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 val kind = if (mutation.autosaveKey == null) "explicit" else "autosave"
                 reportSlow("$kind.queue_wait", mutation.queuedAtNanos)
                 val started = System.nanoTime()
-                val result = execute(mutation, operation)
-                reportSlow("$kind.operation", started)
-                settle(mutation, result)
+                runningMutation = RunningMutation(kind, started)
+                try {
+                    val result = execute(mutation, operation)
+                    reportSlow("$kind.operation", started)
+                    settle(mutation, result)
+                } finally {
+                    runningMutation = null
+                }
             }
         } finally {
             queue.close()
@@ -468,10 +475,13 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         val queued = enqueue {
             if (!phase.compareAndSet(0, 1)) expired else operation()
         }
-        val watchdog = scope.launch {
+        val watchdog = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
             kotlinx.coroutines.delay(maxQueueWaitMillis)
             if (phase.compareAndSet(0, 2)) {
                 reportSlow("hierarchy.queue_deadline", queuedAt)
+                runningMutation?.let { running ->
+                    reportSlow("hierarchy.blocked_by.${running.kind}", running.startedNanos)
+                }
                 result.complete(expired)
             }
         }
