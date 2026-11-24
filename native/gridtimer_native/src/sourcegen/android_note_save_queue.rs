@@ -1,3 +1,4 @@
+// v3.0.2.15 - Keep the queue alive after isolated cancellation and log active stalled operations.
 // v3.0.2.15 - Bound hierarchy queue admission without cancelling accepted durable writes.
 // v3.0.2.13 - Bind autosave receipts to their exact queue epoch and time durable exits.
 // v2.23.2.51 - Drop interleaved stale draft writes before they reach full-snapshot IO.
@@ -365,12 +366,22 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 reportSlow("$kind.queue_wait", mutation.queuedAtNanos)
                 val started = System.nanoTime()
                 runningMutation = RunningMutation(kind, started)
+                // A live stall must leave evidence even if the operation never returns.
+                // Run on another dispatcher, never inside the writer or its mutex.
+                val watchdog = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                    while (true) {
+                        kotlinx.coroutines.delay(5_000L)
+                        if (runningMutation?.startedNanos != started) break
+                        reportSlow("$kind.operation_pending", started)
+                    }
+                }
                 try {
                     val result = execute(mutation, operation)
                     reportSlow("$kind.operation", started)
                     settle(mutation, result)
                 } finally {
                     runningMutation = null
+                    watchdog.cancel()
                 }
             }
         } finally {
@@ -394,8 +405,15 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 NoteSaveFailure.QUEUE_UNAVAILABLE,
                 "The note mutation worker was cancelled."
             )
-            settle(mutation, failed)
-            throw cancellation
+            // A child operation may time out while the queue itself remains active.
+            // Do not strand all later drafts by terminating a healthy worker.
+            if (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive == true) {
+                reportFailure(cancellation)
+                failed
+            } else {
+                settle(mutation, failed)
+                throw cancellation
+            }
         } catch (throwable: Throwable) {
             reportFailure(throwable)
             NoteSaveResult.failed(
@@ -646,6 +664,21 @@ class NoteSaveQueueTest {
             fail("repository closed twice")
         }) { fail("second shutdown flushed"); NoteSaveResult.committed() })
         assertEquals(1, closes)
+    }
+
+    @Test fun cancelledChildOperationDoesNotStrandLaterDurableSave() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val errors = java.util.concurrent.atomic.AtomicInteger(0)
+        val controller = NoteMutationDrainController(scope) { errors.incrementAndGet() }
+        try {
+            val child = controller.enqueue {
+                throw CancellationException("operation cancelled")
+            }
+            val later = controller.enqueue { NoteSaveResult.committed() }
+            assertFalse(withTimeout(5_000L) { child.await() }.savedLocally)
+            assertTrue(withTimeout(5_000L) { later.await() }.savedLocally)
+            assertEquals(1, errors.get())
+        } finally { scope.cancel() }
     }
 
     @Test fun expiredHierarchyNeverCreatesAfterRetryAndPredecessorStillCommits() = runBlocking {
