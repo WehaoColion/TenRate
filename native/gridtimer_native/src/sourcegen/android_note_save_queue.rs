@@ -672,7 +672,7 @@ class NoteSaveQueueTest {
         val controller = NoteMutationDrainController(scope) { errors.incrementAndGet() }
         try {
             val child = controller.enqueue {
-                throw CancellationException("operation cancelled")
+                throw kotlinx.coroutines.CancellationException("operation cancelled")
             }
             val later = controller.enqueue { NoteSaveResult.committed() }
             assertFalse(withTimeout(5_000L) { child.await() }.savedLocally)
