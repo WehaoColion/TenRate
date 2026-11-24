@@ -1,3 +1,4 @@
+// v3.0.2.15 - Exercise folder-to-child-page persistence under the loaded history and assert actual latency.
 // v3.0.2.14 - Exercise a missing-digest history row in a live workspace.
 // v3.0.2.9 - Exercise root and nested folder creation after an ordinary page commit.
 // v3.0.2.6 - Time real confirmation on a cold preflight after upgrading a large v5 database.
@@ -24,6 +25,7 @@ const SEED: &str = "7391804025006001";
 const CONTENDED: &str = "7391804025006003";
 const ROOT_FOLDER: &str = "7391804025006004";
 const NESTED_FOLDER: &str = "7391804025006005";
+const NESTED_PAGE: &str = "7391804025006006";
 const HISTORY_ROWS: usize = 7_200;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 const PRIMARY_MIRROR: &str =
@@ -263,15 +265,19 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
         "WITH nodes AS (SELECT note.value AS n FROM current_snapshot AS s,
           json_each(s.app_data_json, '$.notes') AS note WHERE s.workspace_key='guest'),
           root AS (SELECT n FROM nodes WHERE json_extract(n,'$.title')='{ROOT_FOLDER}'),
-          child AS (SELECT n FROM nodes WHERE json_extract(n,'$.title')='{NESTED_FOLDER}')
+          child AS (SELECT n FROM nodes WHERE json_extract(n,'$.title')='{NESTED_FOLDER}'),
+          page AS (SELECT n FROM nodes WHERE json_extract(n,'$.title')='{NESTED_PAGE}')
          SELECT (SELECT count(*) FROM root) || ':' || (SELECT count(*) FROM child) || ':' ||
-          (SELECT count(*) FROM root, child WHERE
+          (SELECT count(*) FROM page) || ':' ||
+          (SELECT count(*) FROM root, child, page WHERE
             coalesce(json_extract(root.n,'$.document.knowledge.parentId'),'')='' AND
             json_extract(child.n,'$.document.knowledge.parentId')=json_extract(root.n,'$.id') AND
+            json_extract(page.n,'$.document.knowledge.parentId')=json_extract(child.n,'$.id') AND
+            coalesce(json_extract(page.n,'$.document.knowledge.properties.__tenrate_container_kind.value'),'')!='folder' AND
             json_extract(root.n,'$.document.knowledge.properties.__tenrate_container_kind.value')='folder' AND
             json_extract(child.n,'$.document.knowledge.properties.__tenrate_container_kind.value')='folder');"
     ))?;
-    if folders != "1:1:1" {
+    if folders != "1:1:1:1" {
         return Err(format!("Folder identity, type or parent was not durably preserved: {folders}"));
     }
     let history: usize = sqlite(&local,
@@ -506,10 +512,36 @@ fn run(root: &Path) -> Result<String, String> {
     directory(root)?;
     let folder_evidence = root.join("folder_creation");
     fs::create_dir_all(&folder_evidence).map_err(|e| e.to_string())?;
-    create_folder(&folder_evidence, ROOT_FOLDER)?;
+    let root_folder_ms = create_folder(&folder_evidence, ROOT_FOLDER)?;
     capture(&folder_evidence, "root_folder_committed");
-    create_folder(&folder_evidence, NESTED_FOLDER)?;
+    let nested_folder_ms = create_folder(&folder_evidence, NESTED_FOLDER)?;
     capture(&folder_evidence, "nested_folder_committed");
+    // Reproduce the reported folder -> new child page sequence under real
+    // historical load. A timeout that merely unlocks the dialog is not success.
+    let nested_page_ms = create_page(&folder_evidence, NESTED_PAGE, || Ok(()))?;
+    capture(&folder_evidence, "nested_page_committed");
+    fs::write(folder_evidence.join("creation_elapsed_ms.txt"),
+        format!("root_folder={root_folder_ms}\nnested_folder={nested_folder_ms}\nnested_page={nested_page_ms}\n"))
+        .map_err(|e| e.to_string())?;
+    if [root_folder_ms, nested_folder_ms, nested_page_ms].iter().any(|&elapsed| elapsed > 20_000) {
+        return Err(format!("Folder -> child page save exceeded 20s: {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms"));
+    }
+    if !tap_any(&["返回", "Back"])? {
+        return Err("Could not exit the newly committed child page".into());
+    }
+    let mut returned_to_folder = false;
+    for _ in 0..12 {
+        let current = dump()?;
+        if current.contains(NESTED_FOLDER) && current.contains("新建子页面") {
+            returned_to_folder = true;
+            break;
+        }
+        sleep(Duration::from_millis(300));
+    }
+    if !returned_to_folder {
+        capture(&folder_evidence, "child_page_return_failed");
+        return Err("New child page did not return to its parent directory".into());
+    }
     for _ in 0..2 {
         if !tap_any(&["返回", "Back"])? {
             return Err("Could not navigate from created folder to its parent".into());
@@ -575,7 +607,7 @@ fn run(root: &Path) -> Result<String, String> {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root and nested folders survived with exactly one typed node each and the correct parent ID. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {
