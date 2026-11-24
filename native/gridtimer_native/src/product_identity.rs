@@ -1,3 +1,5 @@
+// v3.0.2.14 - Remove history recovery scans from Android local saves.
+// v3.0.2.13 - Reuse exact autosave receipts and measure durable exits.
 // v3.0.2.11 - Restore Android knowledge headings in shared images.
 // v3.0.2.10 - Bound Android history snapshot decoding.
 // v3.0.2.9 - Repair knowledge hierarchy creation.
@@ -160,8 +162,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.11";
-pub const ANDROID_VERSION_CODE: i32 = 30013;
+pub const ANDROID_APP_VERSION: &str = "3.0.2.14";
+pub const ANDROID_VERSION_CODE: i32 = 30016;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

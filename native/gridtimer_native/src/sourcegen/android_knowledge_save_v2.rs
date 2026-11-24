@@ -1,3 +1,5 @@
+// v3.0.2.14 - Use bounded preflight for ordinary local writes and mirror refreshes.
+// v3.0.2.12 - Give foreground document writes priority over deferred recovery mirrors.
 // v3.0.2.9 - Exclude hierarchy containers from scoped normalization.
 // v3.0.2.2 - Scope ordinary knowledge-page creation normalization to the inserted
 // note. All other paths and any failed safety assertion retain full sanitization.
@@ -104,8 +106,10 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
         ("fun persistSafelyDetailed(appData: AppData):", "fun persistSafelyDetailed(appData: AppData, deferRecoveryMirrors: Boolean = false):"),
         ("            persist(appData)\n            PersistAttempt", "            persist(appData, deferRecoveryMirrors)\n            PersistAttempt"),
         ("fun persist(appData: AppData) {", "fun persist(appData: AppData, deferRecoveryMirrors: Boolean = false) {"),
-        ("        persistToWorkspace(activeWorkspaceKey, appData)", "        persistToWorkspace(activeWorkspaceKey, appData, deferRecoveryMirrors)"),
-        ("fun persistToWorkspace(workspaceKey: String, appData: AppData) {", "fun persistToWorkspace(workspaceKey: String, appData: AppData, deferRecoveryMirrors: Boolean = false) {"),
+        ("        persistToWorkspace(activeWorkspaceKey, appData)", "        persistToWorkspace(activeWorkspaceKey, appData, deferRecoveryMirrors, currentOnlyForLocalWrite = true)"),
+        ("fun persistToWorkspace(workspaceKey: String, appData: AppData) {", "fun persistToWorkspace(\n        workspaceKey: String, appData: AppData, deferRecoveryMirrors: Boolean = false,\n        currentOnlyForLocalWrite: Boolean = false\n    ) {"),
+        ("futureSchemaVersionOnAnySurface(workspaceKey, diagnostic = ::recordPreflight)",
+         "futureSchemaVersionOnAnySurface(\n                            workspaceKey,\n                            currentOnlyForLocalWrite = currentOnlyForLocalWrite,\n                            diagnostic = ::recordPreflight\n                        )"),
         ("            val committedStamp = try {", "            val receipt = try {"),
         ("                    stateDatabase.snapshotWriteStamp()\n                }\n            } finally", "                    stamp.copy(database = stateDatabase.snapshotWriteStamp())\n                }\n            } finally"),
         ("            // Only publish the cache after commit AND successful recovery mirrors.\n            // Any failure leaves it invalid, so the next attempt checks every surface.\n            runCatching {",
@@ -114,6 +118,14 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
             pendingRecoveryMirrorJob?.cancel()
             pendingRecoveryMirrorJob = null
             if (deferRecoveryMirrors && receipt.primary.size >= 0L && receipt.backup.size >= 0L) {
+                // The primary transaction has already validated every preflight surface.
+                // The unchanged old mirrors are still valid recovery candidates.
+                // Reuse only the exact transaction receipt, never a fresh database
+                // stamp that could accidentally bless an independent writer.
+                if (persistFileStamp(files.state) == receipt.primary &&
+                    persistFileStamp(files.backup) == receipt.backup) {
+                    verifiedWritePreflight = workspaceKey to receipt
+                }
                 scheduleRecoveryMirrors(workspaceKey, receipt, encoded, snapshotRevision, snapshotItemCount, ::refresh)
                 Log.i("NoteSaveLatency", "phase=sqlite_receipt mirrors=queued")
             } else {
@@ -144,12 +156,15 @@ const RECOVERY_WORKER: &str = r#"
         revision: Long, itemCount: Int, refresh: (AppStateDatabase.SnapshotWriteStamp) -> Boolean
     ) {
         pendingRecoveryMirrorJob = scope.launch {
-            var retryMillis = 250L
+            // Let a burst of editor commits settle before materializing full mirrors.
+            // A busy writer always wins; a recovery task must never join its FIFO.
+            var retryMillis = 1_800L
             while (true) {
                 delay(retryMillis)
-                val finished = writeMutex.withLock {
+                if (!writeMutex.tryLock()) continue
+                val finished = try {
                     if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
-                        persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@withLock true
+                        persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@launch
                     runCatching {
                         stateDatabase.withSnapshotWriteTransaction {
                             val files = workspaceFiles(workspaceKey)
@@ -158,7 +173,7 @@ const RECOVERY_WORKER: &str = r#"
                                 persistFileStamp(files.backup) != receipt.backup) return@withSnapshotWriteTransaction true
                             val current = stateDatabase.snapshotWriteStamp()
                             if (current != receipt.database &&
-                                (futureSchemaVersionOnAnySurface(workspaceKey) != null ||
+                                (futureSchemaVersionOnAnySurface(workspaceKey, currentOnlyForLocalWrite = true) != null ||
                                     !stateDatabase.currentSnapshotMatches(workspaceKey, encoded,
                                         APP_DATA_SCHEMA_VERSION, revision, itemCount))) return@withSnapshotWriteTransaction true
                             val start = System.nanoTime()
@@ -168,6 +183,8 @@ const RECOVERY_WORKER: &str = r#"
                         Log.w(TAG, "Recovery mirror verification will retry.", error)
                         false
                     }
+                } finally {
+                    writeMutex.unlock()
                 }
                 if (finished) return@launch
                 retryMillis = (retryMillis * 2L).coerceAtMost(30_000L)

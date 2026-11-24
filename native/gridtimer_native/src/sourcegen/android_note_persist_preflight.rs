@@ -1,3 +1,4 @@
+// v3.0.2.14 - Keep full history recovery out of the local write transaction.
 // v3.0.2.6 - Flush save diagnostics after SQLite unlock and resume legacy authentication.
 // v3.0.2.5 - Make preflight guards index-seeking and expose outer transaction wait.
 // v3.0.2.4 - Use a transaction-pinned authenticated current snapshot for ordinary saves.
@@ -28,6 +29,9 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                     .find("    private fun migrateLegacyStateOnce(")
                     .ok_or("missing note save schema preflight end")?;
             source.replace_range(start..end, SCHEMA_PREFLIGHT);
+            replace(&mut source,
+                "            is android.database.sqlite.SQLiteFullException -> NoteSaveFailure.STORAGE_FULL",
+                "            is LocalSnapshotSchemaException -> NoteSaveFailure.SCHEMA_MISMATCH\n            is LocalSnapshotRecoveryException -> NoteSaveFailure.READ_ONLY_PROTECTION\n            is android.database.sqlite.SQLiteFullException -> NoteSaveFailure.STORAGE_FULL")?;
             // An unchanged, authenticated startup/save stamp can skip preflight
             // entirely. Record this explicitly so the emulator cannot confuse
             // absence of a scan with missing diagnostic data.
@@ -37,6 +41,9 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             replace(&mut source,
                 "val futureSchema = futureSchemaVersionOnAnySurface(workspaceKey)",
                 "val futureSchema = futureSchemaVersionOnAnySurface(workspaceKey, diagnostic = ::recordPreflight)")?;
+            replace(&mut source,
+                "                    check(futureSchema == null) {\n                        \"Refusing to overwrite persisted evidence created by future schema $futureSchema.\"\n                    }",
+                "                    if (futureSchema != null) throw LocalSnapshotSchemaException(futureSchema)")?;
             replace(&mut source,
                 "                stageFinished(\"snapshot_preflight\")",
                 r####"                val preflightMillis = (System.nanoTime() - stageStarted) / 1_000_000L
@@ -57,6 +64,17 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 &format!("{TRACKED_TRANSACTION}{transaction_body}{FLUSH_DIAGNOSTICS}"));
         }
         DATABASE => {
+            if source.contains("    fun forEachSnapshot(\n") {
+                replace(&mut source,
+                    "        skipVerifiedHistory: (() -> Boolean)? = null,\n        action: (StoredStateSnapshot) -> Unit",
+                    "        skipVerifiedHistory: (() -> Boolean)? = null,\n        currentOnlyForLocalWrite: Boolean = false,\n        action: (StoredStateSnapshot) -> Unit")?;
+                replace(&mut source,
+                    "        quarantineDigestMismatches(workspaceKey, includeHistory = !currentOnlyStartup)",
+                    "        quarantineDigestMismatches(\n            workspaceKey, includeHistory = !currentOnlyStartup && !currentOnlyForLocalWrite\n        )")?;
+                replace(&mut source,
+                    "        if (currentOnlyStartup) quarantineDigestMismatches(workspaceKey, includeHistory = true)",
+                    "        if (currentOnlyForLocalWrite) return\n        if (currentOnlyStartup) quarantineDigestMismatches(workspaceKey, includeHistory = true)")?;
+            }
             // Sourcegen unit tests also render a pre-migration v4 fragment.
             // Full production generation has the v5 history codec already installed.
             if source.contains("const val DATABASE_VERSION = 5") {
@@ -186,6 +204,31 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
         ).use { it.moveToFirst() }
     }
 
+    // A local write cannot replace historical evidence. Keep damaged history for
+    // recovery, while refusing a future header even when its digest is unusable.
+    fun blockingHistorySchemaForLocalWrite(workspaceKey: String): Int? {
+        val database = writableDatabase
+        check(database.inTransaction())
+        val unknownSchema = database.rawQuery(
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
+                "WHERE workspace_key = ? AND schema_version IS NULL LIMIT 1",
+            arrayOf(workspaceKey)
+        ).use { it.moveToFirst() }
+        if (unknownSchema) throw LocalSnapshotRecoveryException("A history snapshot has an unknown schema.")
+        return database.rawQuery(
+            "SELECT schema_version FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
+                "WHERE workspace_key = ? AND schema_version > ? ORDER BY schema_version DESC LIMIT 1",
+            arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getLong(0).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
+        }
+    }
+
+    fun hasHistoryForLocalWrite(workspaceKey: String): Boolean = writableDatabase.rawQuery(
+        "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard WHERE workspace_key = ? LIMIT 1",
+        arrayOf(workspaceKey)
+    ).use { it.moveToFirst() }
+
     // The existing codec writes storage_encoding=1 only after validating the
     // original digest and both schema declarations, packing and reading back
     // the payload. Legacy rows retain their empty envelopes and remain recovery
@@ -200,6 +243,7 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
 
     fun <T> withVerifiedSavePreflight(
         workspaceKey: String,
+        currentOnlyForLocalWrite: Boolean = false,
         onNativeVerification: (Long, Long) -> Unit = { _, _ -> },
         onTransactionWait: (Long) -> Unit = {},
         onScope: (Boolean) -> Unit = {},
@@ -220,7 +264,8 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
                     val began = System.nanoTime()
                     var verifiedRows = -1L
                     try {
-                        val safeHistoryHeaders = !historyRequiresFullSaveVerification(workspaceKey)
+                        val safeHistoryHeaders = currentOnlyForLocalWrite ||
+                            !historyRequiresFullSaveVerification(workspaceKey)
                         val currentRows = if (safeHistoryHeaders)
                             runCatching { verifyNativeSnapshotRows(workspaceKey, currentOnly = true) }
                                 .getOrDefault(-1L)
@@ -228,7 +273,7 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
                         if (canUseCurrentOnlySaveProof(safeHistoryHeaders, currentRows)) {
                             currentOnlyVerified = true
                             verifiedRows = currentRows
-                        } else {
+                        } else if (!currentOnlyForLocalWrite) {
                             // Unknown schema, absent/corrupt current or native failure:
                             // preserve the original full history/recovery guard.
                             verifyNativeSnapshotRows(workspaceKey).also { verifiedRows = it }
@@ -241,7 +286,7 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
                 },
                 currentOnlyVerified = { currentOnlyVerified },
                 onVerificationFailure = {
-                    android.util.Log.w("NoteSaveLatency", "Save preflight requires full recovery verification", it)
+                    android.util.Log.w("NoteSaveLatency", "Native verification unavailable; using the snapshot reader", it)
                 },
                 action = {
                     val currentProof = currentOnlyVerified &&
@@ -266,9 +311,11 @@ const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeate
 const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySurface(
         workspaceKey: String,
         includeUnmigratedLegacy: Boolean = false,
+        currentOnlyForLocalWrite: Boolean = false,
         diagnostic: (String, String) -> Unit = { _, _ -> }
     ): Int? = stateDatabase.withVerifiedSavePreflight(
         workspaceKey,
+        currentOnlyForLocalWrite = currentOnlyForLocalWrite,
         onNativeVerification = { millis, rows ->
             diagnostic(
                 "notes.local_save.latency",
@@ -284,17 +331,23 @@ const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySur
         onScope = { current ->
             diagnostic(
                 "notes.local_save.preflight",
-                if (current) "scope=current" else "scope=full"
+                if (current) "scope=current" else if (currentOnlyForLocalWrite) "scope=current_fallback" else "scope=full"
             )
         }
     ) {
         val evidence = NoteSavePreflightEvidence(APP_DATA_SCHEMA_VERSION)
+        if (currentOnlyForLocalWrite) {
+            stateDatabase.blockingHistorySchemaForLocalWrite(workspaceKey)?.let {
+                return@withVerifiedSavePreflight it
+            }
+        }
         // Native success proves payload, envelope and BOTH schema declarations.
         // Read and accept the current row before skipping verified histories.
         // Missing/corrupt/future current and native failures use the old visitor.
         stateDatabase.forEachSnapshot(
             workspaceKey,
-            skipVerifiedHistory = { evidence.acceptedCurrentWithoutFuture }
+            skipVerifiedHistory = { evidence.acceptedCurrentWithoutFuture },
+            currentOnlyForLocalWrite = currentOnlyForLocalWrite
         ) { stored ->
             evidence.observe(stored.source, rawSchemaVersion(stored.appDataJson), stored.schemaVersion)
         }
@@ -313,6 +366,11 @@ const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySur
             observeFile(legacyBackupFile)
             observeFile(legacyTempFile)
         }
+        if (currentOnlyForLocalWrite && evidence.futureVersion == null && !evidence.acceptedCurrentWithoutFuture) {
+            if (stateDatabase.hasHistoryForLocalWrite(workspaceKey)) {
+                throw LocalSnapshotRecoveryException("The current snapshot requires recovery.")
+            }
+        }
         evidence.futureVersion
     }
 
@@ -321,6 +379,11 @@ const SCHEMA_PREFLIGHT: &str = r####"    private fun futureSchemaVersionOnAnySur
 // Production policy is deliberately Android-free so its transaction, failure,
 // workspace and schema boundaries run as ordinary JVM specifications.
 pub const POLICY: &str = r####"
+
+internal class LocalSnapshotSchemaException(version: Int) :
+    IllegalStateException("Refusing to overwrite persisted evidence created by future schema $version.")
+
+internal class LocalSnapshotRecoveryException(message: String) : IllegalStateException(message)
 
 internal class NoteSavePreflightEvidence(private val supportedVersion: Int) {
     var futureVersion: Int? = null
@@ -566,6 +629,8 @@ mod generated_preflight_diagnostics_tests {
             WHERE workspace_key = ?1 AND schema_version IS NULL LIMIT 1";
         let schema_future = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
             WHERE workspace_key = ?1 AND schema_version > ?2 LIMIT 1";
+        let highest_future = "SELECT schema_version FROM snapshot_history INDEXED BY snapshot_history_schema_guard
+            WHERE workspace_key = ?1 AND schema_version > ?2 ORDER BY schema_version DESC LIMIT 1";
         let digest = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_digest_guard
             WHERE workspace_key = ?1 AND (sha256 IS NULL OR sha256 = '') LIMIT 1";
         let envelope = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_envelope_guard
@@ -594,10 +659,13 @@ mod generated_preflight_diagnostics_tests {
         let workspace: &dyn rusqlite::ToSql = &"guest";
         let null_plan = plan(schema_null, vec![workspace]);
         let schema_plan = plan(schema_future, vec![workspace, version]);
+        let highest_plan = plan(highest_future, vec![workspace, version]);
         let digest_plan = plan(digest, vec![workspace]);
         let envelope_plan = plan(envelope, vec![workspace]);
         assert!(schema_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{schema_plan}");
         assert!(schema_plan.contains("schema_version>?"), "{schema_plan}");
+        assert!(highest_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{highest_plan}");
+        assert!(!highest_plan.contains("TEMP B-TREE"), "{highest_plan}");
         assert!(null_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{null_plan}");
         assert!(null_plan.contains("schema_version=?"), "{null_plan}");
         assert!(digest_plan.contains("INDEX snapshot_history_digest_guard"), "{digest_plan}");
@@ -617,6 +685,10 @@ mod generated_preflight_diagnostics_tests {
         assert!(!unsafe_digest("guest"));
         db.execute("INSERT INTO snapshot_history VALUES ('guest', 15, 'x', '', 'envelope', 0)", []).unwrap();
         assert!(unsafe_digest("guest"));
+        db.execute("INSERT INTO snapshot_history VALUES ('guest', 17, 'x', '', '', 0)", []).unwrap();
+        db.execute("INSERT INTO snapshot_history VALUES ('other', 18, 'x', '', '', 0)", []).unwrap();
+        let guarded_version: i64 = db.query_row(highest_future, rusqlite::params!["guest", 15], |row| row.get(0)).unwrap();
+        assert_eq!(guarded_version, 17);
     }
 
 
