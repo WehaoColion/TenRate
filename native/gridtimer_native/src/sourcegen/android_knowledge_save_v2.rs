@@ -1,3 +1,4 @@
+// v3.0.2.15 - Avoid synchronous full recovery mirrors for strictly scoped empty folder inserts.
 // v3.0.2.14 - Use bounded preflight for ordinary local writes and mirror refreshes.
 // v3.0.2.12 - Give foreground document writes priority over deferred recovery mirrors.
 // v3.0.2.9 - Exclude hierarchy containers from scoped normalization.
@@ -95,7 +96,7 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
     replace_one(source, "            var transformFailure: DataUpdateAttempt? = null",
         "            var deferRecoveryMirrors = false\n            var transformFailure: DataUpdateAttempt? = null")?;
     replace_one(source, "                        val normalized = scopedCreated ?:",
-        "                        deferRecoveryMirrors = scopedCreated?.notes?.firstOrNull { it.id == hierarchyCreateNoteId }?.isPlainRecoveryDocument() == true\n                        val normalized = scopedCreated ?:")?;
+        "                        deferRecoveryMirrors = scopedCreated?.notes?.firstOrNull { it.id == hierarchyCreateNoteId }?.isSafeNewRecoveryNode() == true\n                        val normalized = scopedCreated ?:")?;
     replace_one(source, "                            noteMutationId != null -> current.acceptNoteMutation(normalized, noteMutationId)",
         r#"                            noteMutationId != null -> current.acceptNoteMutation(normalized, noteMutationId).also {
                                 deferRecoveryMirrors = mutationBase.notes.singleOrNull()?.isPlainRecoveryDocument() == true &&
@@ -148,6 +149,14 @@ const RECOVERY_WORKER: &str = r#"
         kind == NoteEntryKind.DOCUMENT && encryption == null && !isDeleted() && attachments.isEmpty() &&
             !document.richTextEnabled && !isKnowledgeFolder() && !requiresStructuredKnowledgeReader() &&
             document.blocks.all { it.type == NoteBlockType.TEXT }
+
+    // A strictly scoped insertion never modifies an existing note or privacy
+    // metadata. A new empty folder can therefore use the same authoritative
+    // SQLite receipt as a new plain page instead of blocking the queue on mirrors.
+    private fun NoteEntry.isSafeNewRecoveryNode(): Boolean =
+        isPlainRecoveryDocument() || (kind == NoteEntryKind.DOCUMENT &&
+            isKnowledgeFolder() && encryption == null && !isDeleted() && attachments.isEmpty() &&
+            document.blocks.all { it.type == NoteBlockType.TEXT && it.text.isBlank() })
 
     // Called under the repository writer. A new commit or privacy redaction cancels
     // the preceding ticket. On process death, verified SQLite startup repairs mirrors.
