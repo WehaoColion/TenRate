@@ -27,9 +27,10 @@ const CONTENDED: &str = "7391804025006003";
 const ROOT_FOLDER: &str = "7391804025006004";
 const NESTED_FOLDER: &str = "7391804025006005";
 const NESTED_PAGE: &str = "7391804025006006";
+// Digits are committed by both Pinyin and Latin IMEs without a composition candidate.
 const EDIT_ROUNDS: usize = 12;
 const BURST_ROUNDS: usize = 30;
-const EDIT_EXIT_MARKER: &str = "FinalExitDurable";
+const EDIT_EXIT_MARKER: &str = "98765432109876543210";
 const EDIT_BUDGET_MS: u128 = 8_000;
 const HISTORY_ROWS: usize = 7_200;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
@@ -271,7 +272,7 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     let mut measurements = String::from("round,elapsed_ms,writer_contention\n");
     let mut expected = String::new();
     for round in 0..EDIT_ROUNDS {
-        let marker = format!("R{round:02}Body");
+        let marker = format!("817{round:02}629");
         expected.push_str(&marker);
         let writer = if round % 4 == 1 { Some(hold_sqlite_writer()?) } else { None };
         let started = std::time::Instant::now();
@@ -300,7 +301,7 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     // Burst of real key injections without waiting for autosave between edits.
     // One adb shell command preserves the input order, but no app state is mocked.
     let back = find(&["返回", "Back"])?.ok_or("Nested editor Back missing")?;
-    let burst = (0..BURST_ROUNDS).map(|i| format!("B{i:02}")).collect::<Vec<_>>();
+    let burst = (0..BURST_ROUNDS).map(|i| format!("943{i:02}")).collect::<Vec<_>>();
     let mut script = burst.iter().map(|marker| format!("input text {marker}")).collect::<Vec<_>>();
     script.push(format!("input text {EDIT_EXIT_MARKER}"));
     cmd(&["shell", &script.join(" && ")])?;
@@ -360,8 +361,8 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     if folders != "1:1:1:1" {
         return Err(format!("Folder identity, type or parent was not durably preserved: {folders}"));
     }
-    let expected = (0..EDIT_ROUNDS).map(|round| format!("R{round:02}Body")).collect::<String>()
-        + &(0..BURST_ROUNDS).map(|round| format!("B{round:02}")).collect::<Vec<_>>().concat();
+    let expected = (0..EDIT_ROUNDS).map(|round| format!("817{round:02}629")).collect::<String>()
+        + &(0..BURST_ROUNDS).map(|round| format!("943{round:02}")).collect::<Vec<_>>().concat();
     let all_body = sqlite(&local, &format!(
         "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND EXISTS (SELECT 1 FROM json_each(n.value,'$.document.blocks') b WHERE instr(json_extract(b.value,'$.text'),'{expected}{EDIT_EXIT_MARKER}')>0);"
     ))?;
