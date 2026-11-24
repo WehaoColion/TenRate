@@ -1,3 +1,4 @@
+// v3.0.2.13 - Record exact autosave receipt reuse and exit measurement.
 // v3.0.2.11 - Record Markdown heading preservation in knowledge share images.
 // v3.0.2.10 - Reduce peak memory while validating history snapshots.
 // v3.0.2.9 - Knowledge hierarchy creation and failure feedback.
@@ -90,7 +91,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.12";
+pub const LATEST_VERSION: &str = "3.0.2.13";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -120,6 +121,17 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.13",
+        updatedAt = "2026-11-24 16:15",
+        summary = "减少知识页退出时的重复保存",
+        sections = listOf(
+            AndroidUpdateSection("知识页保存", listOf(
+                "自动保存的成功回执绑定精确的队列版本；完整内容一致且无其他待处理写入时，退出可复用已确认的本地回执。",
+                "退出保存记录应用内部真实耗时；模拟器识别知识首页而不是依赖可能在屏幕外的文档标题，仍核对重启后的最后编辑。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.12",
         updatedAt = "2026-11-24 14:54",
