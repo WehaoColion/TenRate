@@ -246,8 +246,28 @@ fn run(out:&Path)->Result<String,String>{
         sleep(Duration::from_millis(250));
     }
     if !committed { return Err("No durable receipt after SQLite writer release".into()); }
+    // Measure an actual unblocked body edit, not only a new page or a locked writer.
+    // UIAutomator dumps have their own latency; the wall-clock budget includes that.
+    let hot_start = std::time::Instant::now();
+    command(&["shell","input","text","HotSave"])?;
+    let mut hot_saved = false;
+    while hot_start.elapsed() < Duration::from_secs(8) {
+        let ui = tree()?;
+        if ui.contains("StableParagraphNoJumpHotSave") &&
+            has_state(&ui, "document_save_local_saved") {
+            hot_saved = true;
+            break;
+        }
+        sleep(Duration::from_millis(100));
+    }
+    let hot_ms = hot_start.elapsed().as_millis();
+    fs::write(out.join("hot_body_save_ms.txt"), format!("{hot_ms}\n")).map_err(|e| e.to_string())?;
+    if !hot_saved || hot_ms > 8_000 {
+        evidence(out,"hot_body_save_timeout");
+        return Err(format!("Uncontended body edit did not reach a local receipt within 8s: {hot_ms}ms"));
+    }
     let first_after=seek(&["StableHeading"])?.ok_or("Heading lost during typing")?;
-    let second_after=seek(&["StableParagraphNoJump"])?.ok_or("Typed text lost")?;
+    let second_after=seek(&["StableParagraphNoJumpHotSave"])?.ok_or("Typed text lost")?;
     let after_y=(center(&first_after).1,center(&second_after).1);
     if (after_y.0-before_y.0).abs()>28 || (after_y.1-before_y.1).abs()>28 {
         evidence(out,"unexpected_scroll_movement");
@@ -261,14 +281,14 @@ fn run(out:&Path)->Result<String,String>{
     knowledge(out)?;
     open_persisted_page(out)?;
     evidence(out,"07_reopened_saved_heading");
-    if seek(&["StableHeading"])?.is_none() || seek(&["StableParagraphNoJump"])?.is_none() {
+    if seek(&["StableHeading"])?.is_none() || seek(&["StableParagraphNoJumpHotSave"])?.is_none() {
         return Err("Heading or paragraph disappeared after process restart".into());
     }
     if command(&["shell","pidof",APP])?.trim().is_empty() {
         return Err("App did not remain running after reopening the document".into());
     }
     let share_result = android_knowledge_share_probe::export_and_check(out)?;
-    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. The heading and full paragraph survived force-stop after local confirmation.\n\n{share_result}"))
+    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. Uncontended body edit reached a local receipt in {hot_ms} ms (including UIAutomator). The heading and full paragraph survived force-stop after local confirmation.\n\n{share_result}"))
 }
 fn main(){
     let path=env::args_os().nth(1).map(PathBuf::from)
