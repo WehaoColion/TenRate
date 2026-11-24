@@ -279,14 +279,24 @@ fn run(out:&Path)->Result<String,String>{
     // Do not treat an inaccessible editor (the saving barrier) as a completed exit.
     let back = seek(&["返回","Back"])?.ok_or("Document back action missing")?;
     let (back_x, back_y) = center(&back);
+    command(&["logcat","-c"])?;
     command(&["shell","input","text","ExitSave"])?;
     let exit_start = std::time::Instant::now();
     command(&["shell","input","tap",&back_x.to_string(),&back_y.to_string()])?;
     let mut exited = false;
     while exit_start.elapsed() < Duration::from_secs(8) {
         let ui = tree()?;
-        if ui.contains(TITLE) && !ui.contains(GRIP) &&
-            !ui.contains("正在保存") && !has_state(&ui, "document_save_saving") &&
+        // The home list is virtualized: the page row can be off screen.
+        // Require positive knowledge-home controls, not the page title.
+        let visible = nodes(&ui);
+        let has_label = |labels: &[&str]| visible.iter().any(|n|
+            n.bounds[2]>n.bounds[0] && n.bounds[3]>n.bounds[1] &&
+            labels.iter().any(|label| n.text == *label || n.description == *label));
+        if has_label(&["Knowledge", "知识"]) &&
+            has_label(&["New page", "新建页面"]) &&
+            has_label(&["Directory", "目录", "知识目录"]) &&
+            !ui.contains(GRIP) && !ui.contains("正在保存") &&
+            !has_state(&ui, "document_save_saving") &&
             !has_state(&ui, "document_save_local_saved") {
             exited = true;
             break;
@@ -298,6 +308,21 @@ fn run(out:&Path)->Result<String,String>{
     if !exited || exit_ms > 8_000 {
         evidence(out,"edit_exit_save_timeout");
         return Err(format!("Final edit followed by toolbar Back exceeded the exit budget: {exit_ms}ms"));
+    }
+
+    // Measure the app's durable receipt independently of UIAutomator polling.
+    let trace = command(&["logcat","-d","-s","NoteSaveLatency:I"])?;
+    fs::write(out.join("edit_exit_receipt_trace.txt"), &trace).map_err(|e| e.to_string())?;
+    let marker = "phase=document_exit_receipt durationMs=";
+    let receipts: Vec<u128> = trace.lines().filter_map(|line|
+        line.split_once(marker)?.1.split_whitespace().next()?.parse().ok()).collect();
+    if receipts.len() != 1 {
+        return Err(format!("Expected exactly one app durable exit receipt, got {receipts:?}"));
+    }
+    let receipt_ms = receipts[0];
+    fs::write(out.join("edit_exit_receipt_ms.txt"), format!("{receipt_ms}\n")).map_err(|e| e.to_string())?;
+    if receipt_ms > 1_500 {
+        return Err(format!("Actual app exit persistence exceeded 1500ms: {receipt_ms}ms"));
     }
 
     command(&["shell","am","force-stop",APP])?;
@@ -313,7 +338,7 @@ fn run(out:&Path)->Result<String,String>{
         return Err("App did not remain running after reopening the document".into());
     }
     let share_result = android_knowledge_share_probe::export_and_check(out)?;
-    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. Uncontended body edit reached a local receipt in {hot_ms} ms and final edit followed by Back exited in {exit_ms} ms (including UIAutomator). The heading and full paragraph survived force-stop after local confirmation.\n\n{share_result}"))
+    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. Uncontended body edit reached a local receipt in {hot_ms} ms and final edit followed by Back exited in {exit_ms} ms (including UIAutomator), with app durable receipt in {receipt_ms} ms. The heading and full paragraph survived force-stop after local confirmation.\n\n{share_result}"))
 }
 fn main(){
     let path=env::args_os().nth(1).map(PathBuf::from)
