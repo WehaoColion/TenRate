@@ -28,6 +28,7 @@ const ROOT_FOLDER: &str = "7391804025006004";
 const NESTED_FOLDER: &str = "7391804025006005";
 const NESTED_PAGE: &str = "7391804025006006";
 const EDIT_ROUNDS: usize = 12;
+const BURST_ROUNDS: usize = 30;
 const EDIT_EXIT_MARKER: &str = "FinalExitDurable";
 const EDIT_BUDGET_MS: u128 = 8_000;
 const HISTORY_ROWS: usize = 7_200;
@@ -255,7 +256,7 @@ fn has_save_state(xml: &str, state: &str) -> bool {
 }
 fn nested_body_has(marker: &str) -> Result<bool, String> {
     let count = live_sqlite(&format!(
-        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND instr(n.value,'{marker}')>0;"
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND EXISTS (SELECT 1 FROM json_each(n.value,'$.document.blocks') b WHERE instr(json_extract(b.value,'$.text'),'{marker}')>0);"
     ))?;
     Ok(count.trim() == "1")
 }
@@ -296,15 +297,20 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
             return Err(format!("Nested page body save round {round} exceeded {EDIT_BUDGET_MS}ms: {elapsed}ms; UI and SQLite receipt required"));
         }
     }
+    // Burst of real key injections without waiting for autosave between edits.
+    // One adb shell command preserves the input order, but no app state is mocked.
     let back = find(&["返回", "Back"])?.ok_or("Nested editor Back missing")?;
-    cmd(&["shell", "input", "text", EDIT_EXIT_MARKER])?;
+    let burst = (0..BURST_ROUNDS).map(|i| format!("B{i:02}")).collect::<Vec<_>>();
+    let mut script = burst.iter().map(|marker| format!("input text {marker}")).collect::<Vec<_>>();
+    script.push(format!("input text {EDIT_EXIT_MARKER}"));
+    cmd(&["shell", &script.join(" && ")])?;
     let started = std::time::Instant::now();
     send_tap(&back)?;
     let mut exited = false;
     while started.elapsed().as_millis() < EDIT_BUDGET_MS {
         let ui = dump()?;
         if ui.contains(NESTED_FOLDER) && ui.contains("新建子页面") &&
-            !has_save_state(&ui, "document_save_saving") && nested_body_has(EDIT_EXIT_MARKER)? {
+            !has_save_state(&ui, "document_save_saving") && nested_body_has(&format!("{}{}{EDIT_EXIT_MARKER}", expected, burst.concat()))? {
             exited = true;
             break;
         }
@@ -354,9 +360,10 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     if folders != "1:1:1:1" {
         return Err(format!("Folder identity, type or parent was not durably preserved: {folders}"));
     }
-    let expected = (0..EDIT_ROUNDS).map(|round| format!("R{round:02}Body")).collect::<String>();
+    let expected = (0..EDIT_ROUNDS).map(|round| format!("R{round:02}Body")).collect::<String>()
+        + &(0..BURST_ROUNDS).map(|round| format!("B{round:02}")).collect::<Vec<_>>().concat();
     let all_body = sqlite(&local, &format!(
-        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND instr(n.value,'{expected}{EDIT_EXIT_MARKER}')>0;"
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND EXISTS (SELECT 1 FROM json_each(n.value,'$.document.blocks') b WHERE instr(json_extract(b.value,'$.text'),'{expected}{EDIT_EXIT_MARKER}')>0);"
     ))?;
     if all_body != "1" { return Err("One or more nested body edits were lost after restart".into()); }
     let history: usize = sqlite(&local,
@@ -684,7 +691,7 @@ fn run(root: &Path) -> Result<String, String> {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; {BURST_ROUNDS} additional rapid input events followed by immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {
