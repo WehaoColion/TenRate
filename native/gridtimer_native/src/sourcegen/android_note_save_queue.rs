@@ -1,3 +1,4 @@
+// v3.0.2.15 - Bound hierarchy queue admission without cancelling accepted durable writes.
 // v3.0.2.13 - Bind autosave receipts to their exact queue epoch and time durable exits.
 // v2.23.2.51 - Drop interleaved stale draft writes before they reach full-snapshot IO.
 // v2.23.2.35 - Hand off a committed exit before disposal can enqueue it again.
@@ -452,6 +453,42 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         return completion
     }
 
+    // A new hierarchy request has no unsaved document payload. It may expire
+    // BEFORE it starts, but an admitted transaction must complete normally.
+    // Keep FIFO order and leave all earlier edits untouched.
+    fun enqueueHierarchy(
+        maxQueueWaitMillis: Long = 10_000L,
+        operation: suspend () -> NoteSaveResult
+    ): CompletableDeferred<NoteSaveResult> {
+        val phase = java.util.concurrent.atomic.AtomicInteger(0) // queued / running / expired
+        val result = CompletableDeferred<NoteSaveResult>()
+        val expired = NoteSaveResult.failed(NoteSaveFailure.QUEUE_UNAVAILABLE,
+            "Hierarchy request expired before its transaction started.")
+        val queuedAt = System.nanoTime()
+        val queued = enqueue {
+            if (!phase.compareAndSet(0, 1)) expired else operation()
+        }
+        val watchdog = scope.launch {
+            kotlinx.coroutines.delay(maxQueueWaitMillis)
+            if (phase.compareAndSet(0, 2)) {
+                reportSlow("hierarchy.queue_deadline", queuedAt)
+                result.complete(expired)
+            }
+        }
+        scope.launch {
+            try {
+                result.complete(queued.await())
+            } finally {
+                watchdog.cancel()
+                if (!result.isCompleted) result.complete(queueUnavailableResult())
+            }
+        }.invokeOnCompletion {
+            watchdog.cancel()
+            if (!result.isCompleted) result.complete(queueUnavailableResult())
+        }
+        return result
+    }
+
     fun enqueueAutosave(
         workspaceKey: String,
         noteId: String,
@@ -599,6 +636,61 @@ class NoteSaveQueueTest {
             fail("repository closed twice")
         }) { fail("second shutdown flushed"); NoteSaveResult.committed() })
         assertEquals(1, closes)
+    }
+
+    @Test fun expiredHierarchyNeverCreatesAfterRetryAndPredecessorStillCommits() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val controller = NoteMutationDrainController(scope) { throw it }
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val writes = java.util.concurrent.atomic.AtomicInteger(0)
+        try {
+            val predecessor = controller.enqueue {
+                started.complete(Unit)
+                release.await()
+                NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            val expired = controller.enqueueHierarchy(maxQueueWaitMillis = 25L) {
+                writes.incrementAndGet()
+                NoteSaveResult.committed()
+            }
+            assertFalse(withTimeout(5_000L) { expired.await() }.savedLocally)
+            assertFalse(predecessor.isCompleted)
+            val retry = controller.enqueueHierarchy(maxQueueWaitMillis = 5_000L) {
+                writes.incrementAndGet()
+                NoteSaveResult.committed()
+            }
+            release.complete(Unit)
+            assertTrue(withTimeout(5_000L) { predecessor.await() }.savedLocally)
+            assertTrue(withTimeout(5_000L) { retry.await() }.savedLocally)
+            assertEquals(1, writes.get())
+        } finally {
+            release.complete(Unit)
+            scope.cancel()
+        }
+    }
+
+    @Test fun startedHierarchyIsNotCancelledByQueueDeadline() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val controller = NoteMutationDrainController(scope) { throw it }
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        try {
+            val request = controller.enqueueHierarchy(maxQueueWaitMillis = 500L) {
+                started.complete(Unit)
+                release.await()
+                NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            kotlinx.coroutines.delay(650L)
+            assertFalse(request.isCompleted)
+            release.complete(Unit)
+            assertTrue(withTimeout(5_000L) { request.await() }.savedLocally)
+        } finally {
+            release.complete(Unit)
+            scope.cancel()
+        }
     }
 
     @Test fun saturatedBoundedQueuePreservesFinalSaveOrderAndShutdownBarrier() = runBlocking {
