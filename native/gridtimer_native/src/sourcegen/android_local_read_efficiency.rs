@@ -1,3 +1,4 @@
+// v3.0.2.15 - Idle history worker continues to pick up newly deferred rows.
 // v2.23.2.54 - Accept upstream workspace-indexed raw snapshot scans without rewriting them twice.
 // v2.23.2.48 - Accelerate safe post-start maintenance and reduce indexed scan round trips.
 // v2.23.2.47 - Avoid unrelated media IO and unbounded maintenance before ready.
@@ -200,11 +201,16 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
                 throw cancelled
             } catch (failure: Exception) {
                 Log.w("StartupLatency", "Deferred history packing stopped; original rows retained", failure)
-                null
+                break
             } finally {
                 writeMutex.unlock()
             }
-            if (next == null) break
+            if (next == null) {
+                // Keep the monotonic cursor: new foreground snapshots may add
+                // authenticated raw rows later. Do not reprocess failed old rows.
+                delay(15_000L)
+                continue
+            }
             afterId = next
             // Each transaction still packs only one authenticated row; shorter
             // paced idle gaps drain old histories sooner for subsequent launches.
