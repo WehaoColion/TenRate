@@ -1,4 +1,4 @@
-// v3.0.2.10 - 降低历史快照校验的内存开销。
+// v3.0.2.11 - 修复知识页分享长图的一级和二级标题。
 // v3.0.2.9 - 知识文件夹结构创建修订。
 // v3.0.2.8 - 知识页以 SQLite 提交确认本地保存，按需生成编辑预览。
 // v3.0.2.6 - 草稿后台落盘，旧历史分批验证，SQLite 锁外写入诊断。
@@ -205,8 +205,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30012
-        versionName '3.0.2.10'
+        versionCode 30013
+        versionName '3.0.2.11'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
