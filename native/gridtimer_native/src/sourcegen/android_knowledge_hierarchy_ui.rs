@@ -1,3 +1,4 @@
+// v3.0.2.15 - Render one directory surface with layer-only motion and indexed row actions.
 // v3.0.2.15 - Keep hierarchy inputs on bounded pre-admission failure; do not cancel a running transaction.
 // v3.0.2.15 - Real directional directory navigation, spring disclosure and tactile feedback.
 // v3.0.2.9 - Preserve full hierarchy creation and report the failed save stage.
@@ -639,7 +640,6 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
@@ -653,6 +653,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
@@ -829,7 +830,7 @@ private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: Knowledge
         }, shape = RoundedCornerShape(13.dp),
         color = if (node.isFolder) archive.folder else archive.paper,
         border = BorderStroke(1.dp, archive.edge),
-        tonalElevation = 0.dp, shadowElevation = 2.dp) {
+        tonalElevation = 0.dp, shadowElevation = 0.dp) {
     ListItem(modifier = Modifier.fillMaxWidth().clickable(
             interactionSource = pressSource, indication = LocalIndication.current,
             enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT,
@@ -1138,25 +1139,37 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
     val workspace = LocalNoteMediaWorkspaceKey.current
     val active = LocalDocumentTransitionActive.current
-    val latestParent by rememberUpdatedState(parentId)
-    key(workspace) {
-        AnimatedContent(
-            targetState = parentId,
-            modifier = Modifier.fillMaxSize().clipToBounds(),
-            transitionSpec = {
-                val fromDepth = initialState?.let { index.breadcrumbs(it).size } ?: 0
-                val toDepth = targetState?.let { index.breadcrumbs(it).size } ?: 0
-                knowledgeNavigationTransform(backward = toDepth < fromDepth)
-            },
-            label = "knowledge-directory-navigation"
-        ) { frame ->
-            val interactive = active && frame == latestParent
-            CompositionLocalProvider(LocalDocumentTransitionActive provides interactive) {
-                Box((if (interactive) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {})
-                    .knowledgeNavigationSurface()) {
-                    KnowledgeHierarchyBrowserFrame(index, frame, busy, message, currentScope,
+    // One live directory only. AnimatedContent previously kept two complete
+    // LazyColumns (including their shadows and layout callbacks) alive during
+    // each transition. Move the incoming surface in the draw layer instead:
+    // the animated fraction is never read by composition or measurement.
+    var previousParent by remember(workspace) { mutableStateOf(parentId) }
+    val initialOffset = remember(workspace, parentId) {
+        if (!active || previousParent == parentId) 0f
+        else {
+            val fromDepth = previousParent?.let { index.breadcrumbs(it).size } ?: 0
+            val toDepth = parentId?.let { index.breadcrumbs(it).size } ?: 0
+            if (toDepth < fromDepth) -0.16f else 0.16f
+        }
+    }
+    SideEffect { previousParent = parentId }
+    key(workspace, parentId) {
+        val translation = remember { Animatable(initialOffset) }
+        LaunchedEffect(translation, active) {
+            if (!active) translation.snapTo(0f)
+            else translation.animateTo(0f, spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium,
+                visibilityThreshold = 0.001f
+            ))
+        }
+        Box(Modifier.fillMaxSize().clipToBounds().knowledgeNavigationSurface()) {
+            CompositionLocalProvider(LocalDocumentTransitionActive provides active) {
+                Box((if (active) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {})
+                    .graphicsLayer { translationX = size.width * translation.value }) {
+                    KnowledgeHierarchyBrowserFrame(index, parentId, busy, message, currentScope,
                         onBack, onBrowse, onOpen, onRequest)
-                    if (!interactive) DocumentEditorInputBarrier()
+                    if (!active) DocumentEditorInputBarrier()
                 }
             }
         }
@@ -1197,7 +1210,8 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
     var autoScrollGeneration by remember(workspace, parentId) { mutableIntStateOf(0) }
     var viewport by remember(workspace, parentId) { mutableStateOf<LayoutCoordinates?>(null) }
     val handleBounds = remember(workspace, parentId) { mutableMapOf<String, Rect>() }
-    val normalIds = knowledgeDirectoryOrderedIds(directoryScope, savedIds)
+    val normalIds = remember(directoryScope, savedIds) { knowledgeDirectoryOrderedIds(directoryScope, savedIds) }
+    val draggableIds = remember(directoryScope) { directoryScope.items.filter { it.canDrag }.mapTo(hashSetOf()) { it.id } }
     val displayedIds = pendingIds ?: previewIds ?: normalIds
     val latestDisplayedIds by rememberUpdatedState(displayedIds)
     val edgePx = with(density) { 64.dp.toPx() }
@@ -1439,7 +1453,7 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                     shape = RoundedCornerShape(18.dp),
                     color = archive.paper,
                     border = BorderStroke(1.dp, archive.edge),
-                    tonalElevation = 0.dp, shadowElevation = 3.dp
+                    tonalElevation = 0.dp, shadowElevation = 0.dp
                 ) {
                     Column(Modifier.fillMaxWidth().padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1469,12 +1483,11 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                     if (!loaded && !loading) TextButton(onClick = { orderMessage = ""; reload++ }) { Text("重试") }
                 }
             }
-            items(displayedIds, key = { it }) { id ->
+            itemsIndexed(displayedIds, key = { _, id -> id }) { position, id ->
                 val child = index.nodes[id]
                 if (child != null) {
                     val placeholder = dragging?.session?.draggedId == id
-                    val draggable = canSort && directoryScope.items.any { it.id == id && it.canDrag }
-                    val position = displayedIds.indexOf(id)
+                    val draggable = canSort && id in draggableIds
                     DisposableEffect(id, handleBounds) { onDispose { handleBounds.remove(id) } }
                     var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) else Modifier
                     if (placeholder) rowModifier = rowModifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { }
