@@ -300,17 +300,31 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     }
     // Burst of real key injections without waiting for autosave between edits.
     // One adb shell command preserves the input order, but no app state is mocked.
-    let back = find(&["返回", "Back"])?.ok_or("Nested editor Back missing")?;
     let burst = (0..BURST_ROUNDS).map(|i| format!("943{i:02}")).collect::<Vec<_>>();
     let mut script = burst.iter().map(|marker| format!("input text {marker}")).collect::<Vec<_>>();
     script.push(format!("input text {EDIT_EXIT_MARKER}"));
     cmd(&["shell", &script.join(" && ")])?;
     let started = std::time::Instant::now();
-    send_tap(&back)?;
+    // The toolbar is hidden while the IME is visible. Back first dismisses
+    // the keyboard; never reuse a coordinate captured before the long edit.
+    cmd(&["shell", "input", "keyevent", "4"])?;
     let mut exited = false;
+    let mut back_sent = false;
     while started.elapsed().as_millis() < EDIT_BUDGET_MS {
         let ui = dump()?;
-        if ui.contains(NESTED_FOLDER) && ui.contains("新建子页面") &&
+        let visible = elements(&ui);
+        let is_parent = visible.iter().any(|n| n.label == NESTED_FOLDER)
+            && visible.iter().any(|n| n.label == "新建子页面")
+            && visible.iter().any(|n| n.description == "文件夹设置")
+            && !visible.iter().any(|n| n.class_name.ends_with("EditText") ||
+                n.description.contains("拖动调整块顺序"));
+        if !is_parent && !back_sent {
+            if let Some(back) = visible.iter().find(|n| n.description == "返回" || n.description == "Back") {
+                send_tap(back)?;
+                back_sent = true;
+            }
+        }
+        if is_parent &&
             !has_save_state(&ui, "document_save_saving") && nested_body_has(&format!("{}{}{EDIT_EXIT_MARKER}", expected, burst.concat()))? {
             exited = true;
             break;
@@ -617,7 +631,11 @@ fn run(root: &Path) -> Result<String, String> {
     let mut returned_to_folder = false;
     for _ in 0..12 {
         let current = dump()?;
-        if current.contains(NESTED_FOLDER) && current.contains("新建子页面") {
+        let visible = elements(&current);
+        if visible.iter().any(|n| n.label == NESTED_FOLDER)
+            && visible.iter().any(|n| n.label == "新建子页面")
+            && visible.iter().any(|n| n.description == "文件夹设置")
+            && !visible.iter().any(|n| n.class_name.ends_with("EditText")) {
             returned_to_folder = true;
             break;
         }
