@@ -1,3 +1,4 @@
+// v3.0.2.15 - Keep hierarchy inputs on bounded pre-admission failure; do not cancel a running transaction.
 // v3.0.2.15 - Real directional directory navigation, spring disclosure and tactile feedback.
 // v3.0.2.9 - Preserve full hierarchy creation and report the failed save stage.
 // v2.13.5.12 - Unified paper and archival surface design on Android knowledge screens.
@@ -404,12 +405,25 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
 const VIEW_MODEL: &str = r####"    internal fun knowledgeContainerAction(action: String, id: String, parentId: String,
         title: String, expectedWorkspaceKey: String = currentWorkspaceKey(),
         onStage: (String) -> Unit = {}, onComplete: (Boolean, String) -> Unit) {
-        var detail = "保存任务未完成，请保留当前输入并导出诊断日志。"
-        enqueueNoteMutation(onComplete = { ok -> onComplete(ok, if (ok) "本地已保存" else detail) }) {
+        var detail = "前序保存尚未完成，本次操作没有写入。已保留输入，可稍后重试。"
+        val completion = noteMutationController.enqueueHierarchy {
+            if (currentWorkspaceKey() != expectedWorkspaceKey) {
+                detail = "工作区已变化，本次操作没有写入。"
+                return@enqueueHierarchy com.ofairyo.gridtimer.data.NoteSaveResult.failed(
+                    com.ofairyo.gridtimer.data.NoteSaveFailure.WORKSPACE_CHANGED)
+            }
             withContext(kotlinx.coroutines.Dispatchers.Main.immediate) { onStage("writing") }
+            detail = "本地写入未完成，请保留输入并导出诊断日志。"
             val result = repository.knowledgeContainerAction(action, id, parentId, title, expectedWorkspaceKey)
             detail = result.second
-            result.first
+            if (result.first) com.ofairyo.gridtimer.data.NoteSaveResult.committed()
+            else com.ofairyo.gridtimer.data.NoteSaveResult.failed(com.ofairyo.gridtimer.data.NoteSaveFailure.QUEUE_UNAVAILABLE)
+        }
+        viewModelScope.launch {
+            val result = completion.await()
+            val sameWorkspace = currentWorkspaceKey() == expectedWorkspaceKey
+            val ok = sameWorkspace && result.committed
+            onComplete(ok, if (!sameWorkspace) "工作区已变化。" else if (ok) "本地已保存" else detail)
         }
     }
 "####;
@@ -1618,7 +1632,9 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
                     CircularProgressIndicator(Modifier.size(22.dp))
                     Text(if (stage == "waiting") "等待前序保存完成…" else "正在写入本地数据…")
                 }
-                if (waitingSeconds >= 8) Text("保存仍在进行。完成可靠提交前不会退出此窗口。",
+                if (waitingSeconds >= 8) Text(
+                    if (stage == "waiting") "前序任务仍在保存；若本次尚未开始，将自动结束等待并保留输入。"
+                    else "正在可靠写入，完成前不会重复提交。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
