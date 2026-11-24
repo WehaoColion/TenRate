@@ -1,3 +1,4 @@
+// v3.0.2.14 - Exercise a missing-digest history row in a live workspace.
 // v3.0.2.9 - Exercise root and nested folder creation after an ordinary page commit.
 // v3.0.2.6 - Time real confirmation on a cold preflight after upgrading a large v5 database.
 // v3.0.2.5 - Distinguish conservative legacy fallback from healthy current-only fast path.
@@ -443,6 +444,21 @@ fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
     }
 }
 
+fn live_sqlite(statement: &str) -> Result<String, String> {
+    cmd(&["shell", &format!("sqlite3 -batch -cmd '.timeout 8000' {DATABASE} \"{statement}\"")])
+}
+
+fn insert_history_without_digest() -> Result<i64, String> {
+    let id = live_sqlite(
+        "INSERT INTO snapshot_history (workspace_key, schema_version, revision, item_count, \
+         app_data_json, sha256, envelope_sha256, created_at_epoch_millis) \
+         SELECT workspace_key, schema_version, revision, item_count, app_data_json, '', '', \
+         updated_at_epoch_millis FROM current_snapshot WHERE workspace_key = 'guest'; \
+         SELECT last_insert_rowid();",
+    )?.trim().parse().map_err(|_| "Missing history fixture row ID")?;
+    if id > 0 { Ok(id) } else { Err("Could not insert history fixture in the open workspace".into()) }
+}
+
 fn hold_sqlite_writer() -> Result<JoinHandle<Result<(), String>>, String> {
     let writer = SqliteWriter::acquire()?;
     Ok(thread::spawn(move || {
@@ -462,9 +478,10 @@ fn run(root: &Path) -> Result<String, String> {
     seed_history(root)?;
     directory(root)?;
     cmd(&["logcat", "-c"])?;
+    let mut unchecked_history = None;
     let saved_millis = create_page(root, CREATED, || {
-        // A metadata-only change invalidates the in-process preflight stamp.
-        // Clear earlier scope lines so this confirmation must supply its own proof.
+        // Add after startup so the local write itself encounters the old full-scan trigger.
+        unchecked_history = Some(insert_history_without_digest()?);
         cmd(&["shell", "touch", "-m", "-t", "200001010000.00", PRIMARY_MIRROR])?;
         cmd(&["shell", &format!(": > {DIAGNOSTIC_LOG}")])?;
         Ok(())
@@ -472,6 +489,13 @@ fn run(root: &Path) -> Result<String, String> {
     fs::write(root.join("save_elapsed_ms.txt"), format!("{saved_millis}\n"))
         .map_err(|e| e.to_string())?;
     let scope = inspect_preflight_logs(root)?;
+    let unchecked_history = unchecked_history.ok_or("Missing live history fixture")?;
+    let still_retained = live_sqlite(&format!(
+        "SELECT COUNT(*) FROM snapshot_history WHERE id = {unchecked_history} AND sha256 = '';"
+    ))?;
+    if still_retained.trim() != "1" {
+        return Err("Foreground save consumed the unchecked history row instead of preserving it for recovery".into());
+    }
     if saved_millis > 20_000 {
         return Err(format!("Saving a page with {HISTORY_ROWS} historical snapshots was too slow: {saved_millis} ms"));
     }
@@ -540,7 +564,7 @@ fn run(root: &Path) -> Result<String, String> {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. Click-to-visible save took {saved_millis} ms with {scope}. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root and nested folders survived with exactly one typed node each and the correct parent ID. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root and nested folders survived with exactly one typed node each and the correct parent ID. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {

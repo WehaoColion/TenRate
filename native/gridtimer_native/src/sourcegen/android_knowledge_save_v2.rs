@@ -1,3 +1,4 @@
+// v3.0.2.14 - Use bounded preflight for ordinary local writes and mirror refreshes.
 // v3.0.2.12 - Give foreground document writes priority over deferred recovery mirrors.
 // v3.0.2.9 - Exclude hierarchy containers from scoped normalization.
 // v3.0.2.2 - Scope ordinary knowledge-page creation normalization to the inserted
@@ -105,8 +106,10 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
         ("fun persistSafelyDetailed(appData: AppData):", "fun persistSafelyDetailed(appData: AppData, deferRecoveryMirrors: Boolean = false):"),
         ("            persist(appData)\n            PersistAttempt", "            persist(appData, deferRecoveryMirrors)\n            PersistAttempt"),
         ("fun persist(appData: AppData) {", "fun persist(appData: AppData, deferRecoveryMirrors: Boolean = false) {"),
-        ("        persistToWorkspace(activeWorkspaceKey, appData)", "        persistToWorkspace(activeWorkspaceKey, appData, deferRecoveryMirrors)"),
-        ("fun persistToWorkspace(workspaceKey: String, appData: AppData) {", "fun persistToWorkspace(workspaceKey: String, appData: AppData, deferRecoveryMirrors: Boolean = false) {"),
+        ("        persistToWorkspace(activeWorkspaceKey, appData)", "        persistToWorkspace(activeWorkspaceKey, appData, deferRecoveryMirrors, currentOnlyForLocalWrite = true)"),
+        ("fun persistToWorkspace(workspaceKey: String, appData: AppData) {", "fun persistToWorkspace(\n        workspaceKey: String, appData: AppData, deferRecoveryMirrors: Boolean = false,\n        currentOnlyForLocalWrite: Boolean = false\n    ) {"),
+        ("futureSchemaVersionOnAnySurface(workspaceKey, diagnostic = ::recordPreflight)",
+         "futureSchemaVersionOnAnySurface(\n                            workspaceKey,\n                            currentOnlyForLocalWrite = currentOnlyForLocalWrite,\n                            diagnostic = ::recordPreflight\n                        )"),
         ("            val committedStamp = try {", "            val receipt = try {"),
         ("                    stateDatabase.snapshotWriteStamp()\n                }\n            } finally", "                    stamp.copy(database = stateDatabase.snapshotWriteStamp())\n                }\n            } finally"),
         ("            // Only publish the cache after commit AND successful recovery mirrors.\n            // Any failure leaves it invalid, so the next attempt checks every surface.\n            runCatching {",
@@ -170,7 +173,7 @@ const RECOVERY_WORKER: &str = r#"
                                 persistFileStamp(files.backup) != receipt.backup) return@withSnapshotWriteTransaction true
                             val current = stateDatabase.snapshotWriteStamp()
                             if (current != receipt.database &&
-                                (futureSchemaVersionOnAnySurface(workspaceKey) != null ||
+                                (futureSchemaVersionOnAnySurface(workspaceKey, currentOnlyForLocalWrite = true) != null ||
                                     !stateDatabase.currentSnapshotMatches(workspaceKey, encoded,
                                         APP_DATA_SCHEMA_VERSION, revision, itemCount))) return@withSnapshotWriteTransaction true
                             val start = System.nanoTime()

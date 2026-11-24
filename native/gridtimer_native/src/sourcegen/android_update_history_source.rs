@@ -1,3 +1,4 @@
+// v3.0.2.14 - Record the bounded local save preflight.
 // v3.0.2.13 - Record exact autosave receipt reuse and exit measurement.
 // v3.0.2.11 - Record Markdown heading preservation in knowledge share images.
 // v3.0.2.10 - Reduce peak memory while validating history snapshots.
@@ -91,7 +92,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.13";
+pub const LATEST_VERSION: &str = "3.0.2.14";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -121,6 +122,17 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.14",
+        updatedAt = "2026-11-24 17:35",
+        summary = "修复个别情况下知识页保存长时间等待的问题",
+        sections = listOf(
+            AndroidUpdateSection("本地保存", listOf(
+                "保存时校验当前快照和恢复文件，历史快照只查询版本索引。旧历史的完整整理留在恢复流程。",
+                "缺少校验值的历史快照仍被保留，发现更高版本的资料时会阻止写入。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.13",
         updatedAt = "2026-11-24 16:15",
