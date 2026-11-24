@@ -1,3 +1,4 @@
+// v3.0.2.13 - 知识页退出保存回执优化。
 // v3.0.2.11 - 修复知识页分享长图的一级和二级标题。
 // v3.0.2.9 - 知识文件夹结构创建修订。
 // v3.0.2.8 - 知识页以 SQLite 提交确认本地保存，按需生成编辑预览。
@@ -205,8 +206,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30014
-        versionName '3.0.2.12'
+        versionCode 30015
+        versionName '3.0.2.13'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
