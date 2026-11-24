@@ -1,3 +1,5 @@
+[Android 3.0.2.15 知识模块连续动效修订](android/release_notes_v3.0.2.15.md)。
+
 [Android 3.0.2.14 本地保存历史预检修复](android/release_notes_v3.0.2.14.md)。
 
 [Android 3.0.2.13 知识页退出保存回执优化](android/release_notes_v3.0.2.13.md)。
