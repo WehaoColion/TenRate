@@ -320,8 +320,11 @@ fn sqlite(db: &Path, statement: &str) -> Result<String, String> {
 }
 
 fn packed_legacy_rows(db: &Path) -> Result<usize, String> {
+    // The original v5 fixture rows have a valid digest; the separate live
+    // fault fixture has neither a digest nor an envelope.
     let state = sqlite(db,
-        "SELECT COUNT(*) || ':' || COUNT(CASE WHEN storage_encoding=1 AND app_data_json GLOB '!gridtimer-history-v1:*' THEN 1 END) FROM snapshot_history WHERE workspace_key='guest' AND envelope_sha256='';")?;
+        "SELECT COUNT(*) || ':' || COUNT(CASE WHEN storage_encoding=1 AND app_data_json GLOB '!gridtimer-history-v1:*' THEN 1 END) \
+         FROM snapshot_history WHERE workspace_key='guest' AND envelope_sha256='' AND sha256<>'';")?;
     let (total, packed) = state.split_once(':').ok_or("Invalid legacy row counts")?;
     if total.parse::<usize>() != Ok(HISTORY_ROWS) {
         return Err(format!("Legacy history was deleted or promoted: expected {HISTORY_ROWS} unsealed rows, got {total}"));
@@ -559,12 +562,20 @@ fn run(root: &Path) -> Result<String, String> {
     cmd(&["shell", "am", "force-stop", PACKAGE])?;
     let after = root.join("resumed_app_state.db");
     pull_database(&after)?;
+    let quarantined_history = sqlite(&after, &format!(
+        "SELECT COUNT(*) FROM snapshot_quarantine WHERE workspace_key='guest' \
+         AND source_table='snapshot_history' AND source_row_id='{unchecked_history}' \
+         AND stored_sha256='' AND reason='sha256_mismatch' AND length(app_data_json)>0;"
+    ))?;
+    if quarantined_history != "1" {
+        return Err("Startup recovery did not preserve the unchecked history row in quarantine".into());
+    }
     let packed_after = packed_legacy_rows(&after)?;
     if packed_after <= packed_before {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root and nested folders survived with exactly one typed node each and the correct parent ID. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root and nested folders survived with exactly one typed node each and the correct parent ID. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
     ))
 }
 fn main() {
