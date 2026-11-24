@@ -1,3 +1,5 @@
+[Android 3.0.2.12 知识页保存竞争优化](android/release_notes_v3.0.2.12.md)。
+
 [Android 3.0.2.11 知识页分享长图标题修复](android/release_notes_v3.0.2.11.md)。
 
 [Android 3.0.2.10 历史快照写入与恢复候选](android/release_notes_v3.0.2.10.md)。
