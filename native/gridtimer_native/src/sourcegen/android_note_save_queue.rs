@@ -1,3 +1,4 @@
+// v3.0.2.13 - Bind autosave receipts to their exact queue epoch and time durable exits.
 // v2.23.2.51 - Drop interleaved stale draft writes before they reach full-snapshot IO.
 // v2.23.2.35 - Hand off a committed exit before disposal can enqueue it again.
 // v2.23.2.30 - Leave untouched document visits without adding a storage barrier.
@@ -216,6 +217,7 @@ const AUTOSAVE: &str = r####"    // Only the editor debounce uses replacement se
     fun upsertNoteAutosave(
         note: NoteEntry,
         expectedWorkspaceKey: String = currentWorkspaceKey(),
+        onDurableEpoch: ((Long) -> Unit)? = null,
         onComplete: (Boolean) -> Unit = {}
     ) {
         // Protected drafts must be sealed before the existing background lock can
@@ -225,7 +227,9 @@ const AUTOSAVE: &str = r####"    // Only the editor debounce uses replacement se
             upsertNoteAndFlush(note, expectedWorkspaceKey, reason = "protected_document_autosave", onComplete = onComplete)
             return
         }
-        val completion = noteMutationController.enqueueAutosave(expectedWorkspaceKey, note.id) {
+        var admittedEpoch: Long? = null
+        val completion = noteMutationController.enqueueAutosave(expectedWorkspaceKey, note.id,
+            onAcceptedEpoch = { admittedEpoch = it }) {
             // Only a surviving draft reaches SQLite. Its UI receipt belongs to
             // this exact write, including storage and workspace failures.
             val persistedNote = noteForPersistence(note, expectedWorkspaceKey)
@@ -234,7 +238,9 @@ const AUTOSAVE: &str = r####"    // Only the editor debounce uses replacement se
         }
         viewModelScope.launch {
             val result = completion.await()
-            onComplete(result.committed && currentWorkspaceKey() == expectedWorkspaceKey)
+            val saved = result.committed && currentWorkspaceKey() == expectedWorkspaceKey
+            if (saved) admittedEpoch?.let { epoch -> onDurableEpoch?.invoke(epoch) }
+            onComplete(saved)
         }
     }
 
@@ -449,6 +455,7 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
     fun enqueueAutosave(
         workspaceKey: String,
         noteId: String,
+        onAcceptedEpoch: ((Long) -> Unit)? = null,
         operation: suspend () -> NoteSaveResult
     ): CompletableDeferred<NoteSaveResult> {
         val completion = CompletableDeferred<NoteSaveResult>()
@@ -479,7 +486,10 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                     true
                 }
             }
-            if (admitted) acceptedMutationEpoch += 1L
+            if (admitted) {
+                acceptedMutationEpoch += 1L
+                onAcceptedEpoch?.invoke(acceptedMutationEpoch)
+            }
             admitted
         }
         if (!accepted) completion.complete(queueUnavailableResult())
@@ -960,6 +970,16 @@ internal class NoteEditorExitSaveGate<D> {
         return true
     }
 
+    // Only exact receipts for the current queue epoch can participate in the
+    // existing full-entry equality exit fast path. A pending explicit save
+    // owns its own receipt and must never be replaced by an autosave.
+    @Synchronized
+    fun recordAutosaveReceipt(receiptEpoch: Long, currentEpoch: Long): Boolean {
+        if (receiptEpoch != currentEpoch || pendingPersistence.isNotEmpty()) return false
+        durableEpoch = receiptEpoch
+        return true
+    }
+
     @Synchronized
     fun isDurableAtEpoch(queueEpoch: Long): Boolean =
         durableEpoch != null && durableEpoch == queueEpoch
@@ -1057,6 +1077,7 @@ const DOCUMENT_BACK_OLD: &str = r####"    fun handleBack() {
 
 const DOCUMENT_BACK_NEW: &str = r####"    fun handleBack() {
         val exitTicket = editorSession.exitSaveGate.begin() ?: return
+        val exitStartedNanos = System.nanoTime()
         isSavingDraft = true
         persistLatestDraft(
             reason = "document_note_editor_back",
@@ -1074,6 +1095,7 @@ const DOCUMENT_BACK_NEW: &str = r####"    fun handleBack() {
             isSavingDraft = false
             if (!completion.notifyUi) return@exitCompletion
             if (completion.savedLocally) {
+                android.util.Log.i("NoteSaveLatency", "phase=document_exit_receipt durationMs=${(System.nanoTime() - exitStartedNanos) / 1_000_000L}")
                 hierarchyHandedOff = true
                 editorSessionViewModel.clear(note.id, editorWorkspaceKey, editorSession)
                 onBack()
