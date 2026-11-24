@@ -1,3 +1,4 @@
+// v3.0.2.11 Android - Give knowledge share images a distinct heading hierarchy.
 // v2.23.2.38 Android - Skip math resources only for formula-free sticky notes.
 // v2.23.2.37 Android - Preserve authored sticky-note line breaks only in note previews.
 // v2.23.2.7 Android - Accept TeX whitespace while preserving dollar currency boundaries.
@@ -12,16 +13,34 @@ const KATEX_JS: &str = include_str!("desktop/assets/katex_v0.18.7.min.js");
 /// Only this trusted shell is executable. Answer text is parsed into safe HTML;
 /// mathematical input reaches KaTeX as an escaped attribute, never JavaScript.
 pub fn render_android_ai_answer_html(content: &str, dark_theme: bool) -> String {
-    render_markdown_html(render_answer_body(content), dark_theme, false)
+    render_markdown_html(render_answer_body(content), dark_theme, false, "")
 }
 
 /// Sticky-note Enter is an authored line boundary, including Unicode task rows.
 /// Keep the original text intact and reuse the same math and HTML safety policy.
 pub fn render_android_sticky_note_html(content: &str, dark_theme: bool) -> String {
-    render_markdown_html(render_markdown_body(content, true), dark_theme, true)
+    render_markdown_html(render_markdown_body(content, true), dark_theme, true, "")
 }
 
-fn render_markdown_html(body: String, dark_theme: bool, omit_unused_math: bool) -> String {
+pub fn render_android_knowledge_share_html(markdown: &str) -> String {
+    render_markdown_html(render_answer_body(markdown), false, true, KNOWLEDGE_SHARE_STYLES)
+}
+
+const KNOWLEDGE_SHARE_STYLES: &str = r#"
+#android-ai-answer {line-height:1.5}
+#android-ai-answer p {margin-bottom:.68em}
+#android-ai-answer p:last-child {margin-bottom:0}
+#android-ai-answer h1 {font-size:1.5em;font-weight:700;line-height:1.28;margin:.84em 0 .28em}
+#android-ai-answer h2 {font-size:1.25em;font-weight:650;line-height:1.36;margin:.66em 0 .24em}
+#android-ai-answer > :first-child {margin-top:0}
+"#;
+
+fn render_markdown_html(
+    body: String,
+    dark_theme: bool,
+    omit_unused_math: bool,
+    styles: &str,
+) -> String {
     let mut nonce_bytes = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce: String = nonce_bytes
@@ -29,16 +48,15 @@ fn render_markdown_html(body: String, dark_theme: bool, omit_unused_math: bool) 
         .map(|byte| format!("{byte:02x}"))
         .collect();
     let theme = if dark_theme { "dark" } else { "light" };
-    // Most sticky notes contain no math. Avoid injecting and parsing the large
-    // KaTeX CSS/JavaScript payload on every WebView preview in that case.
-    // This check is against our generated, escaped HTML, not user input.
+    // Only opt-in renderers can skip the KaTeX assets. The check is against
+    // generated HTML, where untrusted text has already been escaped.
     let has_math = !omit_unused_math || body.contains("class=\"math-source ");
     let katex_css = if has_math { KATEX_CSS } else { "" };
     let katex_js = if has_math { KATEX_JS } else { "" };
     format!(
         r#"<!doctype html><html lang="zh-CN" data-theme="{theme}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; font-src data:; img-src 'none'; media-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>AI 回答</title><style>{katex_css}
 html,body{{margin:0;padding:0;background:transparent;color:#24272a;font:16px/1.75 system-ui,-apple-system,'Noto Sans CJK SC',sans-serif;overflow-wrap:anywhere}}html[data-theme=dark] body{{color:#e5e8ec}}main{{padding:2px 0 8px;min-width:0}}p{{margin:0 0 14px}}p:last-child{{margin-bottom:0}}h1,h2,h3,h4,h5,h6{{line-height:1.4;margin:20px 0 12px;font-size:1.15em}}h1{{font-size:1.4em}}h2{{font-size:1.25em}}ul,ol{{margin:10px 0 16px;padding-left:26px}}li{{margin:5px 0}}blockquote{{border-left:3px solid #8798a8;padding:2px 12px;margin:12px 0;opacity:.92}}pre{{max-width:100%;overflow:auto;white-space:pre;background:#8798a815;border:1px solid #8798a833;border-radius:8px;padding:12px;font:14px/1.6 ui-monospace,monospace}}code{{font:14px/1.6 ui-monospace,monospace;background:#8798a815;border-radius:3px;padding:1px 3px}}pre code{{padding:0;background:none}}table{{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:14px 0}}th,td{{border:1px solid #8798a855;padding:7px 10px;text-align:left}}hr{{border:0;border-top:1px solid #8798a855;margin:18px 0}}.math-display{{display:block;max-width:100%;overflow-x:auto;overflow-y:hidden;padding:6px 0;margin:8px 0}}.math-inline{{display:inline;white-space:nowrap}}.math-source[data-math-error]{{white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,monospace}}.katex{{font-size:1.05em}}.katex-display{{margin:.35em 0}}.image-alt,.link-text{{color:inherit}}
-</style></head><body><main id="android-ai-answer">{body}</main><script nonce="{nonce}">{katex_js}</script><script nonce="{nonce}">
+{styles}</style></head><body><main id="android-ai-answer">{body}</main><script nonce="{nonce}">{katex_js}</script><script nonce="{nonce}">
 (()=>{{let errors=0;const formulas=document.querySelectorAll('.math-source[data-latex]');for(const element of formulas){{const source=element.textContent;try{{katex.render(element.dataset.latex,element,{{displayMode:element.dataset.display==='true',throwOnError:true,trust:false,maxSize:20,maxExpand:1000,strict:'ignore',output:'htmlAndMathml'}});element.dataset.mathRendered='true';}}catch(error){{errors++;element.textContent=source;element.dataset.mathError='true';element.title='公式无法解析，已保留原文';}}}}document.documentElement.dataset.mathCount=String(formulas.length);document.documentElement.dataset.mathErrors=String(errors);document.documentElement.dataset.mathReady='true';document.dispatchEvent(new Event('android-ai-answer-ready'));}})();
 </script></body></html>"#
     )
@@ -336,6 +354,30 @@ fn escape_html(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knowledge_share_keeps_heading_levels_and_literal_markers_in_code() {
+        let html = render_android_knowledge_share_html(
+            "# 第一节\n\n## 小节\n\n正文\n\n# **第二节**\n\n## 另一小节\n\n```text\n# 代码行\n```\n\n\\(x^2\\)",
+        );
+        let (_, main) = html.split_once("<main id=\"android-ai-answer\">").unwrap();
+        let (body, _) = main.split_once("</main>").unwrap();
+        let mut rest = body;
+        for element in [
+            "<h1>第一节</h1>",
+            "<h2>小节</h2>",
+            "<p>正文</p>",
+            "<h1><strong>第二节</strong></h1>",
+            "<h2>另一小节</h2>",
+            "# 代码行\n</code></pre>",
+            "data-latex=\"x^2\"",
+        ] {
+            rest = rest
+                .split_once(element)
+                .unwrap_or_else(|| panic!("missing {element} in {body}"))
+                .1;
+        }
+    }
 
     #[test]
     fn sticky_note_plain_preview_omits_katex_payload_but_preserves_readiness() {

@@ -1,3 +1,4 @@
+// v3.0.2.11 - Record Markdown heading preservation in knowledge share images.
 // v3.0.2.10 - Reduce peak memory while validating history snapshots.
 // v3.0.2.9 - Knowledge hierarchy creation and failure feedback.
 // v3.0.2.8 - Acknowledge committed documents and defer recovery projection.
@@ -89,7 +90,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.10";
+pub const LATEST_VERSION: &str = "3.0.2.11";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -119,6 +120,17 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.11",
+        updatedAt = "2026-11-24 08:26",
+        summary = "修复知识页分享长图的标题层级",
+        sections = listOf(
+            AndroidUpdateSection("知识页长图", listOf(
+                "导出按原文识别一级和二级标题，一级标题比二级标题更醒目。",
+                "长图按文档名、一级标题、二级标题和正文排版，标题标记不会出现在渲染结果中。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.10",
         updatedAt = "2026-11-23 07:44",

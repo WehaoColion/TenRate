@@ -1,11 +1,11 @@
-//! GitHub Android emulator acceptance of stable text entry and heading creation.
-//! Rust-only adb driver: launch, insert heading, type, inspect positions and reopen.
+//! GitHub Android emulator acceptance of stable text entry and knowledge share images.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
 
 const APP: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 mod android_save_probe_fixture;
 use android_save_probe_fixture::{installed_version, SqliteWriter};
+mod android_knowledge_share_probe;
 
 const GRIP: &str = "拖动调整块顺序，点击打开操作菜单";
 const TITLE: &str = "TypingStabilityCheck";
@@ -267,7 +267,8 @@ fn run(out:&Path)->Result<String,String>{
     if command(&["shell","pidof",APP])?.trim().is_empty() {
         return Err("App did not remain running after reopening the document".into());
     }
-    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. The heading and full paragraph survived force-stop after local confirmation."))
+    let share_result = android_knowledge_share_probe::export_and_check(out)?;
+    Ok(format!("PASS: H1 reused one block. Enter created one paragraph. Row centers before/after typing were {before_y:?} and {after_y:?}. SQLite contention held the visible receipt in Saving. The heading and full paragraph survived force-stop after local confirmation.\n\n{share_result}"))
 }
 fn main(){
     let path=env::args_os().nth(1).map(PathBuf::from)

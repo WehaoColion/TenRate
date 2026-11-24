@@ -1,3 +1,4 @@
+// v3.0.2.11 - Render knowledge share images from authored Markdown blocks.
 // v2.23.2.41 - Require a painted, nonblank body before accepting share-image raster output.
 // v2.23.2.40 - Render share-image Markdown and formulas before rasterizing the knowledge page body.
 // v2.23.2.33 - Keep preview generation aligned with the compact editor prefix.
@@ -6,6 +7,7 @@
 
 const PATH: &str = "com/ofairyo/gridtimer/ui/NoteDocumentEditor.kt";
 const SHARE_PATH: &str = "com/ofairyo/gridtimer/ui/NoteMediaUi.kt";
+const BRIDGE_PATH: &str = "com/ofairyo/gridtimer/core/NativeOptimizerBridge.kt";
 
 fn replace(source: &mut String, before: &str, after: &str) -> Result<(), String> {
     if source.matches(before).count() != 1 {
@@ -18,13 +20,39 @@ fn replace(source: &mut String, before: &str, after: &str) -> Result<(), String>
 }
 
 pub fn render(path: &str, base: &str) -> Result<String, String> {
+    if path == BRIDGE_PATH {
+        let mut source = base.to_owned();
+        replace(
+            &mut source,
+            "    fun renderAndroidStickyNoteHtml(",
+            r#"    fun renderAndroidKnowledgeShareHtml(markdown: String): String? {
+        if (!nativeAvailable) return null
+        return runCatching { nativeRenderAndroidKnowledgeShareHtml(markdown) }.getOrNull()
+    }
+
+    fun renderAndroidStickyNoteHtml("#,
+        )?;
+        replace(
+            &mut source,
+            "    @JvmStatic\n    private external fun nativeRenderAndroidStickyNoteHtml(",
+            "    @JvmStatic\n    private external fun nativeRenderAndroidKnowledgeShareHtml(markdown: String): String?\n\n    @JvmStatic\n    private external fun nativeRenderAndroidStickyNoteHtml(",
+        )?;
+        return Ok(source);
+    }
     if path == SHARE_PATH {
         let mut source = base.to_owned();
-        // The old long-image path paints note.plainContent() with StaticLayout, so
-        // Markdown and TeX delimiters are exported literally. Render the body with
-        // the same offline Markdown/KaTeX engine used by the on-screen preview, then
-        // composite that raster into the existing share card. If WebView rendering
-        // cannot complete, preserve the previous StaticLayout path as a safe fallback.
+        replace(
+            &mut source,
+            "import com.ofairyo.gridtimer.data.plainContent\n",
+            r#"import com.ofairyo.gridtimer.core.NativeOptimizerBridge
+import com.ofairyo.gridtimer.data.NoteBlockType
+import com.ofairyo.gridtimer.data.NoteEntryKind
+import com.ofairyo.gridtimer.data.isEncryptionLocked
+import com.ofairyo.gridtimer.data.plainContent
+import com.ofairyo.gridtimer.data.plainText
+import com.ofairyo.gridtimer.data.presentationDocument
+"#,
+        )?;
         replace(
             &mut source,
             SHARE_BODY_LAYOUT_BEFORE,
@@ -36,7 +64,13 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             SHARE_TOTAL_HEIGHT_AFTER,
         )?;
         replace(&mut source, SHARE_BODY_DRAW_BEFORE, SHARE_BODY_DRAW_AFTER)?;
+        replace(
+            &mut source,
+            "private fun buildStaticLayout(text: String,",
+            "private fun buildStaticLayout(text: CharSequence,",
+        )?;
 
+        source.push_str(KNOWLEDGE_SHARE_CONTENT);
         source.push_str(SHARE_IMAGE_HELPER);
         source.push_str(SHARE_RASTER_POLICY);
         return Ok(source);
@@ -160,14 +194,29 @@ const SAVE_FEEDBACK: &str = r####"    // Block new edits after capturing the exi
 
 const SHARE_BODY_LAYOUT_BEFORE: &str =
     r####"    val bodyLayout = buildStaticLayout(note.plainContent(), bodyPaint, contentWidth)"####;
-const SHARE_BODY_LAYOUT_AFTER: &str = r####"    val renderedBody = try {
-        renderMarkdownShareBody(context, note.plainContent(), contentWidth)
+const SHARE_BODY_LAYOUT_AFTER: &str = r####"    val knowledgeMarkdown = knowledgeShareMarkdown(note)
+    val bodyText = knowledgeMarkdown ?: note.plainContent()
+    val html = when {
+        bodyText.isBlank() -> null
+        knowledgeMarkdown != null -> NativeOptimizerBridge.renderAndroidKnowledgeShareHtml(bodyText)
+        else -> NativeOptimizerBridge.renderAndroidAiAnswerHtml(bodyText, false)
+    }
+    val renderedBody = try {
+        html?.let { renderMarkdownShareBody(context, it, contentWidth) }
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
     } catch (_: Exception) {
         null
     }
-    val bodyLayout = if (renderedBody == null) buildStaticLayout(note.plainContent(), bodyPaint, contentWidth) else null
+    val bodyLayout = if (renderedBody == null) {
+        val safeBody = if (knowledgeMarkdown != null && html != null) {
+            html.substringAfter(SHARE_MARKDOWN_MAIN_OPEN, "").substringBefore("</main>")
+        } else ""
+        val fallbackText = if (safeBody.isNotBlank()) {
+            android.text.Html.fromHtml(safeBody, android.text.Html.FROM_HTML_MODE_COMPACT)
+        } else bodyText
+        buildStaticLayout(fallbackText, bodyPaint, contentWidth)
+    } else null
     val bodyHeight = renderedBody?.height ?: bodyLayout!!.height"####;
 
 const SHARE_TOTAL_HEIGHT_BEFORE: &str = r####"    val totalHeight = padding + titleLayout.height + 28 + metaLayout.height + 36 + bodyLayout.height +
@@ -191,7 +240,25 @@ const SHARE_BODY_DRAW_AFTER: &str = r####"    if (renderedBody != null) {
     }
     top += bodyHeight + 24f"####;
 
+const KNOWLEDGE_SHARE_CONTENT: &str = r####"
+
+private fun knowledgeShareMarkdown(note: NoteEntry): String? {
+    if (note.kind != NoteEntryKind.DOCUMENT || note.isEncryptionLocked()) return null
+    val document = note.presentationDocument()
+    if (document.richTextEnabled) return null
+    val (textBlocks, nonTextBlocks) = document.blocks.partition { it.type == NoteBlockType.TEXT }
+    // Use the same block boundaries as the reader. The plain-text digest strips
+    // heading markers and other syntax needed by the Markdown parser.
+    val markdown = documentMarkdownFromBlocks(textBlocks.map { it.text })
+    if (nonTextBlocks.isEmpty()) return markdown
+    val summaries = document.copy(blocks = nonTextBlocks).plainText()
+    return listOf(markdown, summaries).filter(String::isNotBlank).joinToString("\n\n")
+}
+"####;
+
 const SHARE_IMAGE_HELPER: &str = r####"
+
+private const val SHARE_MARKDOWN_MAIN_OPEN = "<main id=\"android-ai-answer\">"
 
 private const val SHARE_MARKDOWN_SNAPSHOT = """
 (()=>{const root=document.getElementById('android-ai-answer');const formulas=root?root.querySelectorAll('.math-source[data-latex]'):[];return [String(location.href),document.readyState,!!root,root?root.dataset.renderSession:'',formulas.length,document.documentElement.dataset.mathReady==='true',root?root.querySelectorAll('[data-math-rendered=true]').length:0,root?root.querySelectorAll('[data-math-error=true]').length:0,Math.ceil(document.body.getBoundingClientRect().height),!document.fonts||document.fonts.status==='loaded'];})()
@@ -200,20 +267,17 @@ private const val SHARE_MARKDOWN_SNAPSHOT = """
 @android.annotation.SuppressLint("SetJavaScriptEnabled")
 private suspend fun renderMarkdownShareBody(
     context: android.content.Context,
-    content: String,
+    html: String,
     width: Int,
 ): android.graphics.Bitmap? {
-    if (content.isBlank() || width <= 0) return null
-    val html = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        com.ofairyo.gridtimer.core.NativeOptimizerBridge.renderAndroidAiAnswerHtml(content, false)
-    }?.takeIf(String::isNotBlank) ?: return null
+    if (html.isBlank() || width <= 0) return null
 
     val raster = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
         kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { continuation ->
             val token = java.util.UUID.randomUUID().toString().replace("-", "")
             val documentUrl = ANDROID_MARKDOWN_DOCUMENT_PREFIX + token + "/index.html"
             val document = html.replaceFirst(
-                "<main id=\"android-ai-answer\">",
+                SHARE_MARKDOWN_MAIN_OPEN,
                 "<main id=\"android-ai-answer\" data-render-session=\"$token\">",
             )
             val documentBytes = document.toByteArray(Charsets.UTF_8)
@@ -440,8 +504,10 @@ mod tests {
         let base = editor();
         let rendered = render(SHARE_PATH, base).unwrap();
         for marker in [
-            "renderMarkdownShareBody(context, note.plainContent(), contentWidth)",
-            "NativeOptimizerBridge.renderAndroidAiAnswerHtml(content, false)",
+            "NativeOptimizerBridge.renderAndroidKnowledgeShareHtml(bodyText)",
+            "documentMarkdownFromBlocks(textBlocks.map { it.text })",
+            "renderMarkdownShareBody(context, it, contentWidth)",
+            "android.text.Html.fromHtml(safeBody, android.text.Html.FROM_HTML_MODE_COMPACT)",
             "ANDROID_MARKDOWN_DOCUMENT_PREFIX",
             "androidMarkdownDocumentAllowed",
             "androidMarkdownResourceAllowed",

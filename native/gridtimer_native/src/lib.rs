@@ -1479,6 +1479,23 @@ pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nat
 
 #[no_mangle]
 #[cfg(target_os = "android")]
+pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeRenderAndroidKnowledgeShareHtml(
+    mut env: JNIEnv,
+    _class: JClass,
+    markdown: JString,
+) -> jstring {
+    let markdown: String = match env.get_string(&markdown) {
+        Ok(value) => value.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    new_java_string(
+        &mut env,
+        &android_answer_render::render_android_knowledge_share_html(&markdown),
+    )
+}
+
+#[no_mangle]
+#[cfg(target_os = "android")]
 pub extern "system" fn Java_com_ofairyo_gridtimer_core_NativeOptimizerBridge_nativeRenderAndroidStickyNoteHtml(
     mut env: JNIEnv,
     _class: JClass,
