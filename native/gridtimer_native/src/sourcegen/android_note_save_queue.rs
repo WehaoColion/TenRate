@@ -1378,6 +1378,19 @@ class NoteEditorExitSaveGateTest {
         val protectionRevision: Long
     )
 
+    @Test fun autosaveReceiptMustMatchAdmissionEpochAndCannotReplaceExplicitPersistence() {
+        val gate = NoteEditorExitSaveGate<String>()
+        assertFalse(gate.recordAutosaveReceipt(2L, 3L))
+        assertFalse(gate.canSkipDurableExit("draft", "draft", "draft", 3L))
+        assertTrue(gate.recordAutosaveReceipt(3L, 3L))
+        assertTrue(gate.canSkipDurableExit("draft", "draft", "draft", 3L))
+        assertFalse(gate.canSkipDurableExit("draft", "draft", "changed", 3L))
+        assertFalse(gate.canSkipDurableExit("draft", "draft", "draft", 4L))
+        gate.beginPersistence("changed", false, 4L) {}
+        assertFalse(gate.recordAutosaveReceipt(4L, 4L))
+        assertFalse(gate.canSkipDurableExit("draft", "draft", "draft", 4L))
+    }
+
     @Test fun equalTextWithChangedNonTextPayloadCannotSkipDurableExit() {
         val cached = CompleteDocumentPayload("same text", "old contact", "old call", listOf("image"), 4L)
         val gate = NoteEditorExitSaveGate<CompleteDocumentPayload>()
