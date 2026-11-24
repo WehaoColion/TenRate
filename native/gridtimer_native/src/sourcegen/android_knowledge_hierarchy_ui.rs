@@ -1,3 +1,4 @@
+// v3.0.2.15 - Real directional directory navigation, spring disclosure and tactile feedback.
 // v3.0.2.9 - Preserve full hierarchy creation and report the failed save stage.
 // v2.13.5.12 - Unified paper and archival surface design on Android knowledge screens.
 // v2.13.5.11 - Consistent tactile rows, hierarchy disclosure and contextual entry motion.
@@ -624,6 +625,9 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeIn
@@ -803,7 +807,7 @@ private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: Knowledge
     val pressed by pressSource.collectIsPressedAsState()
     val rowScale by animateFloatAsState(
         targetValue = if (enabled && pressed) 0.992f else 1f,
-        animationSpec = tween(100, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh),
         label = "knowledge-row-press"
     )
     Surface(modifier = modifier.fillMaxWidth().graphicsLayer {
@@ -844,7 +848,7 @@ private fun KnowledgeHierarchyInlineRow(
     val pressed by pressSource.collectIsPressedAsState()
     val rowScale by animateFloatAsState(
         targetValue = if (enabled && pressed) 0.988f else 1f,
-        animationSpec = tween(100, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh),
         label = "knowledge-inline-press"
     )
     val descendantCount = index.children(node.id).size
@@ -985,7 +989,7 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
     var expanded by rememberSaveable(workspace, parentId) { mutableStateOf(true) }
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(160, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "knowledge-children-chevron"
     )
     val callbacksAlive = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicBoolean(true) }
@@ -1095,10 +1099,8 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
         } else {
             AnimatedVisibility(
                 visible = expanded && children.isNotEmpty(),
-                enter = expandVertically(animationSpec = tween(190, easing = FastOutSlowInEasing)) +
-                    fadeIn(animationSpec = tween(130)),
-                exit = shrinkVertically(animationSpec = tween(155, easing = FastOutSlowInEasing)) +
-                    fadeOut(animationSpec = tween(100))
+                enter = expandVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)),
+                exit = shrinkVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium))
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { childRows() }
             }
@@ -1121,22 +1123,44 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     onBack: () -> Unit, onBrowse: (String?) -> Unit,
     onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
     val workspace = LocalNoteMediaWorkspaceKey.current
+    val active = LocalDocumentTransitionActive.current
+    val latestParent by rememberUpdatedState(parentId)
+    key(workspace) {
+        AnimatedContent(
+            targetState = parentId,
+            modifier = Modifier.fillMaxSize().clipToBounds(),
+            transitionSpec = {
+                val fromDepth = initialState?.let { index.breadcrumbs(it).size } ?: 0
+                val toDepth = targetState?.let { index.breadcrumbs(it).size } ?: 0
+                knowledgeNavigationTransform(backward = toDepth < fromDepth)
+            },
+            label = "knowledge-directory-navigation"
+        ) { frame ->
+            val interactive = active && frame == latestParent
+            CompositionLocalProvider(LocalDocumentTransitionActive provides interactive) {
+                Box((if (interactive) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {})
+                    .background(knowledgeArchivePalette().paper)) {
+                    KnowledgeHierarchyBrowserFrame(index, frame, busy, message, currentScope,
+                        onBack, onBrowse, onOpen, onRequest)
+                    if (!interactive) DocumentEditorInputBarrier()
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
+    message: String, currentScope: () -> KnowledgeDirectoryOrderScope?,
+    onBack: () -> Unit, onBrowse: (String?) -> Unit,
+    onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
+    val workspace = LocalNoteMediaWorkspaceKey.current
     val context = LocalContext.current
     val active = LocalDocumentTransitionActive.current
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val workerScope = rememberCoroutineScope()
-    val destinationDepth = parentId?.let { index.breadcrumbs(it).size } ?: 0
-    var previousDepth by remember(workspace) { mutableIntStateOf(destinationDepth) }
-    val browserDirection = remember(workspace, parentId) {
-        if (destinationDepth < previousDepth) -1f else 1f
-    }
-    val entry = remember(workspace, parentId) { Animatable(0f) }
-    val entryDistancePx = with(density) { 14.dp.toPx() }
-    LaunchedEffect(workspace, parentId) {
-        previousDepth = destinationDepth
-        entry.animateTo(1f, animationSpec = tween(210, easing = FastOutSlowInEasing))
-    }
     val listState = key(workspace, parentId) { rememberLazyListState() }
     val directoryScope = remember(index, workspace, parentId, active, busy) {
         knowledgeDirectoryOrderScope(index, workspace, parentId, active && !busy)
@@ -1378,11 +1402,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                 }
             }
         }) {
-        LazyColumn(Modifier.fillMaxSize().graphicsLayer {
-            val progress = entry.value
-            alpha = 0.94f + 0.06f * progress
-            translationX = browserDirection * entryDistancePx * (1f - progress)
-        }, state = listState, userScrollEnabled = dragging == null && !saving,
+        LazyColumn(Modifier.fillMaxSize(), state = listState, userScrollEnabled = active && dragging == null && !saving,
             contentPadding = PaddingValues(bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item(key = 0L) {
                 val archive = knowledgeArchivePalette()
@@ -1442,7 +1462,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                     val draggable = canSort && directoryScope.items.any { it.id == id && it.canDrag }
                     val position = displayedIds.indexOf(id)
                     DisposableEffect(id, handleBounds) { onDispose { handleBounds.remove(id) } }
-                    var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(tween(190, easing = FastOutSlowInEasing)) else Modifier
+                    var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) else Modifier
                     if (placeholder) rowModifier = rowModifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { }
                     else if (draggable) rowModifier = rowModifier.semantics {
                         customActions = buildList {
