@@ -115,6 +115,14 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
             pendingRecoveryMirrorJob?.cancel()
             pendingRecoveryMirrorJob = null
             if (deferRecoveryMirrors && receipt.primary.size >= 0L && receipt.backup.size >= 0L) {
+                // The primary transaction has already validated every preflight surface.
+                // The unchanged old mirrors are still valid recovery candidates.
+                // Reuse only the exact transaction receipt, never a fresh database
+                // stamp that could accidentally bless an independent writer.
+                if (persistFileStamp(files.state) == receipt.primary &&
+                    persistFileStamp(files.backup) == receipt.backup) {
+                    verifiedWritePreflight = workspaceKey to receipt
+                }
                 scheduleRecoveryMirrors(workspaceKey, receipt, encoded, snapshotRevision, snapshotItemCount, ::refresh)
                 Log.i("NoteSaveLatency", "phase=sqlite_receipt mirrors=queued")
             } else {
