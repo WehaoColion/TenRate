@@ -1139,7 +1139,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
             val interactive = active && frame == latestParent
             CompositionLocalProvider(LocalDocumentTransitionActive provides interactive) {
                 Box((if (interactive) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {})
-                    .background(knowledgeArchivePalette().paper)) {
+                    .knowledgeNavigationSurface()) {
                     KnowledgeHierarchyBrowserFrame(index, frame, busy, message, currentScope,
                         onBack, onBrowse, onOpen, onRequest)
                     if (!interactive) DocumentEditorInputBarrier()
