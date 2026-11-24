@@ -4,7 +4,7 @@ use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sl
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "2.13.5.12";
+const VERSION: &str = "3.0.2.15";
 const FOLDER: &str = "KnowledgeDesignFolder";
 
 #[derive(Clone)]
@@ -168,36 +168,59 @@ fn capture_motion_frame(dir: &Path, title: &str) {
         }
     }
 }
-// A real MP4 is required for human motion review; frame-pair snapshots are not a
-// substitute for evaluating motion. Recording is best effort, while the actual
-// UI business-state assertions below remain strict.
+// Record multiple navigation directions with animations enabled. The recording and
+// actual Android frame timing report are required evidence, not optional screenshots.
 fn open_folder_with_motion(root: &Path) -> Result<(), String> {
     let folder = find(&[FOLDER])?.ok_or("New knowledge folder cannot be opened")?;
-    let _ = cmd(&["shell", "rm", "-f", "/sdcard/knowledge_motion.mp4"]);
-    let recording = Command::new("adb")
-        .args(["shell", "screenrecord", "--time-limit", "8", "--bit-rate", "2000000", "/sdcard/knowledge_motion.mp4"])
+    let x = ((folder.bounds[0] + folder.bounds[2]) / 2).to_string();
+    let y = ((folder.bounds[1] + folder.bounds[3]) / 2).to_string();
+    cmd(&["shell", "rm", "-f", "/sdcard/knowledge_motion.mp4"])?;
+    cmd(&["shell", "dumpsys", "gfxinfo", PACKAGE, "reset"])?;
+    let mut recording = Command::new("adb")
+        .args(["shell", "screenrecord", "--time-limit", "16", "--bit-rate", "6000000", "/sdcard/knowledge_motion.mp4"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
-    sleep(Duration::from_millis(400));
-    let x = (folder.bounds[0] + folder.bounds[2]) / 2;
-    let y = (folder.bounds[1] + folder.bounds[3]) / 2;
-    cmd(&["shell", "input", "tap", &x.to_string(), &y.to_string()])?;
-    capture_motion_frame(root, "05_folder_opening_motion_frame");
-    sleep(Duration::from_millis(180));
-    capture_motion_frame(root, "05_folder_opening_settling_frame");
-    sleep(Duration::from_millis(300));
-    capture(root, "06_folder_opened_motion_enabled");
-    if let Ok(mut child) = recording {
-        let _ = child.wait();
-        let file = root.join("knowledge_folder_motion.mp4");
-        let _ = Command::new("adb")
-            .arg("pull")
-            .arg("/sdcard/knowledge_motion.mp4")
-            .arg(file)
-            .status();
+        .spawn().map_err(|e| e.to_string())?;
+    sleep(Duration::from_millis(750));
+    let result = (|| -> Result<(), String> {
+        cmd(&["shell", "input", "tap", &x, &y])?;
+        sleep(Duration::from_millis(800));
+        if !dump()?.contains("文件夹设置") {
+            return Err("Forward directory transition failed".into());
+        }
+        capture_motion_frame(root, "05_folder_opened");
+        cmd(&["shell", "input", "keyevent", "4"])?;
+        sleep(Duration::from_millis(800));
+        let returned = find(&[FOLDER])?.ok_or("Back navigation did not restore parent")?;
+        let rx = ((returned.bounds[0] + returned.bounds[2]) / 2).to_string();
+        let ry = ((returned.bounds[1] + returned.bounds[3]) / 2).to_string();
+        cmd(&["shell", "input", "tap", &rx, &ry])?;
+        sleep(Duration::from_millis(800));
+        if !dump()?.contains("文件夹设置") {
+            return Err("Re-entry after back failed".into());
+        }
+        capture_motion_frame(root, "06_folder_reentered");
+        Ok(())
+    })();
+    let frames = cmd(&["shell", "dumpsys", "gfxinfo", PACKAGE, "framestats"])?;
+    fs::write(root.join("knowledge_motion_framestats.txt"), &frames).map_err(|e| e.to_string())?;
+    let status = recording.wait().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("Android screenrecord failed".into()); }
+    let file = root.join("knowledge_folder_motion.mp4");
+    let local = file.to_str().ok_or("Invalid evidence path")?;
+    cmd(&["pull", "/sdcard/knowledge_motion.mp4", local])?;
+    if fs::metadata(&file).map_err(|e| e.to_string())?.len() < 100_000 {
+        return Err("Motion recording is missing or too small".into());
     }
-    Ok(())
+    let rendered = frames.lines().find_map(|line| line.trim().strip_prefix("Total frames rendered:")
+        .and_then(|n| n.trim().parse::<u32>().ok())).unwrap_or(0);
+    if rendered == 0 || !frames.contains("Janky frames:") {
+        return Err("Android did not report usable frame timing".into());
+    }
+    fs::write(root.join("motion_metrics.txt"), frames.lines().filter(|line|
+        line.contains("Total frames rendered:") || line.contains("Janky frames:") ||
+        line.contains("percentile:")).collect::<Vec<_>>().join("\n")).map_err(|e| e.to_string())?;
+    result
 }
 fn run(root: &Path) -> Result<String, String> {
     assert_animations_enabled()?;
@@ -246,7 +269,7 @@ fn run(root: &Path) -> Result<String, String> {
     if !settings_menu.contains("排除法律风险分析") {
         return Err("Folder legal exclusion is not reachable from its settings".into());
     }
-    Ok(format!("PASS: signed Android {VERSION} launched with animation scales 1.0; knowledge directory, folder creation, management and exclusion controls passed; motion screenshots and optional MP4 captured."))
+    Ok(format!("PASS: signed Android {VERSION} launched with animation scales 1.0; knowledge directory, folder creation, management and exclusion controls passed; forward/back/re-entry passed; MP4 and frame timings captured. Visual smoothness still requires reviewing evidence."))
 }
 fn main() {
     let path = env::args_os().nth(1).map(PathBuf::from)
