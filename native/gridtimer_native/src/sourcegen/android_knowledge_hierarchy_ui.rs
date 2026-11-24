@@ -661,6 +661,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -740,15 +741,9 @@ internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifi
     val sheet = if (dark) Color(0xFF626A74) else Color(0xFFFFFFFF)
     val sheetFoot = if (dark) Color(0xFF454D58) else Color(0xFFF1EBE1)
     val line = if (dark) Color(0xFFACB4BE) else Color(0xFFB8AFA3)
-    Canvas(modifier.size(32.dp)) {
+    Box(modifier.size(32.dp).drawWithCache {
         val x = size.width / 32f
         val y = size.height / 32f
-        if (isFolder) {
-            drawRoundRect(
-                Color.Black.copy(alpha = if (dark) 0.32f else 0.15f),
-                topLeft = Offset(3f*x, 13f*y), size = Size(27f*x, 17f*y),
-                cornerRadius = CornerRadius(3f*x, 3f*y)
-            )
             val tab = Path().apply {
                 moveTo(3f*x, 25f*y); lineTo(3f*x, 8f*y)
                 quadraticBezierTo(3f*x, 6f*y, 5.5f*x, 6f*y)
@@ -756,11 +751,34 @@ internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifi
                 lineTo(26f*x, 9f*y); quadraticBezierTo(29f*x, 9f*y, 29f*x, 12f*y)
                 lineTo(29f*x, 25f*y); close()
             }
-            drawPath(path = tab, brush = Brush.verticalGradient(listOf(front, rear)))
+            val page = Path().apply {
+                moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
+                lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
+                quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
+                lineTo(9f*x, 28f*y)
+                quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
+            }
+            val fold = Path().apply {
+                moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
+                lineTo(29f*x, 9f*y); close()
+            }
+        val tabBrush = Brush.verticalGradient(listOf(front, rear))
+        val frontBrush = Brush.verticalGradient(listOf(front, foot))
+        val pageBrush = Brush.verticalGradient(listOf(sheet, sheetFoot))
+        val foldBrush = Brush.verticalGradient(
+                listOf(sheetFoot, line.copy(alpha = 0.72f)))
+        onDrawBehind {
+        if (isFolder) {
+            drawRoundRect(
+                Color.Black.copy(alpha = if (dark) 0.32f else 0.15f),
+                topLeft = Offset(3f*x, 13f*y), size = Size(27f*x, 17f*y),
+                cornerRadius = CornerRadius(3f*x, 3f*y)
+            )
+            drawPath(path = tab, brush = tabBrush)
             drawPath(path = tab, color = rear.copy(alpha = 0.70f),
                 style = Stroke(width = 0.75f*x))
             drawRoundRect(
-                brush = Brush.verticalGradient(listOf(front, foot)),
+                brush = frontBrush,
                 topLeft = Offset(2f*x, 12f*y), size = Size(28f*x, 16f*y),
                 cornerRadius = CornerRadius(3.2f*x, 3.2f*y)
             )
@@ -778,22 +796,10 @@ internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifi
                 topLeft = Offset(7.5f*x, 4.5f*y), size = Size(22f*x, 25f*y),
                 cornerRadius = CornerRadius(2f*x, 2f*y)
             )
-            val page = Path().apply {
-                moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
-                lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
-                quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
-                lineTo(9f*x, 28f*y)
-                quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
-            }
-            drawPath(path = page, brush = Brush.verticalGradient(listOf(sheet, sheetFoot)))
+            drawPath(path = page, brush = pageBrush)
             drawPath(path = page, color = line.copy(alpha = 0.65f),
                 style = Stroke(width = 0.7f*x))
-            val fold = Path().apply {
-                moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
-                lineTo(29f*x, 9f*y); close()
-            }
-            drawPath(path = fold, brush = Brush.verticalGradient(
-                listOf(sheetFoot, line.copy(alpha = 0.72f))))
+            drawPath(path = fold, brush = foldBrush)
             drawLine(line, Offset(23f*x, 9f*y), Offset(29f*x, 9f*y), 0.7f*x)
             for (i in 0..2) {
                 val lineY = (14f + i*4f)*y
@@ -801,7 +807,8 @@ internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifi
                     Offset((if (i == 2) 21f else 25f)*x, lineY), 0.92f*x)
             }
         }
-    }
+        }
+    })
 }
 @Composable
 private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrowse: (String?) -> Unit) {
