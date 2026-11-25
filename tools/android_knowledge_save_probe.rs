@@ -646,9 +646,18 @@ fn sticky_home() -> Result<(), String> {
 
 // Same 240 digits as the original stress payload, now with intentional
 // paragraph boundaries, one and two blank lines, and a trailing Enter.
+fn sticky_authored_row(index: usize) -> String {
+    // Unique line identities catch reordering or substitution, while keeping
+    // the same 40-digit width and total 240-digit pressure payload.
+    format!("{:02}{}", index+1, &STICKY_MARKER.repeat(2)[2..])
+}
 fn sticky_authored_body() -> String {
-    let row = STICKY_MARKER.repeat(2);
-    format!("{row}\n{row}\n\n{row}\n\n\n{row}\n{row}\n{row}\n")
+    let mut body = String::new();
+    for (index, gap) in [1, 2, 3, 1, 1, 1].into_iter().enumerate() {
+        body.push_str(&sticky_authored_row(index));
+        body.push_str(&"\n".repeat(gap));
+    }
+    body
 }
 
 fn sticky_stack(expected: usize) -> Result<bool, String> {
@@ -733,6 +742,64 @@ fn sticky_export_newlines(evidence: &Path) -> Result<String, String> {
     Ok(format!("PASS: real sticky PNG preserves six authored rows and blank-line spacing, measured row gaps {gaps:?} px after durable version creation and restart."))
 }
 
+// A titled sticky note containing only Enter presses is a real persisted
+// note, not an empty abandoned draft. Verify both versions byte-for-byte.
+fn sticky_blank_body(root: &Path) -> Result<(), String> {
+    const TITLE: &str = "7391804025006011";
+    let evidence = root.join("sticky_blank_body");
+    fs::create_dir_all(&evidence).map_err(|e|e.to_string())?;
+    cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    sticky_home()?;
+    if !tap_any(&["新建","New"])? { return Err("Blank-body sticky create action missing".into()); }
+    let mut fields: Vec<Node> = elements(&dump()?).into_iter().filter(|n|
+        n.class_name.ends_with("EditText") && n.bounds[2]>n.bounds[0] && n.bounds[3]>n.bounds[1]).collect();
+    fields.sort_by_key(|n|n.bounds[1]);
+    if fields.len()<2 { capture(&evidence,"missing_editor_fields"); return Err("Blank-body editor not available".into()); }
+    tap(&fields[0])?;
+    cmd(&["shell","input","text",TITLE])?;
+    let body = elements(&dump()?).into_iter().filter(|n|n.class_name.ends_with("EditText")
+        && n.bounds[2]>n.bounds[0] && n.bounds[3]>n.bounds[1]).max_by_key(|n|n.bounds[1])
+        .ok_or("Blank-body sticky body unavailable")?;
+    tap(&body)?;
+    for _ in 0..3 { cmd(&["shell","input","keyevent","KEYCODE_ENTER"])?; }
+    cmd(&["shell","input","keyevent","4"])?;
+    sleep(Duration::from_millis(600));
+    let action = find(&["下一个版本","Next version"])?.ok_or("Blank-body version create action unavailable")?;
+    let query = format!(
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n \
+         WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{TITLE}' \
+         AND hex(json_extract(n.value,'$.document.blocks[0].text'))='0A0A0A' \
+         AND json_array_length(n.value,'$.versions')=2 \
+         AND (SELECT count(*) FROM json_each(n.value,'$.versions') v \
+           WHERE hex(json_extract(v.value,'$.document.blocks[0].text'))='0A0A0A')=2;"
+    );
+    let started = std::time::Instant::now();
+    send_tap(&action)?;
+    let mut confirmed = false;
+    while started.elapsed().as_millis() <= STICKY_BUDGET_MS {
+        let ui = dump()?;
+        if ui.contains("版本 2 / 2") && !ui.contains("正在创建新版本") && live_sqlite(&query)?.trim()=="1" {
+            confirmed = true;
+            break;
+        }
+        sleep(Duration::from_millis(150));
+    }
+    if !confirmed || started.elapsed().as_millis()>STICKY_BUDGET_MS {
+        capture(&evidence,"blank_body_failure");
+        return Err("Three blank authored lines did not survive version creation within budget".into());
+    }
+    capture(&evidence,"blank_body_committed");
+    cmd(&["shell","am","force-stop",PACKAGE])?;
+    if stopped_sqlite(&query)?.trim()!="1" { return Err("Blank-only body lost after force-stop".into()); }
+    cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    sticky_home()?;
+    if live_sqlite(&query)?.trim()!="1" { return Err("Blank-only body lost after restart".into()); }
+    fs::write(evidence.join("result.txt"), "PASS: three Enter presses retained in both versions after force-stop and restart.\n").map_err(|e|e.to_string())?;
+    Ok(())
+}
+
 fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String> {
     let evidence = root.join("sticky_version_pressure");
     fs::create_dir_all(&evidence).map_err(|e|e.to_string())?;
@@ -750,9 +817,8 @@ fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String>
         && n.bounds[2]>n.bounds[0] && n.bounds[3]>n.bounds[1]).max_by_key(|n|n.bounds[1])
         .ok_or("Sticky body unavailable")?;
     tap(&body)?;
-    let row = STICKY_MARKER.repeat(2);
     for (index, gap) in [1, 2, 3, 1, 1, 1].into_iter().enumerate() {
-        cmd(&["shell","input","text",&row])?;
+        cmd(&["shell","input","text",&sticky_authored_row(index)])?;
         for _ in 0..gap {
             cmd(&["shell","input","keyevent","KEYCODE_ENTER"])?;
         }
@@ -962,6 +1028,7 @@ fn main() {
         // Still exercises real editing, four version commits (one competing
         // writer), exact SQLite bytes after process death and exported pixels.
         cmd(&["root"]).and_then(|_| cmd(&["wait-for-device"]))
+            .and_then(|_| sticky_blank_body(&path))
             .and_then(|_| sticky_version_pressure(&path, 4))
     } else {
         run(&path)

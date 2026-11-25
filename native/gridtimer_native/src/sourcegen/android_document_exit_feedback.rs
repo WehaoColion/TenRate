@@ -71,6 +71,13 @@ import com.ofairyo.gridtimer.data.presentationDocument
             "private fun buildStaticLayout(text: CharSequence,",
         )?;
 
+        // StaticLayout must measure a body consisting solely of authored
+        // blank lines instead of replacing it with a single space.
+        replace(
+            &mut source,
+            r#"    val safeText = text.ifBlank { " " }"#,
+            r#"    val safeText = text.ifEmpty { " " }"#,
+        )?;
         source.push_str(KNOWLEDGE_SHARE_CONTENT);
         source.push_str(SHARE_IMAGE_HELPER);
         source.push_str(SHARE_RASTER_POLICY);
@@ -257,7 +264,7 @@ private fun stickyShareBody(note: NoteEntry): StickyShareBody? {
     val document = note.presentationDocument()
     val (textBlocks, otherBlocks) = document.blocks.partition { it.type == NoteBlockType.TEXT }
     val text = if (document.richTextEnabled) {
-        document.richTextPlainText.ifBlank { document.copy(blocks = textBlocks).plainText() }
+        document.richTextPlainText.ifEmpty { document.copy(blocks = textBlocks).plainText() }
     } else {
         textBlocks.joinToString("\n\n") { it.text }
     }.replace("\r\n", "\n").replace('\r', '\n')
