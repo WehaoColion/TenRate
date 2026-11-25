@@ -872,6 +872,82 @@ fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String>
     Ok(format!("Sticky: {rounds} real UI version creates including {} competing SQLite writers, each <= {STICKY_BUDGET_MS}ms with unique durable IDs, exact latest pointer and retained marker in every version; force-stop and restart verified. {share_report}", rounds / 4))
 }
 
+// Exercise the real WebView commit bridge after TXT -> RTF conversion,
+// rather than asserting only the Rust-generated HTML or the displayed label.
+fn sticky_rich_roundtrip(root: &Path, prior_versions: usize) -> Result<String, String> {
+    let evidence = root.join("sticky_rich_roundtrip");
+    fs::create_dir_all(&evidence).map_err(|e|e.to_string())?;
+    cmd(&["shell","am","force-stop",PACKAGE])?;
+    cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    sticky_home()?;
+    if !tap_any(&[STICKY_TITLE])? { return Err("Sticky note missing before RTF roundtrip".into()); }
+    if !tap_any(&["更多","More"])? || !tap_any(&["切到富文本"])? {
+        capture(&evidence,"rich_mode_missing");
+        return Err("Could not switch real sticky editor to RTF".into());
+    }
+    sleep(Duration::from_millis(900));
+    let xml = dump()?;
+    if !xml.contains("RTF") || !xml.contains("android.webkit.WebView") {
+        capture(&evidence,"rich_editor_missing");
+        return Err("RTF editor did not become active".into());
+    }
+    let expected = prior_versions + 1;
+    let authored_hex = sticky_authored_body().as_bytes().iter()
+        .map(|b|format!("{b:02X}")).collect::<String>();
+    // The prior latest becomes RTF when the editor commits before creating the
+    // next version. All earlier historical snapshots must retain exact text.
+    let query = format!(
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n \
+         WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{STICKY_TITLE}' \
+         AND json_extract(n.value,'$.document.richTextEnabled')=1 \
+         AND hex(json_extract(n.value,'$.document.richTextPlainText'))='{authored_hex}' \
+         AND json_array_length(n.value,'$.versions')={expected} \
+         AND (SELECT count(DISTINCT json_extract(v.value,'$.id')) FROM json_each(n.value,'$.versions') v)={expected} \
+         AND (SELECT count(*) FROM json_each(n.value,'$.versions') v WHERE \
+           hex(CASE WHEN json_extract(v.value,'$.document.richTextEnabled')=1 \
+           THEN json_extract(v.value,'$.document.richTextPlainText') ELSE json_extract(v.value,'$.document.blocks[0].text') END)='{authored_hex}')={expected} \
+         AND (SELECT count(*) FROM json_each(n.value,'$.versions') v WHERE json_extract(v.value,'$.isLatest')=1 \
+           AND json_extract(v.value,'$.id')=json_extract(n.value,'$.latestVersionId') \
+           AND json_extract(v.value,'$.document.richTextEnabled')=1)=1;"
+    );
+    let action = find(&["下一个版本","Next version"])?.ok_or("RTF version create action missing")?;
+    let started = std::time::Instant::now();
+    send_tap(&action)?;
+    let mut confirmed = false;
+    while started.elapsed().as_millis() <= STICKY_BUDGET_MS {
+        let ui = dump()?;
+        if ui.contains(&format!("版本 {expected} / {expected}")) && !ui.contains("正在创建新版本")
+            && live_sqlite(&query)?.trim()=="1" {
+            confirmed = true;
+            break;
+        }
+        sleep(Duration::from_millis(150));
+    }
+    let elapsed = started.elapsed().as_millis();
+    fs::write(evidence.join("version_elapsed_ms.txt"),format!("{elapsed}\n")).map_err(|e|e.to_string())?;
+    if !confirmed || elapsed>STICKY_BUDGET_MS {
+        capture(&evidence,"rtf_version_failure");
+        return Err(format!("RTF version commit changed authored lines or exceeded budget: {elapsed}ms"));
+    }
+    capture(&evidence,"rich_committed");
+    cmd(&["shell","am","force-stop",PACKAGE])?;
+    if stopped_sqlite(&query)?.trim()!="1" { return Err("RTF body or historical versions changed after force-stop".into()); }
+    cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    sticky_home()?;
+    if !tap_any(&[STICKY_TITLE])? { return Err("RTF note missing after restart".into()); }
+    let xml = dump()?;
+    if !xml.contains("RTF") || !xml.contains(&format!("版本 {expected} / {expected}"))
+        || live_sqlite(&query)?.trim()!="1" {
+        capture(&evidence,"rtf_restart_failure");
+        return Err("RTF note did not reopen with exact original line boundaries".into());
+    }
+    capture(&evidence,"rich_reopened");
+    let report = sticky_export_newlines(&evidence)?;
+    Ok(format!("PASS: RTF WebView version creation and restart retained every authored line in {expected} versions, {elapsed}ms. {report}"))
+}
+
 fn run(root: &Path) -> Result<String, String> {
     cmd(&["wait-for-device"])?;
     let info = cmd(&["shell", "dumpsys", "package", PACKAGE])?;
@@ -1030,6 +1106,7 @@ fn main() {
         cmd(&["root"]).and_then(|_| cmd(&["wait-for-device"]))
             .and_then(|_| sticky_blank_body(&path))
             .and_then(|_| sticky_version_pressure(&path, 4))
+            .and_then(|plain| sticky_rich_roundtrip(&path, 5).map(|rich| format!("{plain}\n{rich}")))
     } else {
         run(&path)
     };
