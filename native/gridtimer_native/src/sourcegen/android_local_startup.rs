@@ -1,3 +1,4 @@
+// v3.0.2.15 - Avoid empty legacy migration scans for independently initialized modern workspaces.
 // v2.22.45 - Reuse verified startup state and keep global media pruning off launch.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
 const DATABASE: &str = "com/ofairyo/gridtimer/data/AppStateDatabase.kt";
@@ -14,6 +15,22 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     let mut source = base.to_owned();
     match path {
         REPOSITORY => {
+            // A modern guest workspace with independent initialization evidence
+            // and no legacy global files has nothing to migrate. Do not scan
+            // all history just to manufacture an empty migration marker.
+            // The normal verified workspace restore still checks every required
+            // snapshot, quarantine and future-schema barrier. Any legacy file
+            // or existing migration marker retains the original migration path.
+            replace(&mut source,
+                "        val existingMarker = runCatching { legacyMigrationMarker.readText() }.getOrDefault(\"\")",
+                r####"        if (!legacyMigrationMarker.exists() &&
+            workspaceInitializationEvidenceFile(migrationWorkspaceKey).isFile &&
+            listOf(legacyStateFile, legacyBackupFile, legacyTempFile).none(File::exists)
+        ) {
+            android.util.Log.i("StartupLatency", "legacyMigration skipped: initialized guest without legacy files")
+            return
+        }
+        val existingMarker = runCatching { legacyMigrationMarker.readText() }.getOrDefault("")"####)?;
             replace(&mut source,
                 "    private data class WorkspaceReadResult(\n        val data: AppData?,",
                 "    private data class WorkspaceReadResult(\n        val data: AppData?,\n        val verifiedCurrentSnapshot: AppData? = null,")?;
