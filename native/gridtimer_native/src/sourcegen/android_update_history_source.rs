@@ -1,3 +1,4 @@
+// v3.0.2.29 - Record probe-only correction.
 // v3.0.2.28 - Record real-device contention evidence.
 // v3.0.2.27 - Record candidate diagnostics.
 // v3.0.2.26 - Record automatic cleanup admission budget.
@@ -103,7 +104,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.28";
+pub const LATEST_VERSION: &str = "3.0.2.29";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -133,6 +134,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.29",
+        updatedAt = "",
+        summary = "纠正前后台保存验收光标位置并保留失败输入证据",
+        sections = listOf(
+            AndroidUpdateSection("存储验收", listOf(
+                "恢复编辑焦点后使用文档末尾组合键，不再使用只能到达当前行末尾的按键。",
+                "失败时记录预期正文与真实可编辑正文，保留8秒及完整顺序、SQLite回执和重启检查。",
+                "便签输入丢字和真机数据库锁阻塞仍未确认解决；本轮只修正验收工具。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.28",
         updatedAt = "",

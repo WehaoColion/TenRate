@@ -1,3 +1,4 @@
+// v3.0.2.29 - Use document-end key chord and preserve exact failure evidence.
 // v3.0.2.25 - Exercise actual background/resume during body saves.
 // v3.0.2.22 - Preserve exact pre-version input evidence and recover from Android share/launcher navigation.
 // v3.0.2.18 - Seed 500,000 real authenticated SQLite history rows in place with bounded transactions.
@@ -323,6 +324,17 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
         fs::write(root.join("body_save_stress.csv"), &measurements).map_err(|e| e.to_string())?;
         if !saved || elapsed > EDIT_BUDGET_MS {
             capture(root, &format!("body_save_timeout_{round}"));
+            // Diagnostic capture happens only after the original deadline.
+            // Never repair input or reinterpret a reordered body as a pass.
+            if let Ok(xml) = dump() {
+                let mut fields: Vec<Node> = elements(&xml).into_iter().filter(|n|
+                    n.class_name.ends_with("EditText") && n.bounds[2] - n.bounds[0] > 80).collect();
+                fields.sort_by_key(|n| n.bounds[1]);
+                let observed = fields.last().map(|n| n.label.as_str()).unwrap_or("");
+                fs::write(root.join(format!("body_save_failure_comparison_{round}.txt")),
+                    format!("expected={expected:?}\nobserved={observed:?}\nvisible_saved={}\n",
+                        has_save_state(&xml, "document_save_local_saved"))).map_err(|e|e.to_string())?;
+            }
             return Err(format!("Nested page body save round {round} exceeded {EDIT_BUDGET_MS}ms: {elapsed}ms; UI and SQLite receipt required"));
         }
         if lifecycle_round {
@@ -333,7 +345,11 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
             let body = fields.last().ok_or("Editor body missing after real background/resume")?;
             if fields.len() < 2 { return Err("Editor lost body after real background/resume".into()); }
             tap(body)?;
-            cmd(&["shell", "input", "keyevent", "123"])?;
+            // KEYCODE_MOVE_END alone maps to the visual line end in Compose.
+            // The failed 3.0.2.26 tree showed round 11 inserted before round 9.
+            // A real Ctrl+End targets the whole document, not the tapped line.
+            // Keep the exact same ordered text and durability assertions.
+            cmd(&["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_MOVE_END"])?;
         }
     }
     // Burst of real key injections without waiting for autosave between edits.
