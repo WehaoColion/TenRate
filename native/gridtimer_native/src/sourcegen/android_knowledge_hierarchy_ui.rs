@@ -1,3 +1,4 @@
+// v3.0.2.17 - Avoid snapshot invalidation from navigation bookkeeping and layout coordinates.
 // v3.0.2.15 - Render one directory surface with layer-only motion and indexed row actions.
 // v3.0.2.15 - Keep hierarchy inputs on bounded pre-admission failure; do not cancel a running transaction.
 // v3.0.2.15 - Real directional directory navigation, spring disclosure and tactile feedback.
@@ -1150,16 +1151,19 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     // LazyColumns (including their shadows and layout callbacks) alive during
     // each transition. Move the incoming surface in the draw layer instead:
     // the animated fraction is never read by composition or measurement.
-    var previousParent by remember(workspace) { mutableStateOf(parentId) }
+    // Navigation history is only sampled when the parent key changes. It is not
+    // observable UI state; writing it after composition must not invalidate the
+    // whole directory during the first animated frames.
+    val previousParent = remember(workspace) { java.util.concurrent.atomic.AtomicReference<String?>(parentId) }
     val initialOffset = remember(workspace, parentId) {
-        if (!active || previousParent == parentId) 0f
+        if (!active || previousParent.get() == parentId) 0f
         else {
-            val fromDepth = previousParent?.let { index.breadcrumbs(it).size } ?: 0
+            val fromDepth = previousParent.get()?.let { index.breadcrumbs(it).size } ?: 0
             val toDepth = parentId?.let { index.breadcrumbs(it).size } ?: 0
             if (toDepth < fromDepth) -0.16f else 0.16f
         }
     }
-    SideEffect { previousParent = parentId }
+    SideEffect { previousParent.set(parentId) }
     key(workspace, parentId) {
         val translation = remember { Animatable(initialOffset) }
         LaunchedEffect(translation, active) {
@@ -1215,7 +1219,9 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
     var dragging by remember(workspace, parentId) { mutableStateOf<KnowledgeDirectoryDragVisual?>(null) }
     var autoScrollJob by remember(workspace, parentId) { mutableStateOf<Job?>(null) }
     var autoScrollGeneration by remember(workspace, parentId) { mutableIntStateOf(0) }
-    var viewport by remember(workspace, parentId) { mutableStateOf<LayoutCoordinates?>(null) }
+    // Layout coordinates are event-time geometry, not a compositional input.
+    // Avoid a snapshot write from layout while the translated layer animates.
+    val viewport = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicReference<LayoutCoordinates?>(null) }
     val handleBounds = remember(workspace, parentId) { mutableMapOf<String, Rect>() }
     val normalIds = remember(directoryScope, savedIds) { knowledgeDirectoryOrderedIds(directoryScope, savedIds) }
     val draggableIds = remember(directoryScope) { directoryScope.items.filter { it.canDrag }.mapTo(hashSetOf()) { it.id } }
@@ -1408,7 +1414,7 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
     val canSort = active && !busy && !saving && loaded && !loading && directoryScope.canReorder && displayedIds.size > 1
     val navigationEnabled = active && !busy && !saving && dragging == null
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp)
-        .clipToBounds().onGloballyPositioned { viewport = it }
+        .clipToBounds().onGloballyPositioned { viewport.set(it) }
         .pointerInput(workspace, parentId, callbacksAlive) {
             // The viewport owns the pointer: recycling an offscreen dragged row cannot end the gesture.
             awaitEachGesture {
@@ -1511,7 +1517,7 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                                     contentDescription = "$KNOWLEDGE_DIRECTORY_DRAG_LABEL，${child.title.ifBlank { "无标题" }}"
                                     stateDescription = "第 ${position + 1} 项，共 ${displayedIds.size} 项"
                                 }.onGloballyPositioned { handle ->
-                                    val surface = viewport
+                                    val surface = viewport.get()
                                     if (surface?.isAttached == true && handle.isAttached) {
                                         handleBounds[id] = surface.localBoundingBoxOf(handle, clipBounds = false)
                                     }
