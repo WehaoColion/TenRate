@@ -1,3 +1,4 @@
+// v3.0.2.25 - Record candidate scope.
 // v3.0.2.24 - Record startup verification diagnostics.
 // v3.0.2.23 - Record bounded history migration reads.
 // v3.0.2.22 - Record sticky input and share navigation verification.
@@ -99,7 +100,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.24";
+pub const LATEST_VERSION: &str = "3.0.2.25";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -129,6 +130,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.25",
+        updatedAt = "",
+        summary = "针对真机本地保存锁等待改进并发调度",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "普通账户合并在写锁外准备，提交前核对工作区及原始状态；冲突重新计算，绝不覆盖较新的编辑。",
+                "近期知识或便签写入及后台期间暂停非必要历史压缩和延迟镜像刷新，保留全部持久化和隐私保护检查。",
+                "增加数据库锁持有阶段诊断及连续编辑中切换后台再恢复的真实模拟器验收。真机长等待仍需回归确认。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.24",
         updatedAt = "",

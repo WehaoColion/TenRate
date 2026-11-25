@@ -1,3 +1,4 @@
+// v3.0.2.25 - Real-device lock contention candidate.
 // v3.0.2.24 - Restore sourcegen compatibility and instrument actual startup scan.
 // v3.0.2.23 - Batch history migration cursor reads without weakening verification.
 // v3.0.2.22 - Separate sticky input integrity from version latency acceptance.
@@ -217,8 +218,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30026
-        versionName '3.0.2.24'
+        versionCode 30027
+        versionName '3.0.2.25'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

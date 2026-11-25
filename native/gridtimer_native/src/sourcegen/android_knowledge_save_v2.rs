@@ -1,3 +1,4 @@
+// v3.0.2.25 - Move ordinary sync preparation outside writer; defer optional maintenance during note edits.
 // v3.0.2.15 - Give safe sticky version creation the authoritative SQLite receipt.
 // v3.0.2.15 - Avoid synchronous full recovery mirrors for strictly scoped empty folder inserts.
 // v3.0.2.14 - Use bounded preflight for ordinary local writes and mirror refreshes.
@@ -117,7 +118,91 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 recordNoteSaveStage("version_persist", persistStarted)
                 if (!saved) {"#)?;
     source.replace_range(start..end, &version);
+    install_foreground_write_priority(&mut source)?;
     Ok(source)
+}
+
+fn install_foreground_write_priority(source: &mut String) -> Result<(), String> {
+    replace_one(source, "    private val writeMutex = Mutex()",
+        "    private val writeMutex = Mutex()\n    private val lastForegroundNoteWriteAt = java.util.concurrent.atomic.AtomicLong(0L)")?;
+    replace_one(source,
+        r####"        val writeWaitStarted = System.nanoTime()
+        writeMutex.withLock {
+            if (noteMutationId != null) recordNoteSaveStage("draft_write_lock", writeWaitStarted)"####,
+        r####"        if (noteMutationId != null || hierarchyCreateNoteId != null)
+            lastForegroundNoteWriteAt.set(android.os.SystemClock.elapsedRealtime())
+        val writeWaitStarted = System.nanoTime()
+        writeMutex.withLock {
+            if (noteMutationId != null) recordNoteSaveStage("draft_write_lock", writeWaitStarted)"####)?;
+    replace_one(source,
+        r####"        val writeWaitStarted = System.nanoTime()
+        withContext(NonCancellable + Dispatchers.Default) {
+            writeMutex.withLock {
+                recordNoteSaveStage("version_write_lock", writeWaitStarted)"####,
+        r####"        lastForegroundNoteWriteAt.set(android.os.SystemClock.elapsedRealtime())
+        val writeWaitStarted = System.nanoTime()
+        withContext(NonCancellable + Dispatchers.Default) {
+            writeMutex.withLock {
+                recordNoteSaveStage("version_write_lock", writeWaitStarted)"####)?;
+    let start = source.find("    private suspend fun applyAccountSnapshotIfVisible(")
+        .ok_or("missing account apply")?;
+    let end = start + source[start..].find("    private fun historyDeletionSummaryText(")
+        .ok_or("missing account apply boundary")?;
+    let mut apply = source[start..end].to_owned();
+    replace_one(&mut apply,
+        r####"        val persisted = writeMutex.withLock {
+            val recoveryBlockedReason"####,
+        r####"        // The canonical merge can serialize and compare the whole workspace.
+        // Compute outside the writer and accept only against the exact immutable
+        // state and workspace captured for this attempt. Exact restore retains
+        // its original flush barrier and fail-closed recovery branch.
+        val applyWorkspace = activeWorkspaceKey
+        var persistedResult: Boolean? = null
+        var mergeAttempts = 0
+        while (persistedResult == null) {
+            val mergeBase = _appData.value
+            val preparedMerge = if (forceReplace) null else withContext(Dispatchers.Default) {
+                mergeAccountSnapshotWithCanonicalEngine(mergeBase, received).sanitized()
+            }
+            persistedResult = writeMutex.withLock {
+            if (activeWorkspaceKey != applyWorkspace) {
+                supersededByLocalChange = true
+                return@withLock false
+            }
+            val recoveryBlockedReason"####)?;
+    replace_one(&mut apply,
+        r####"            if (effectiveForceReplace) {
+                pendingPersistJob?.cancel()"####,
+        r####"            if (!effectiveForceReplace && mergeBase !== _appData.value) {
+                // No mutation, receipt, acknowledgement or dirty state on a
+                // stale preparation. Release the writer before recomputing.
+                return@withLock null
+            }
+            if (effectiveForceReplace) {
+                pendingPersistJob?.cancel()"####)?;
+    replace_one(&mut apply,
+        r####"                mergeAccountSnapshotWithCanonicalEngine(
+                    _appData.value,
+                    received
+                ).sanitized()"####,
+        r####"                checkNotNull(preparedMerge)"####)?;
+    replace_one(&mut apply,
+        r####"            flushPersistLocked(applied)
+        }
+        if (supersededByLocalChange)"####,
+        r####"            flushPersistLocked(applied)
+            }
+            if (persistedResult == null && ++mergeAttempts >= 3) {
+                // Continuous editing takes priority over background sync.
+                // Existing callers reject superseded responses and retry sync.
+                supersededByLocalChange = true
+                persistedResult = false
+            }
+        }
+        val persisted = checkNotNull(persistedResult)
+        if (supersededByLocalChange)"####)?;
+    source.replace_range(start..end, &apply);
+    Ok(())
 }
 
 fn install_commit_receipts(source: &mut String) -> Result<(), String> {
@@ -173,6 +258,19 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
 const RECOVERY_WORKER: &str = r#"
     private var pendingRecoveryMirrorJob: Job? = null
 
+    // Optional maintenance must not start in the background or in the middle
+    // of a series of accepted note writes. Do not cancel admitted transactions.
+    private fun noteMaintenanceMayStart(quietMillis: Long): Boolean {
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val lastWrite = lastForegroundNoteWriteAt.get()
+        if (lastWrite != 0L && nowElapsed - lastWrite < quietMillis) return false
+        val info = android.app.ActivityManager.RunningAppProcessInfo()
+        return runCatching {
+            android.app.ActivityManager.getMyMemoryState(info)
+            info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+        }.getOrDefault(false)
+    }
+
     private fun NoteEntry.isPlainRecoveryDocument(): Boolean =
         kind == NoteEntryKind.DOCUMENT && encryption == null && !isDeleted() && attachments.isEmpty() &&
             !document.richTextEnabled && !isKnowledgeFolder() && !requiresStructuredKnowledgeReader() &&
@@ -207,8 +305,9 @@ const RECOVERY_WORKER: &str = r#"
             var retryMillis = 1_800L
             while (true) {
                 delay(retryMillis)
-                if (!writeMutex.tryLock()) continue
+                if (!noteMaintenanceMayStart(10_000L) || !writeMutex.tryLock()) continue
                 val finished = try {
+                    if (!noteMaintenanceMayStart(10_000L)) continue
                     if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
                         persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@launch
                     runCatching {

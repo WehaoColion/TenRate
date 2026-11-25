@@ -1,3 +1,4 @@
+// v3.0.2.25 - Gate history maintenance on foreground idle.
 // v3.0.2.15 - Idle history worker continues to pick up newly deferred rows.
 // v2.23.2.54 - Accept upstream workspace-indexed raw snapshot scans without rewriting them twice.
 // v2.23.2.48 - Accelerate safe post-start maintenance and reduce indexed scan round trips.
@@ -173,11 +174,12 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
         val workspaceKey = activeWorkspaceKey
         var afterId = 0L
         while (true) {
-            if (!writeMutex.tryLock()) {
+            if (!noteMaintenanceMayStart(5_000L) || !writeMutex.tryLock()) {
                 delay(1_000L)
                 continue
             }
             val next = try {
+                if (!noteMaintenanceMayStart(5_000L)) continue
                 if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
                     loadedFromRecoveryCandidate || persistenceWriteBlockedReason != null) break
                 withContext(Dispatchers.IO) {

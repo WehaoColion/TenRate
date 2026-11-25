@@ -1,3 +1,4 @@
+// v3.0.2.25 - Exercise actual background/resume during body saves.
 // v3.0.2.22 - Preserve exact pre-version input evidence and recover from Android share/launcher navigation.
 // v3.0.2.18 - Seed 500,000 real authenticated SQLite history rows in place with bounded transactions.
 // v3.0.2.16 - Reveal real version count before timing and log independent UI/SQLite receipts.
@@ -287,14 +288,23 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     let body = fields.last().ok_or("Nested page body not editable")?;
     if fields.len() < 2 { return Err("Nested page only exposes title, not body".into()); }
     tap(body)?;
-    let mut measurements = String::from("round,elapsed_ms,writer_contention\n");
+    let mut measurements = String::from("round,elapsed_ms,writer_contention,background_resume\n");
     let mut expected = String::new();
     for round in 0..EDIT_ROUNDS {
         let marker = format!("817{round:02}629");
         expected.push_str(&marker);
         let writer = if round % 4 == 1 { Some(hold_sqlite_writer()?) } else { None };
         let started = std::time::Instant::now();
-        cmd(&["shell", "input", "text", &marker])?;
+        let lifecycle_round = round % 4 == 2;
+        if lifecycle_round {
+            // Reproduce the device report: leave the app immediately after
+            // actual typing, then return before the save receipt is observed.
+            cmd(&["shell", &format!("input text {marker} && input keyevent 3")])?;
+            sleep(Duration::from_secs(1));
+            cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
+        } else {
+            cmd(&["shell", "input", "text", &marker])?;
+        }
         if let Some(writer) = writer {
             writer.join().map_err(|_| "Body writer thread panicked")??;
         }
@@ -309,11 +319,21 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
             sleep(Duration::from_millis(120));
         }
         let elapsed = started.elapsed().as_millis();
-        measurements.push_str(&format!("{round},{elapsed},{}\n", round % 4 == 1));
+        measurements.push_str(&format!("{round},{elapsed},{},{lifecycle_round}\n", round % 4 == 1));
         fs::write(root.join("body_save_stress.csv"), &measurements).map_err(|e| e.to_string())?;
         if !saved || elapsed > EDIT_BUDGET_MS {
             capture(root, &format!("body_save_timeout_{round}"));
             return Err(format!("Nested page body save round {round} exceeded {EDIT_BUDGET_MS}ms: {elapsed}ms; UI and SQLite receipt required"));
+        }
+        if lifecycle_round {
+            let resumed = dump()?;
+            let mut fields: Vec<Node> = elements(&resumed).into_iter().filter(|n|
+                n.class_name.ends_with("EditText") && n.bounds[2] - n.bounds[0] > 80).collect();
+            fields.sort_by_key(|n| n.bounds[1]);
+            let body = fields.last().ok_or("Editor body missing after real background/resume")?;
+            if fields.len() < 2 { return Err("Editor lost body after real background/resume".into()); }
+            tap(body)?;
+            cmd(&["shell", "input", "keyevent", "123"])?;
         }
     }
     // Burst of real key injections without waiting for autosave between edits.
@@ -1175,7 +1195,7 @@ fn run(root: &Path) -> Result<String, String> {
     let sticky_report = sticky_version_pressure(root, STICKY_ROUNDS)?;
     println!("{sticky_report}");
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; {BURST_ROUNDS} additional rapid input events followed by immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories. {sticky_report}"
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention and actual background/resume), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; {BURST_ROUNDS} additional rapid input events followed by immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories. {sticky_report}"
     ))
 }
 fn main() {
