@@ -1,3 +1,4 @@
+// v3.0.2.15 - Scale genuine SQLite history to 100,000 rows without reducing per-row payload or latency gates.
 // v3.0.2.15 - Repeated nested-page body edits, real writer contention and immediate durable exit under historical load.
 // v3.0.2.15 - Exercise folder-to-child-page persistence under the loaded history and assert actual latency.
 // v3.0.2.14 - Exercise a missing-digest history row in a live workspace.
@@ -32,7 +33,7 @@ const EDIT_ROUNDS: usize = 12;
 const BURST_ROUNDS: usize = 30;
 const EDIT_EXIT_MARKER: &str = "98765432109876543210";
 const EDIT_BUDGET_MS: u128 = 8_000;
-const HISTORY_ROWS: usize = 7_200;
+const HISTORY_ROWS: usize = 100_000;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 const PRIMARY_MIRROR: &str =
     "/data/user/0/com.ofairyo.gridtimer/files/state_workspaces/guest/timer_state.json";
@@ -252,6 +253,21 @@ fn pull_database(local: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// Large fixtures are checked independently on the host, then removed before
+// the next pull so repeated evidence collection cannot exhaust runner storage.
+fn remove_local_database(local: &Path) -> Result<(), String> {
+    fs::remove_file(local).map_err(|e| e.to_string())?;
+    for extension in ["-wal", "-shm", "-journal"] {
+        let sidecar = format!("{}{extension}", local.display());
+        match fs::remove_file(sidecar) {
+            Ok(()) => {},
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}
+
 fn has_save_state(xml: &str, state: &str) -> bool {
     xml.split("<node ").any(|node| attr(node.split('>').next().unwrap_or(""), "resource-id").ends_with(state))
 }
@@ -395,6 +411,7 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
         return Err(format!("Database upgrade did not install all guards: version={version}, indexes={indexes}"));
     }
     let packed = packed_legacy_rows(&local)?;
+    remove_local_database(&local)?;
     if packed == 0 || packed >= HISTORY_ROWS {
         return Err(format!("Expected work remaining after partial legacy authentication, got {packed} packed rows"));
     }
@@ -492,7 +509,7 @@ fn seed_history(root: &Path) -> Result<(), String> {
     // history verifier, so no fabricated signature is introduced.
     let digest = padded_history_digest(&local, root)?;
     let sql = format!(
-        "PRAGMA wal_checkpoint(TRUNCATE); \
+        "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; \
          DROP INDEX snapshot_history_schema_guard; \
          DROP INDEX snapshot_history_digest_guard; \
          DROP INDEX snapshot_history_envelope_guard; \
@@ -504,7 +521,7 @@ fn seed_history(root: &Path) -> Result<(), String> {
              c.app_data_json || printf('%*s', {HISTORY_PADDING_BYTES}, ''), '{digest}', '', \
              c.updated_at_epoch_millis - {HISTORY_ROWS} + seq.n \
          FROM current_snapshot c CROSS JOIN seq WHERE c.workspace_key = 'guest'; \
-         PRAGMA wal_checkpoint(TRUNCATE);"
+         PRAGMA journal_mode=WAL; PRAGMA wal_checkpoint(TRUNCATE);"
     );
     sqlite(&local, &sql)?;
     let count: usize = sqlite(&local,
@@ -514,11 +531,17 @@ fn seed_history(root: &Path) -> Result<(), String> {
         return Err(format!("History fixture contains {count} rows, expected at least {HISTORY_ROWS}"));
     }
     let temporary = "/data/local/tmp/tenrate_history_fixture.db";
+    let fixture_bytes = fs::metadata(&local).map_err(|e| e.to_string())?.len();
+    let capacity = cmd(&["shell", "df", "-k", "/data"])?;
+    fs::write(root.join("fixture_storage.txt"), format!("history_rows={count}\nfixture_bytes={fixture_bytes}\n{capacity}"))
+        .map_err(|e| e.to_string())?;
+    println!("Historical fixture: {count} rows, {fixture_bytes} bytes");
     cmd(&["push", local_str, temporary])?;
     cmd(&["shell", "cp", temporary, DATABASE])?;
     let _ = cmd(&["shell", "rm", "-f", &format!("{DATABASE}-wal"), &format!("{DATABASE}-shm")]);
     let _ = cmd(&["shell", "restorecon", DATABASE]);
     cmd(&["shell", "rm", "-f", temporary])?;
+    remove_local_database(&local)?;
     fs::write(root.join("fixture_history_count.txt"), format!("{count}\n"))
         .map_err(|e| e.to_string())?;
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
@@ -577,7 +600,7 @@ fn hold_sqlite_writer() -> Result<JoinHandle<Result<(), String>>, String> {
     }))
 }
 
-// Run on the same signed APK and 7200-row SQLite history after the knowledge
+// Run on the same signed APK and 100,000-row SQLite history after the knowledge
 // checks. Do not replace the earlier assertions or accept a UI-only receipt.
 const STICKY_TITLE: &str = "7391804025006010";
 const STICKY_MARKER: &str = "12345678909876543210";
@@ -803,6 +826,7 @@ fn run(root: &Path) -> Result<String, String> {
         return Err("Startup recovery did not preserve the unchecked history row in quarantine".into());
     }
     let packed_after = packed_legacy_rows(&after)?;
+    remove_local_database(&after)?;
     if packed_after <= packed_before {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
