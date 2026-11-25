@@ -272,6 +272,61 @@ jobs:
           if-no-files-found: warn
           retention-days: 21
 
+  publish-build37-download:
+    name: Publish exact build 37 as a downloadable test prerelease
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15' && github.event.before == 'e2e3b7ac410daaed4b3ebecb2446b764428c22d0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify original build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh run view 45643590098 --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)" = "e2e3b7ac410daaed4b3ebecb2446b764428c22d0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: package
+          github-token: ${{ github.token }}
+          run-id: 45643590098
+          repository: ${{ github.repository }}
+      - name: Publish byte-identical signed APK with its original commit tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo 'eb2779b9cbe8828ce31d17d7475bc46d9d872d729e946ed4c98122d20eec2f18  package/tenfold_v3.0.2.15.apk' | sha256sum -c -
+          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
+          GITHUB_SHA=e2e3b7ac410daaed4b3ebecb2446b764428c22d0 ./android_candidate_publish
+          gh release view v3.0.2.15-candidate-e2e3b7ac410d --repo "$GITHUB_REPOSITORY" --json url,isPrerelease,assets
+
+  publish-signed-motion-test-candidate:
+    name: Publish signed Android test APK (acceptance independently tracked)
+    if: github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15'
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: package
+      - name: Publish immutable commit-scoped test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
+          ./android_candidate_publish
+
   publish-knowledge-save-candidate:
     name: Publish emulator-verified knowledge save APK
     if: startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
