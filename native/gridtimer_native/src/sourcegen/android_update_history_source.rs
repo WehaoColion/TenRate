@@ -1,3 +1,4 @@
+// v3.0.2.26 - Record automatic cleanup admission budget.
 // v3.0.2.25 - Record candidate scope.
 // v3.0.2.24 - Record startup verification diagnostics.
 // v3.0.2.23 - Record bounded history migration reads.
@@ -100,7 +101,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.25";
+pub const LATEST_VERSION: &str = "3.0.2.26";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -130,6 +131,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.26",
+        updatedAt = "",
+        summary = "阻止自动附件回收触发无界历史核验",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "普通自动附件回收先检查有界历史扫描预算，避免同步后为清理附件长期占用数据库监视器。",
+                "超出预算或读取失败时保留全部附件和历史；不跳过核验后继续删除。启动恢复及隐私清除原有验证不变。",
+                "大型工作区附件回收需要后续增量机制，真机长等待及全部性能门槛仍待验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.25",
         updatedAt = "",

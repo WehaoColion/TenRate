@@ -1,3 +1,4 @@
+// v3.0.2.26 - Prevent unbounded automatic retained-snapshot GC scans.
 // v3.0.2.25 - Gate history maintenance on foreground idle.
 // v3.0.2.15 - Idle history worker continues to pick up newly deferred rows.
 // v2.23.2.54 - Accept upstream workspace-indexed raw snapshot scans without rewriting them twice.
@@ -51,10 +52,20 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 replace(&mut load, expression, &format!("measureLocalStartup(\"{name}\") {{ {expression} }}"))?;
                 source.replace_range(start..end, &load);
             }
+            // Optional attachment GC previously invoked three full quarantine
+            // scans (untrusted evidence, workspace discovery, retained roots).
+            // Reject expensive automatic scans before touching those APIs.
+            replace(&mut source,
+                "    private suspend fun pruneNoteMedia(appData: AppData) {\n        runCatching {",
+                "    private suspend fun pruneNoteMedia(appData: AppData) {\n        runCatching {\n            if (!withContext(Dispatchers.IO) { stateDatabase.automaticMediaScanWithinBudget() }) {\n                logDiagnosticEvent(category = \"notes.media.prune\", message = \"Deferred automatic attachment cleanup: retained snapshot scan exceeds budget; all files retained.\")\n                return@runCatching\n            }")?;
             source.push_str(STARTUP_TIMING);
             source.push_str(MAINTENANCE_POLICY);
         }
         DATABASE => {
+            replace(&mut source,
+                "    fun hasUntrustedQuarantineEvidence(): Boolean {",
+                &format!("{}    fun hasUntrustedQuarantineEvidence(): Boolean {{",
+                    MEDIA_SCAN_BUDGET.replace("__MEDIA_BUDGET_QUERY__", MEDIA_BUDGET_QUERY)))?;
             replace(&mut source,
                 "        if (freshTransaction) runCatching { compactHistory(workspaceKey) }.onFailure {\n            android.util.Log.w(\"StartupLatency\", \"historyCompact incomplete; retaining original rows\", it)\n        }\n",
                 "        // Packing old rows is maintenance, not a prerequisite for reading them.\n")?;
@@ -123,6 +134,38 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     }
     Ok(source)
 }
+
+// This is an admission budget, never a proof that deletion is safe. Only
+// the existing complete retained-root and quarantine checks can authorize it.
+// Read-only, bounded probes do not take the snapshot writer monitor.
+const MEDIA_BUDGET_QUERY: &str = "SELECT COUNT(*), COALESCE(SUM(length(CAST(app_data_json AS BLOB))), 0) FROM (SELECT app_data_json FROM $table LIMIT ?)";
+const MEDIA_SCAN_BUDGET: &str = r####"    fun automaticMediaScanWithinBudget(): Boolean {
+        val database = readableDatabase
+        var remainingRows = 128L
+        var remainingBytes = 16L * 1024 * 1024
+        for (table in listOf(CURRENT_TABLE, HISTORY_TABLE, QUARANTINE_TABLE)) {
+            // Probe count first: a large table is rejected without reading any
+            // payload pages or calling quarantineDigestMismatches.
+            val limit = (remainingRows + 1L).toString()
+            val count = database.rawQuery(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM $table LIMIT ?)", arrayOf(limit)
+            ).use { cursor -> check(cursor.moveToFirst()); cursor.getLong(0) }
+            if (count > remainingRows) return false
+            val measured = database.rawQuery(
+                "__MEDIA_BUDGET_QUERY__", arrayOf(limit)
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getLong(0) to cursor.getLong(1)
+            }
+            if (measured.first != count || measured.second < 0L ||
+                measured.second > remainingBytes) return false
+            remainingRows -= measured.first
+            remainingBytes -= measured.second
+        }
+        return true
+    }
+
+"####;
 
 const MEDIA_HYDRATION: &str = r####"    fun resolvedAttachmentHashes(
         context: Context,
@@ -556,6 +599,28 @@ mod tests {
                 .strip_suffix(MEDIA_POLICY)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn attachment_cleanup_budget_reads_at_most_the_admitted_snapshot_rows() {
+        use rusqlite::{params, Connection};
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE snapshot_history(app_data_json TEXT NOT NULL);
+            WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < 500)
+            INSERT INTO snapshot_history SELECT '1234' FROM seq;").unwrap();
+        let sql = MEDIA_BUDGET_QUERY.replace("$table", "snapshot_history");
+        let read = |limit: i64| -> (i64, i64) {
+            db.query_row(&sql, params![limit], |row| Ok((row.get(0)?, row.get(1)?))).unwrap()
+        };
+        assert_eq!(read(129), (129, 516));
+        assert_eq!(read(1), (1, 4));
+        assert_eq!(read(1000), (500, 2000));
+        db.execute_batch("DELETE FROM snapshot_history;
+            INSERT INTO snapshot_history VALUES ('abc'), ('abcd');").unwrap();
+        assert_eq!(read(129), (2, 7));
+        // Byte accounting must detect a large row even with a small count.
+        db.execute("INSERT INTO snapshot_history VALUES (printf('%*s', 16777216, ''))", []).unwrap();
+        assert_eq!(read(129), (3, 16777223));
     }
 
     #[test]
