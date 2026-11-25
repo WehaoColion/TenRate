@@ -1,3 +1,4 @@
+// v3.0.2.15 - Verify exact sticky authored lines in each durable version and in the actual PNG pixels.
 // v3.0.2.15 - Validate stopped-app durable SQLite directly on the emulator without multi-GiB transfers.
 // v3.0.2.15 - Scale genuine SQLite history to 100,000 rows without reducing per-row payload or latency gates.
 // v3.0.2.15 - Repeated nested-page body edits, real writer contention and immediate durable exit under historical load.
@@ -643,19 +644,93 @@ fn sticky_home() -> Result<(), String> {
     Err("Could not reach the sticky note home".into())
 }
 
+// Same 240 digits as the original stress payload, now with intentional
+// paragraph boundaries, one and two blank lines, and a trailing Enter.
+fn sticky_authored_body() -> String {
+    let row = STICKY_MARKER.repeat(2);
+    format!("{row}\n{row}\n\n{row}\n\n\n{row}\n{row}\n{row}\n")
+}
+
 fn sticky_stack(expected: usize) -> Result<bool, String> {
+    // Numeric fixture, so literal LF is the only SQL escaping needed; hex
+    // comparison avoids shell newline or JSON escaping ambiguities.
+    let authored_hex = sticky_authored_body().as_bytes().iter()
+        .map(|b| format!("{b:02X}")).collect::<String>();
     let result = live_sqlite(&format!(
         "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n \
          WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{STICKY_TITLE}' \
          AND json_extract(n.value,'$.kind')='STICKY' \
+         AND hex(json_extract(n.value,'$.document.blocks[0].text'))='{authored_hex}' \
          AND json_array_length(n.value,'$.versions')={expected} \
          AND (SELECT count(DISTINCT json_extract(v.value,'$.id')) FROM json_each(n.value,'$.versions') v)={expected} \
          AND (SELECT count(*) FROM json_each(n.value,'$.versions') v \
            WHERE json_extract(v.value,'$.isLatest')=1 AND json_extract(v.value,'$.id')=json_extract(n.value,'$.latestVersionId'))=1 \
          AND (SELECT count(*) FROM json_each(n.value,'$.versions') v \
-           WHERE instr(v.value,'{STICKY_MARKER}')>0)={expected};"
+           WHERE hex(json_extract(v.value,'$.document.blocks[0].text'))='{authored_hex}')={expected};"
     ))?;
     Ok(result.trim()=="1")
+}
+
+fn sticky_export_newlines(evidence: &Path) -> Result<String, String> {
+    // Actual Android share action, not a synthetic bitmap.
+    const CACHE: &str = "/data/user/0/com.ofairyo.gridtimer/cache/note_shares";
+    let listing = format!("ls -1t {CACHE}/note_share_*.png 2>/dev/null || true");
+    let previous = cmd(&["shell",&listing])?;
+    if !tap_any(&["更多","More"])? || !tap_any(&["分享","Share"])? ||
+        !tap_any(&["分享长图","Share long image"])? {
+        capture(evidence,"sticky_share_menu_missing");
+        return Err("Could not reach real sticky share image action".into());
+    }
+    let png = evidence.join("sticky_authored_newlines.png");
+    let mut complete = false;
+    for _ in 0..40 {
+        let current = cmd(&["shell",&listing])?;
+        if let Some(path) = current.lines().find(|path| !previous.lines().any(|old| old==*path)) {
+            let image = adb(&["exec-out","cat",path])?;
+            if image.status.success() && image.stdout.starts_with(b"\x89PNG\r\n\x1a\n") &&
+                image.stdout.ends_with(b"IEND\xaeB\x60\x82") {
+                fs::write(&png,image.stdout).map_err(|e|e.to_string())?;
+                complete=true;
+                break;
+            }
+        }
+        sleep(Duration::from_millis(500));
+    }
+    if !complete { return Err("Sticky share PNG did not complete".into()); }
+    capture(evidence,"sticky_share_sheet");
+    let image=Command::new("convert").arg(&png)
+        .args(["-colorspace","Gray","-depth","8","pgm:-"]).output().map_err(|e|e.to_string())?;
+    let mut fields=image.stdout.splitn(4,|&byte|byte==b'\n');
+    let header=fields.next();
+    let width:usize=fields.next().and_then(|v|std::str::from_utf8(v).ok()?.split_whitespace().next()?.parse().ok())
+        .ok_or("Sticky PNG width unavailable")?;
+    let depth=fields.next();
+    let pixels=fields.next().unwrap_or_default();
+    if !image.status.success() || header!=Some(b"P5") || depth!=Some(b"255") ||
+        width<20 || pixels.is_empty() || pixels.len()%width!=0 {
+        return Err("Could not decode sticky share PNG".into());
+    }
+    let mut bands:Vec<(usize,usize)>=Vec::new();
+    for (y,row) in pixels.chunks_exact(width).enumerate() {
+        let content=&row[width/20..width*19/20];
+        if content.iter().filter(|&&v|v<160).take(8).count()<8 { continue; }
+        match bands.last_mut() {
+            Some((_,bottom)) if y<=*bottom+3=>*bottom=y,
+            _=>bands.push((y,y)),
+        }
+    }
+    // Title and timestamp precede the six equal-width numeric rows.
+    let rows=bands.get(2..8).ok_or_else(||format!("Missing authored rows in PNG: {bands:?}"))?;
+    let gaps:Vec<usize>=rows.windows(2).map(|w|w[1].0-w[0].0).collect();
+    let ordinary=gaps[0];
+    if ordinary==0 || gaps[1]*10<ordinary*17 || gaps[1]*10>ordinary*23 ||
+        gaps[2]*10<ordinary*27 || gaps[2]*10>ordinary*33 ||
+        gaps[3]*10<ordinary*9 || gaps[3]*10>ordinary*11 ||
+        gaps[4]*10<ordinary*9 || gaps[4]*10>ordinary*11 {
+        return Err(format!("Sticky exported lines or blank paragraphs were collapsed: {gaps:?}; bands={bands:?}"));
+    }
+    fs::write(evidence.join("sticky_share_line_gaps.txt"),format!("{gaps:?}\n")).map_err(|e|e.to_string())?;
+    Ok(format!("PASS: real sticky PNG preserves six authored rows and blank-line spacing, measured row gaps {gaps:?} px after durable version creation and restart."))
 }
 
 fn sticky_version_pressure(root: &Path) -> Result<String, String> {
@@ -675,7 +750,14 @@ fn sticky_version_pressure(root: &Path) -> Result<String, String> {
         && n.bounds[2]>n.bounds[0] && n.bounds[3]>n.bounds[1]).max_by_key(|n|n.bounds[1])
         .ok_or("Sticky body unavailable")?;
     tap(&body)?;
-    for _ in 0..12 { cmd(&["shell","input","text",STICKY_MARKER])?; }
+    let row = STICKY_MARKER.repeat(2);
+    for (index, gap) in [1, 2, 3, 1, 1, 1].into_iter().enumerate() {
+        cmd(&["shell","input","text",&row])?;
+        for _ in 0..gap {
+            cmd(&["shell","input","keyevent","KEYCODE_ENTER"])?;
+        }
+        println!("Typed sticky authored row {}", index+1);
+    }
     cmd(&["shell","input","keyevent","4"])?;
     sleep(Duration::from_millis(600));
     // The real version panel is the same control shown in the reported screenshot.
@@ -719,7 +801,9 @@ fn sticky_version_pressure(root: &Path) -> Result<String, String> {
         return Err("Sticky version stack did not reopen intact".into());
     }
     capture(&evidence,"reopened_versions");
-    Ok(format!("Sticky: {STICKY_ROUNDS} real UI version creates including six competing SQLite writers, each <= {STICKY_BUDGET_MS}ms with unique durable IDs, exact latest pointer and retained marker in every version; force-stop and restart verified."))
+    let share_report = sticky_export_newlines(&evidence)?;
+    println!("{share_report}");
+    Ok(format!("Sticky: {STICKY_ROUNDS} real UI version creates including six competing SQLite writers, each <= {STICKY_BUDGET_MS}ms with unique durable IDs, exact latest pointer and retained marker in every version; force-stop and restart verified. {share_report}"))
 }
 
 fn run(root: &Path) -> Result<String, String> {
