@@ -81,7 +81,9 @@ fn elements(xml: &str) -> Vec<Node> {
 }
 fn dump() -> Result<String, String> {
     for _ in 0..6 {
-        let _ = cmd(&["shell", "uiautomator", "dump", "/sdcard/knowledge_appearance.xml"]);
+        let _ = cmd(&["shell", "rm", "-f", "/sdcard/knowledge_appearance.xml"]);
+        let dumped = cmd(&["shell", "uiautomator", "dump", "/sdcard/knowledge_appearance.xml"]);
+        if dumped.is_err() { sleep(Duration::from_millis(550)); continue; }
         if let Ok(xml) = cmd(&["exec-out", "cat", "/sdcard/knowledge_appearance.xml"]) {
             if xml.contains("<hierarchy") { return Ok(xml); }
         }
@@ -705,8 +707,18 @@ fn run(root: &Path) -> Result<String, String> {
     sleep(Duration::from_secs(7));
     directory(root)?;
     create_page(root, SEED, || Ok(()))?;
+    cmd(&["logcat", "-c"])?;
+    let startup = std::time::Instant::now();
     seed_history(root)?;
-    directory(root)?;
+    let ready = directory(root);
+    let elapsed = startup.elapsed().as_millis();
+    println!("100k fixture preparation plus startup navigation: {elapsed} ms; ready={}", ready.is_ok());
+    fs::write(root.join("history_startup_elapsed_ms.txt"), format!("{elapsed}\n"))
+        .map_err(|e| e.to_string())?;
+    let log = cmd(&["logcat", "-d", "-s", "StartupLatency:I", "SQLiteLog:W", "AndroidRuntime:E"])?;
+    fs::write(root.join("history_startup_logcat.txt"), &log).map_err(|e| e.to_string())?;
+    println!("{log}");
+    ready?;
     cmd(&["logcat", "-c"])?;
     let mut unchecked_history = None;
     let saved_millis = create_page(root, CREATED, || {
@@ -842,6 +854,15 @@ fn main() {
     fs::create_dir_all(&path).expect("evidence directory");
     let result = run(&path);
     capture(&path, "08_final");
+    if result.is_err() {
+        if let Ok(trace) = cmd(&["logcat", "-d", "-s", "StartupLatency:I", "SQLiteLog:W", "AndroidRuntime:E", "NoteSaveLatency:I"]) {
+            let _ = fs::write(path.join("failure_logcat.txt"), &trace);
+            println!("{trace}");
+        }
+        if let Ok(trace) = cmd(&["exec-out", "cat", DIAGNOSTIC_LOG]) {
+            let _ = fs::write(path.join("failure_diagnostics.txt"), trace);
+        }
+    }
     let report = match &result {
         Ok(message) => format!("# Android knowledge save emulator acceptance\n\n{message}\n\nOverall: PASS\n"),
         Err(error) => format!("# Android knowledge save emulator acceptance\n\nFailure: {error}\n\nOverall: FAILED / NOT VERIFIED\n"),
