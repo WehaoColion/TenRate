@@ -577,6 +577,103 @@ fn hold_sqlite_writer() -> Result<JoinHandle<Result<(), String>>, String> {
     }))
 }
 
+// Run on the same signed APK and 7200-row SQLite history after the knowledge
+// checks. Do not replace the earlier assertions or accept a UI-only receipt.
+const STICKY_TITLE: &str = "7391804025006010";
+const STICKY_MARKER: &str = "12345678909876543210";
+const STICKY_ROUNDS: usize = 24;
+const STICKY_BUDGET_MS: u128 = 8_000;
+
+fn sticky_home() -> Result<(), String> {
+    for _ in 0..8 {
+        let xml = dump()?;
+        if xml.contains("最近便签") && xml.contains("回收站") { return Ok(()); }
+        if tap_any(&["便签", "Sticky notes", "Quick notes"])? { continue; }
+        cmd(&["shell", "input", "keyevent", "4"])?;
+        sleep(Duration::from_millis(700));
+    }
+    Err("Could not reach the sticky note home".into())
+}
+
+fn sticky_stack(expected: usize) -> Result<bool, String> {
+    let result = live_sqlite(&format!(
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n \
+         WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{STICKY_TITLE}' \
+         AND json_extract(n.value,'$.kind')='STICKY' \
+         AND json_array_length(n.value,'$.versions')={expected} \
+         AND (SELECT count(DISTINCT json_extract(v.value,'$.id')) FROM json_each(n.value,'$.versions') v)={expected} \
+         AND (SELECT count(*) FROM json_each(n.value,'$.versions') v \
+           WHERE json_extract(v.value,'$.isLatest')=1 AND json_extract(v.value,'$.id')=json_extract(n.value,'$.latestVersionId'))=1 \
+         AND (SELECT count(*) FROM json_each(n.value,'$.versions') v \
+           WHERE instr(v.value,'{STICKY_MARKER}')>0)={expected};"
+    ))?;
+    Ok(result.trim()=="1")
+}
+
+fn sticky_version_pressure(root: &Path) -> Result<String, String> {
+    let evidence = root.join("sticky_version_pressure");
+    fs::create_dir_all(&evidence).map_err(|e|e.to_string())?;
+    cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    sticky_home()?;
+    if !tap_any(&["新建","New"])? { return Err("No sticky create action".into()); }
+    let mut fields: Vec<Node> = elements(&dump()?).into_iter().filter(|n|
+        n.class_name.ends_with("EditText") && n.bounds[2]>n.bounds[0] && n.bounds[3]>n.bounds[1]).collect();
+    fields.sort_by_key(|n|n.bounds[1]);
+    if fields.len()<2 { capture(&evidence,"missing_editor_fields"); return Err("Sticky editor did not expose title and body".into()); }
+    tap(&fields[0])?;
+    cmd(&["shell","input","text",STICKY_TITLE])?;
+    let body = elements(&dump()?).into_iter().filter(|n|n.class_name.ends_with("EditText")
+        && n.bounds[2]>n.bounds[0] && n.bounds[3]>n.bounds[1]).max_by_key(|n|n.bounds[1])
+        .ok_or("Sticky body unavailable")?;
+    tap(&body)?;
+    for _ in 0..12 { cmd(&["shell","input","text",STICKY_MARKER])?; }
+    cmd(&["shell","input","keyevent","4"])?;
+    sleep(Duration::from_millis(600));
+    // The real version panel is the same control shown in the reported screenshot.
+    let mut metrics = String::new();
+    for round in 1..=STICKY_ROUNDS {
+        let action = find(&["下一个版本","Next version"])?.ok_or("Sticky version create action unavailable")?;
+        let writer = if round%4==0 { Some(hold_sqlite_writer()?) } else { None };
+        let started = std::time::Instant::now();
+        send_tap(&action)?;
+        let expected=round+1;
+        let label=format!("版本 {expected} / {expected}");
+        let mut confirmed=false;
+        while started.elapsed().as_millis()<=STICKY_BUDGET_MS {
+            let xml=dump()?;
+            if xml.contains(&label) && !xml.contains("正在创建新版本") && sticky_stack(expected)? {
+                confirmed=true;
+                break;
+            }
+            sleep(Duration::from_millis(150));
+        }
+        if let Some(writer)=writer { writer.join().map_err(|_|"Sticky writer thread panicked")??; }
+        let elapsed=started.elapsed().as_millis();
+        metrics.push_str(&format!("{round},{elapsed},{confirmed}\n"));
+        fs::write(evidence.join("version_elapsed_ms.csv"), &metrics).map_err(|e|e.to_string())?;
+        if !confirmed || elapsed>STICKY_BUDGET_MS {
+            capture(&evidence,"version_failure");
+            return Err(format!("Sticky version {expected} did not receive exact UI and SQLite receipt within {STICKY_BUDGET_MS} ms: {elapsed}ms"));
+        }
+    }
+    capture(&evidence,"all_versions_committed");
+    cmd(&["shell","am","force-stop",PACKAGE])?;
+    if !sticky_stack(STICKY_ROUNDS+1)? { return Err("Sticky version stack lost or duplicated after force-stop".into()); }
+    cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    sticky_home()?;
+    if !tap_any(&[STICKY_TITLE])? { return Err("Persisted sticky note not visible after restart".into()); }
+    let expected=STICKY_ROUNDS+1;
+    let xml=dump()?;
+    if !xml.contains(&format!("版本 {expected} / {expected}")) || !sticky_stack(expected)? {
+        capture(&evidence,"restart_failure");
+        return Err("Sticky version stack did not reopen intact".into());
+    }
+    capture(&evidence,"reopened_versions");
+    Ok(format!("Sticky: {STICKY_ROUNDS} real UI version creates including six competing SQLite writers, each <= {STICKY_BUDGET_MS}ms with unique durable IDs, exact latest pointer and retained marker in every version; force-stop and restart verified."))
+}
+
 fn run(root: &Path) -> Result<String, String> {
     cmd(&["wait-for-device"])?;
     let info = cmd(&["shell", "dumpsys", "package", PACKAGE])?;
@@ -709,8 +806,10 @@ fn run(root: &Path) -> Result<String, String> {
     if packed_after <= packed_before {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
+    let sticky_report = sticky_version_pressure(root)?;
+    println!("{sticky_report}");
     Ok(format!(
-        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; {BURST_ROUNDS} additional rapid input events followed by immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories."
+        "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; {BURST_ROUNDS} additional rapid input events followed by immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories. {sticky_report}"
     ))
 }
 fn main() {
