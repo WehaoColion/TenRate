@@ -1,3 +1,4 @@
+// v3.0.2.15 - Give safe sticky version creation the authoritative SQLite receipt.
 // v3.0.2.15 - Avoid synchronous full recovery mirrors for strictly scoped empty folder inserts.
 // v3.0.2.14 - Use bounded preflight for ordinary local writes and mirror refreshes.
 // v3.0.2.12 - Give foreground document writes priority over deferred recovery mirrors.
@@ -89,6 +90,33 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         &format!("{SCOPED_HELPER}    // Sanitization remains authoritative."),
     )?;
     install_commit_receipts(&mut source)?;
+    // Explicit sticky version creation bypasses updateDataDetailed, so it
+    // previously waited for synchronous JSON mirrors even after SQLite commit.
+    let start = source.find("    suspend fun createNextNoteVersionDurably(")
+        .ok_or("missing version creation")?;
+    let end = source[start..].find("    private suspend fun redactEncryptedNoteRecoveryCopies(")
+        .map(|offset| start + offset).ok_or("missing version creation end")?;
+    let mut version = source[start..end].to_owned();
+    replace_one(&mut version, "                val timestamp = now()\n                val transformed",
+        "                val timestamp = now()\n                val transformStarted = System.nanoTime()\n                val transformed")?;
+    replace_one(&mut version, "                val updated = runCatching {",
+        "                recordNoteSaveStage(\"version_transform\", transformStarted)\n                val normalizeStarted = System.nanoTime()\n                val updated = runCatching {")?;
+    replace_one(&mut version, "                val createdNote = updated.notes.firstOrNull",
+        "                recordNoteSaveStage(\"version_normalize\", normalizeStarted)\n                val createdNote = updated.notes.firstOrNull")?;
+    replace_one(&mut version, "                if (!persistSafely(updated)) {", r#"                val deferVersionMirrors = existing.isSafeStickyVersionReceipt() &&
+                    note.isSafeStickyVersionReceipt() && createdNote.isSafeStickyVersionReceipt() &&
+                    existing.effectiveProtectionStateRevision() == note.effectiveProtectionStateRevision() &&
+                    existing.effectiveProtectionStateRevision() == createdNote.effectiveProtectionStateRevision() &&
+                    createdNote.latestVersionId == newVersionId
+                val persistStarted = System.nanoTime()
+                val saved = if (deferVersionMirrors) {
+                    persistSafelyDetailed(updated, deferRecoveryMirrors = true).succeeded
+                } else {
+                    persistSafely(updated)
+                }
+                recordNoteSaveStage("version_persist", persistStarted)
+                if (!saved) {"#)?;
+    source.replace_range(start..end, &version);
     Ok(source)
 }
 
@@ -149,6 +177,15 @@ const RECOVERY_WORKER: &str = r#"
         kind == NoteEntryKind.DOCUMENT && encryption == null && !isDeleted() && attachments.isEmpty() &&
             !document.richTextEnabled && !isKnowledgeFolder() && !requiresStructuredKnowledgeReader() &&
             document.blocks.all { it.type == NoteBlockType.TEXT }
+
+    // Version creation only appends a snapshot. Defer mirrors exclusively
+    // for unprotected live sticky notes without attachment-bearing history.
+    // Protected, deleted or attachment-containing versions use the full path.
+    private fun NoteEntry.isSafeStickyVersionReceipt(): Boolean =
+        kind == NoteEntryKind.STICKY && encryption == null && !isDeleted() &&
+            attachments.isEmpty() && versions.all {
+                it.kind == NoteEntryKind.STICKY && it.attachments.isEmpty() && it.attachmentIds.isEmpty()
+            }
 
     // A strictly scoped insertion never modifies an existing note or privacy
     // metadata. A new empty folder can therefore use the same authoritative
