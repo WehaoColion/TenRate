@@ -1,3 +1,4 @@
+// v3.0.2.15 - Preserve blank-only authored bodies rather than dropping them as empty.
 // v3.0.2.15 - Keep authored sticky-note line boundaries and trailing Enter in the editor and version draft.
 // v2.23.2.56 - Open Android sticky notes in the editable source, not rendered Markdown.
 // Preserve opt-in preview and read-only historical version rendering.
@@ -37,7 +38,7 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     }"####;
     let new = r####"    fun authoredBody(document: NoteDocument): String =
         if (document.richTextEnabled) {
-            document.richTextPlainText.ifBlank { document.plainText(preserveStructure = true) }
+            document.richTextPlainText.ifEmpty { document.plainText(preserveStructure = true) }
                 .replace("\r\n", "\n").replace('\r', '\n')
         } else {
             document.blocks.filter { it.type == NoteBlockType.TEXT }
@@ -71,6 +72,25 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
     ] {
         if output.matches(before).count() != 1 {
             return Err(format!("sticky note exact draft anchor drifted: {before}"));
+        }
+        output = output.replacen(before, after, 1);
+    }
+    // An existing titled note may consist only of authored blank lines.
+    // Retain them in the authoritative body and when switching editor modes.
+    for (before, after) in [
+        ("resolved.richTextPlainText.ifBlank { fullBody }",
+         "resolved.richTextPlainText.ifEmpty { fullBody }"),
+        ("val normalizedRichHtml = if (richTextEnabled && normalizedBody.isNotBlank())",
+         "val normalizedRichHtml = if (richTextEnabled && normalizedBody.isNotEmpty())"),
+        ("if (normalizedBody.isNotBlank() || normalizedRichHtml.isNotBlank())",
+         "if (normalizedBody.isNotEmpty() || normalizedRichHtml.isNotBlank())"),
+        ("    return NativeOptimizerBridge.renderRichTextBody(content, markdownEnabled)",
+         "    if (!markdownEnabled && content.isNotEmpty() && content.isBlank()) {\n        return fallbackSmartisanPlainTextBody(content)\n    }\n    return NativeOptimizerBridge.renderRichTextBody(content, markdownEnabled)"),
+        ("    if (content.trim().isEmpty()) {\n        return \"\"\n    }\n    return if (markdownEnabled)",
+         "    if (content.isEmpty()) {\n        return \"\"\n    }\n    return if (markdownEnabled)"),
+    ] {
+        if output.matches(before).count() != 1 {
+            return Err(format!("sticky blank-line preservation anchor drifted: {before}"));
         }
         output = output.replacen(before, after, 1);
     }
