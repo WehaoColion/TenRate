@@ -1,3 +1,4 @@
+// v3.0.2.21 - Preserve row/header geometry during auxiliary order reads.
 // v3.0.2.20 - Avoid competing order-load animation during directory navigation.
 // v3.0.2.17 - Avoid snapshot invalidation from navigation bookkeeping and layout coordinates.
 // v3.0.2.15 - Render one directory surface with layer-only motion and indexed row actions.
@@ -1457,14 +1458,16 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                     }
                     Text("知识目录", style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.SemiBold, color = archive.ink))
-                    if (busy || saving) {
-                        CircularProgressIndicator(Modifier.size(22.dp))
-                    } else if (loading) {
-                        // Directory-local ordering is an auxiliary read. Do not
-                        // run an indeterminate animation on every navigation
-                        // while the main directory layer is moving.
-                        Text("读取排序", style = MaterialTheme.typography.labelSmall,
-                            color = archive.ink.copy(alpha = 0.72f))
+                    // Reserve the same measured width before and after order
+                    // loading so completion does not move the header title.
+                    Box(Modifier.width(64.dp).heightIn(min = 22.dp),
+                        contentAlignment = Alignment.CenterEnd) {
+                        if (busy || saving) {
+                            CircularProgressIndicator(Modifier.size(22.dp))
+                        } else if (loading) {
+                            Text("读取排序", style = MaterialTheme.typography.labelSmall,
+                                color = archive.ink.copy(alpha = 0.72f), maxLines = 1)
+                        }
                     }
                 }
                 if (parentId != null) KnowledgeBreadcrumbs(index, parentId) {
@@ -1509,8 +1512,9 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                 val child = index.nodes[id]
                 if (child != null) {
                     val placeholder = dragging?.session?.draggedId == id
-                    val draggable = canSort && id in draggableIds
-                    DisposableEffect(id, handleBounds) { onDispose { handleBounds.remove(id) } }
+                    val handleSlot = directoryScope.canReorder && displayedIds.size > 1 && id in draggableIds
+                    val draggable = canSort && handleSlot
+                    DisposableEffect(id, handleBounds, draggable) { onDispose { handleBounds.remove(id) } }
                     var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) else Modifier
                     if (placeholder) rowModifier = rowModifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { }
                     else if (draggable) rowModifier = rowModifier.semantics {
@@ -1522,15 +1526,25 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                     KnowledgeHierarchyRow(child, index, modifier = rowModifier, enabled = navigationEnabled,
                         trailing = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (draggable) Box(Modifier.size(48.dp).semantics {
-                                    contentDescription = "$KNOWLEDGE_DIRECTORY_DRAG_LABEL，${child.title.ifBlank { "无标题" }}"
-                                    stateDescription = "第 ${position + 1} 项，共 ${displayedIds.size} 项"
-                                }.onGloballyPositioned { handle ->
-                                    val surface = viewport.get()
-                                    if (surface?.isAttached == true && handle.isAttached) {
-                                        handleBounds[id] = surface.localBoundingBoxOf(handle, clipBounds = false)
+                                // Allocate identical row width during the
+                                // auxiliary order read. No inactive handle
+                                // receives a pointer target or sort semantics.
+                                if (handleSlot) {
+                                    val interaction = if (draggable) Modifier.semantics {
+                                        contentDescription = "$KNOWLEDGE_DIRECTORY_DRAG_LABEL，${child.title.ifBlank { "无标题" }}"
+                                        stateDescription = "第 ${position + 1} 项，共 ${displayedIds.size} 项"
+                                    }.onGloballyPositioned { handle ->
+                                        val surface = viewport.get()
+                                        if (surface?.isAttached == true && handle.isAttached) {
+                                            handleBounds[id] = surface.localBoundingBoxOf(handle, clipBounds = false)
+                                        }
+                                    } else Modifier.clearAndSetSemantics {}
+                                    Box(Modifier.size(48.dp).then(interaction),
+                                        contentAlignment = Alignment.Center) {
+                                        Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                            alpha = if (draggable) 1f else 0.38f))
                                     }
-                                }, contentAlignment = Alignment.Center) { Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                }
                                 KnowledgeLegalExclusionAction(workspace, child.id, child.title, index, compact = true)
                                 Text("›")
                             }

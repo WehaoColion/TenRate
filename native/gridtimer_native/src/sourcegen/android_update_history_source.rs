@@ -1,3 +1,4 @@
+// v3.0.2.21 - Record stable directory row layout.
 // v3.0.2.20 - Record reduced directory loading animation.
 // v3.0.2.19 - Record every intervening Android candidate without implying acceptance.
 // v3.0.2.15 - Record continuous knowledge motion.
@@ -95,7 +96,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.20";
+pub const LATEST_VERSION: &str = "3.0.2.21";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -125,6 +126,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.21",
+        updatedAt = "",
+        summary = "稳定知识目录转场期间的行布局",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "目录排序读取期间保留拖动手柄所需的空间，读取完成后再启用排序操作。",
+                "保留当前目录、权限、加载完成状态及排序写入检查；稳定标题区布局。",
+                "动效与五十万条历史快照压力测试仍须实际验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.20",
         updatedAt = "",
