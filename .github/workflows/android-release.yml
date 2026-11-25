@@ -247,13 +247,19 @@ jobs:
             ./document_typing_probe document_typing_evidence || touch document_typing_failed
             adb shell pm clear com.ofairyo.gridtimer
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
-            ./knowledge_save_probe knowledge_save_evidence
+            ./knowledge_save_probe sticky_newline_evidence --sticky-newlines || touch sticky_newlines_failed
+            adb shell pm clear com.ofairyo.gridtimer
+            adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
+            ./knowledge_save_probe knowledge_save_evidence || touch knowledge_save_failed
             test ! -f document_typing_failed
+            test ! -f sticky_newlines_failed
+            test ! -f knowledge_save_failed
       - name: Summarize actual simulator acceptance
         if: always()
         shell: bash
         run: |
           if test -f document_typing_evidence/report.md; then cat document_typing_evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if test -f sticky_newline_evidence/report.md; then cat sticky_newline_evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
           if test -f knowledge_save_evidence/report.md; then
             cat knowledge_save_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
           else
@@ -266,6 +272,7 @@ jobs:
           name: android-knowledge-save-and-typing-${{ github.sha }}
           path: |
             document_typing_evidence/
+            sticky_newline_evidence/
             knowledge_save_evidence/
             !knowledge_save_evidence/*.db*
             !knowledge_save_evidence/legacy_history_payload_sample.json
