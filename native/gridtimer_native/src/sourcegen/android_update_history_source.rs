@@ -1,3 +1,4 @@
+// v3.0.2.24 - Record startup verification diagnostics.
 // v3.0.2.23 - Record bounded history migration reads.
 // v3.0.2.22 - Record sticky input and share navigation verification.
 // v3.0.2.21 - Record stable directory row layout.
@@ -98,7 +99,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.23";
+pub const LATEST_VERSION: &str = "3.0.2.24";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -128,6 +129,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.24",
+        updatedAt = "",
+        summary = "恢复历史维护生成链并细化启动核验",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "撤回与后续生成器冲突的批量压缩候选，保留启动后单条维护和前台写入优先。",
+                "记录数据库打开、历史元数据探查、真实扫描进度与回退原因，定位五十万条恢复耗时。",
+                "不改变完整校验、事务边界、数据保留及八秒保存验收标准。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.23",
         updatedAt = "",

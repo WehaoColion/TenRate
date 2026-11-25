@@ -1,3 +1,4 @@
+// v3.0.2.24 - Identify database open, header probe and payload scan latency without changing verification.
 // v2.23.2.55 - Restore authenticated current snapshot without eager historical payload scans.
 // v2.23.2.54 - Index workspace history in Android 35+ save verification.
 // v2.23.2.49 - Fast-path zero/single-row verification without defeating bounded completion-order pipeline.
@@ -107,7 +108,10 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
         ).use { it.moveToFirst() }
 
     fun <T> withVerifiedWorkspaceReads(workspaceKey: String, action: () -> T): T {
+        val databaseOpenedAt = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.i("StartupLatency", "workspaceRead phase=database_open_begin")
         val database = writableDatabase
+        android.util.Log.i("StartupLatency", "workspaceRead phase=database_open elapsedMs=${android.os.SystemClock.elapsedRealtime() - databaseOpenedAt}")
         // All rows are read on Android's pinned primary connection. The Rust
         // verifier only receives this cursor's bytes, never opens the database.
         // Nested callers retain the existing verification/recovery behavior.
@@ -120,9 +124,11 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
                 var scope = "full"
                 // Only the authenticated current snapshot may activate the fast path.
                 // Its decoded/accepted result is checked later in forEachSnapshot.
+                val metadataStarted = android.os.SystemClock.elapsedRealtime()
                 val metadataSafe = runCatching { !historyRequiresFullStartupScan(workspaceKey) }
                     .onFailure { android.util.Log.w("StartupLatency", "historyHeader fallback", it) }
                     .getOrDefault(false)
+                android.util.Log.i("StartupLatency", "workspaceRead phase=history_headers safe=$metadataSafe elapsedMs=${android.os.SystemClock.elapsedRealtime() - metadataStarted}")
                 if (metadataSafe) {
                     val currentRows = runCatching { verifyNativeSnapshotRows(workspaceKey, currentOnly = true) }
                         .onFailure { android.util.Log.w("StartupLatency", "currentSnapshot fallback", it) }
@@ -138,7 +144,7 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
                     // No current, malformed/future current, native verifier failure or
                     // unsafe historical header: keep the original complete verification.
                     verifiedRows = runCatching { verifyNativeSnapshotRows(workspaceKey) }
-                        .onFailure { android.util.Log.w("StartupLatency", "snapshotStream fallback: ${it.javaClass.simpleName}") }
+                        .onFailure { android.util.Log.w("StartupLatency", "snapshotStream fallback: ${it.javaClass.simpleName}", it) }
                         .getOrDefault(-1L)
                     val after = snapshotWriteStamp()
                     if (verifiedRows >= 0 && before == after) {
@@ -169,6 +175,7 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
         val buffers = SnapshotBufferPool(workers + 1)
         var payloadBytes = 0L
         val started = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.i("StartupLatency", "snapshotPipeline begin rows=$expectedRows workers=$workers currentOnly=$currentOnly")
         val verified = verifySnapshotPipeline(workers, expectedRows) { submit ->
             for (table in tables) {
                 if (android.os.Build.VERSION.SDK_INT >= 35) {
@@ -232,6 +239,8 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
             "CAST(app_data_json AS BLOB) AS app_data_json, sha256, envelope_sha256 " +
             "FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder"
         var bytes = 0L
+        var rows = 0L
+        val scanStarted = android.os.SystemClock.elapsedRealtime()
         // This public API uses the same thread's already-pinned transaction.
         // It avoids CursorWindow copies and never opens another SQLite connection.
         database.createRawStatement(sql).use { row ->
@@ -248,6 +257,9 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
                 val envelope = row.getColumnText(8)
                 val length = row.getColumnLength(6)
                 bytes += length
+                rows++
+                if (rows % 10_000L == 0L) android.util.Log.i("StartupLatency",
+                    "snapshotRead progress table=$table rows=$rows bytes=$bytes elapsedMs=${android.os.SystemClock.elapsedRealtime() - scanStarted}")
                 buffers.submit(length,
                     read = { buffer -> row.readColumnBlob(6, buffer, 0, length, 0) },
                     submit = submit,
