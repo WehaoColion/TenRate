@@ -1,3 +1,4 @@
+// v3.0.2.15 - Read fallback history payloads in one pinned API35 statement.
 // v3.0.2.2 - Use bounded 512-KiB verified SQLite payload chunks to reduce round-trips.
 // v2.23.2.36 - Read large snapshot payloads outside Android's bounded CursorWindow.
 const DATABASE: &str = "com/ofairyo/gridtimer/data/AppStateDatabase.kt";
@@ -159,6 +160,16 @@ private class SnapshotPayloadCursor(
         if (loadedPosition == position) return
         check(position >= 0 && position < count) { "Snapshot cursor is not on a row." }
         payloadRowId = super.getLong(visibleColumns)
+        payloadBytes = null
+        payloadText = null
+        // API 35 exposes the pinned SQLite statement directly. The legacy
+        // fallback used separate length and SUBSTR queries for every row,
+        // which is especially expensive when quarantining a large history.
+        if (android.os.Build.VERSION.SDK_INT >= 35 && database.inTransaction()) {
+            readPinnedPayload()
+            loadedPosition = position
+            return
+        }
         payloadLength = database.rawQuery(
             "SELECT length(CAST(app_data_json AS BLOB)) FROM $table WHERE rowid = ?",
             arrayOf(payloadRowId.toString())
@@ -169,6 +180,32 @@ private class SnapshotPayloadCursor(
         payloadBytes = null
         payloadText = null
         loadedPosition = position
+    }
+
+    @androidx.annotation.RequiresApi(35)
+    private fun readPinnedPayload() {
+        database.createRawStatement(
+            "SELECT app_data_json IS NULL, CAST(app_data_json AS BLOB) FROM $table WHERE rowid = ?"
+        ).use { statement ->
+            statement.bindLong(1, payloadRowId)
+            check(statement.step()) { "Snapshot row disappeared during its pinned read." }
+            if (statement.getColumnInt(0) != 0) {
+                payloadLength = null
+                payloadBytes = null
+            } else {
+                val size = statement.getColumnLength(1)
+                check(size >= 0) { "Invalid snapshot payload length." }
+                val bytes = ByteArray(size)
+                if (size != 0) {
+                    check(statement.readColumnBlob(1, bytes, 0, size, 0) == size) {
+                        "Snapshot payload was not read completely."
+                    }
+                }
+                payloadLength = size.toLong()
+                payloadBytes = bytes
+            }
+            check(!statement.step()) { "Snapshot row identity is not unique." }
+        }
     }
 
     private fun bytes(): ByteArray? {
