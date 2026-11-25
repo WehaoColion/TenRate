@@ -1,3 +1,4 @@
+// v3.0.2.18 - Raise Android history stress to 500000 records.
 // v3.0.2.17 - Synchronize Rust identity and reduce directory layout-driven recomposition.
 // v3.0.2.16 - Verify visible sticky version receipts without clipping the version header.
 // v3.0.2.15 - 知识模块连续空间转场与弹簧动效。
@@ -210,8 +211,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30019
-        versionName '3.0.2.17'
+        versionCode 30020
+        versionName '3.0.2.18'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

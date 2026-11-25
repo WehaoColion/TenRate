@@ -1,3 +1,4 @@
+// v3.0.2.18 - Seed 500,000 real authenticated SQLite history rows in place with bounded transactions.
 // v3.0.2.16 - Reveal real version count before timing and log independent UI/SQLite receipts.
 // v3.0.2.15 - Verify exact sticky authored lines in each durable version and in the actual PNG pixels.
 // v3.0.2.15 - Validate stopped-app durable SQLite directly on the emulator without multi-GiB transfers.
@@ -36,7 +37,8 @@ const EDIT_ROUNDS: usize = 12;
 const BURST_ROUNDS: usize = 30;
 const EDIT_EXIT_MARKER: &str = "98765432109876543210";
 const EDIT_BUDGET_MS: u128 = 8_000;
-const HISTORY_ROWS: usize = 100_000;
+const HISTORY_ROWS: usize = 500_000;
+const HISTORY_BATCH_ROWS: usize = 10_000;
 const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 const PRIMARY_MIRROR: &str =
     "/data/user/0/com.ofairyo.gridtimer/files/state_workspaces/guest/timer_state.json";
@@ -149,7 +151,25 @@ fn clear_system_dialog() -> Result<(), String> {
     }
     Ok(())
 }
+// A very large legacy history may keep the verified startup gate visible
+// longer than normal navigation. This is not part of the per-save budget.
+// Wait only for the explicit recovery gate; do not bypass authentication.
+fn wait_for_workspace_restore() -> Result<(), String> {
+    let started = std::time::Instant::now();
+    loop {
+        let xml = dump()?;
+        if !xml.contains("正在恢复本机数据") && !xml.contains("数据准备完成后自动进入工作台") {
+            return Ok(());
+        }
+        if started.elapsed() >= Duration::from_secs(600) {
+            return Err("Verified workspace recovery still blocked after 600 seconds".into());
+        }
+        sleep(Duration::from_secs(2));
+    }
+}
+
 fn directory(root: &Path) -> Result<(), String> {
+    wait_for_workspace_restore()?;
     for step in 0..13 {
         clear_system_dialog()?;
         let view = dump()?;
@@ -247,30 +267,6 @@ fn create_node(
         return Err("App process exited after knowledge page creation".into());
     }
     Ok(elapsed)
-}
-
-fn pull_database(local: &Path) -> Result<(), String> {
-    let local_str = local.to_str().ok_or("Database fixture path is not UTF-8")?;
-    cmd(&["pull", DATABASE, local_str])?;
-    for extension in ["-wal", "-shm"] {
-        let _ = adb(&["pull", &format!("{DATABASE}{extension}"), &format!("{local_str}{extension}")]);
-    }
-    Ok(())
-}
-
-// Large fixtures are checked independently on the host, then removed before
-// the next pull so repeated evidence collection cannot exhaust runner storage.
-fn remove_local_database(local: &Path) -> Result<(), String> {
-    fs::remove_file(local).map_err(|e| e.to_string())?;
-    for extension in ["-wal", "-shm", "-journal"] {
-        let sidecar = format!("{}{extension}", local.display());
-        match fs::remove_file(sidecar) {
-            Ok(()) => {},
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-    Ok(())
 }
 
 fn has_save_state(xml: &str, state: &str) -> bool {
@@ -437,15 +433,6 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     Err("New knowledge page was not found after app process restart".into())
 }
 
-fn sqlite(db: &Path, statement: &str) -> Result<String, String> {
-    let out = Command::new("sqlite3").arg(db).arg(statement)
-        .output().map_err(|e| format!("sqlite3 is unavailable: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("SQLite history fixture failed: {}", String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-}
-
 // Independently query the actual on-device SQLite file (including committed WAL)
 // with the app stopped. Avoid copying a multi-GiB DB through adb or using app
 // APIs for evidence. Read-only mode prevents the verifier from changing data.
@@ -486,8 +473,8 @@ fn packed_legacy_rows() -> Result<usize, String> {
 // Expand only the historical JSON with legal whitespace, retaining the exact
 // AppData object. An independently calculated digest keeps each row valid;
 // padding invalid JSON or copying the old digest would test quarantine instead.
-fn padded_history_digest(db: &Path, root: &Path) -> Result<String, String> {
-    let encoded = sqlite(db,
+fn padded_history_digest(root: &Path) -> Result<String, String> {
+    let encoded = stopped_sqlite(
         "SELECT hex(app_data_json) FROM current_snapshot WHERE workspace_key = 'guest';")?;
     if encoded.is_empty() || encoded.len() % 2 != 0 {
         return Err("Seed current JSON is empty or has invalid hexadecimal encoding".into());
@@ -521,56 +508,75 @@ fn seed_history(root: &Path) -> Result<(), String> {
     cmd(&["shell", "am", "force-stop", PACKAGE])?;
     cmd(&["root"])?;
     cmd(&["wait-for-device"])?;
-    let local = root.join("fixture_app_state.db");
-    let local_str = local.to_str().ok_or("Fixture path is not UTF-8")?;
-    pull_database(&local)?;
-    let current = sqlite(&local, "SELECT COUNT(*) FROM current_snapshot WHERE workspace_key = 'guest';")?;
+    require_stopped_app()?;
+    let current = stopped_sqlite("SELECT COUNT(*) FROM current_snapshot WHERE workspace_key='guest';")?;
     if current != "1" {
         return Err(format!("Expected one guest current snapshot before seeding, found {current}"));
     }
-    // Preserve the payload/digest from an already authenticated current row.
-    // Legacy history has a valid digest and a blank envelope; only startup
-    // recovery must scan these unchanged rows. Save must preserve them while
-    // authenticating the current snapshot without rereading all history.
-    // Blank legacy history envelopes are supported by the existing native
-    // history verifier, so no fabricated signature is introduced.
-    let digest = padded_history_digest(&local, root)?;
-    let sql = format!(
-        "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; \
-         DROP INDEX snapshot_history_schema_guard; \
-         DROP INDEX snapshot_history_digest_guard; \
-         DROP INDEX snapshot_history_envelope_guard; \
-         PRAGMA user_version=5; \
-         WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < {HISTORY_ROWS}) \
-         INSERT INTO snapshot_history (workspace_key, schema_version, revision, item_count, \
-             app_data_json, sha256, envelope_sha256, created_at_epoch_millis) \
-         SELECT c.workspace_key, c.schema_version, c.revision, c.item_count, \
-             c.app_data_json || printf('%*s', {HISTORY_PADDING_BYTES}, ''), '{digest}', '', \
-             c.updated_at_epoch_millis - {HISTORY_ROWS} + seq.n \
-         FROM current_snapshot c CROSS JOIN seq WHERE c.workspace_key = 'guest'; \
-         PRAGMA journal_mode=WAL; PRAGMA wal_checkpoint(TRUNCATE);"
-    );
-    sqlite(&local, &sql)?;
-    let count: usize = sqlite(&local,
-        "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
-        .parse().map_err(|_| "Could not read seeded history row count")?;
-    if count < HISTORY_ROWS {
-        return Err(format!("History fixture contains {count} rows, expected at least {HISTORY_ROWS}"));
-    }
-    let temporary = "/data/local/tmp/tenrate_history_fixture.db";
-    let fixture_bytes = fs::metadata(&local).map_err(|e| e.to_string())?.len();
+    let digest = padded_history_digest(root)?;
+    let payload_bytes: u64 = fs::metadata(root.join("legacy_history_payload_sample.json"))
+        .map_err(|e|e.to_string())?.len();
     let capacity = cmd(&["shell", "df", "-k", "/data"])?;
-    fs::write(root.join("fixture_storage.txt"), format!("history_rows={count}\nfixture_bytes={fixture_bytes}\n{capacity}"))
-        .map_err(|e| e.to_string())?;
-    println!("Historical fixture: {count} rows, {fixture_bytes} bytes");
-    cmd(&["push", local_str, temporary])?;
-    cmd(&["shell", "cp", temporary, DATABASE])?;
-    let _ = cmd(&["shell", "rm", "-f", &format!("{DATABASE}-wal"), &format!("{DATABASE}-shm")]);
-    let _ = cmd(&["shell", "restorecon", DATABASE]);
-    cmd(&["shell", "rm", "-f", temporary])?;
-    remove_local_database(&local)?;
-    fs::write(root.join("fixture_history_count.txt"), format!("{count}\n"))
-        .map_err(|e| e.to_string())?;
+    let available_kib = capacity.lines().last()
+        .and_then(|line|line.split_whitespace().nth(3))
+        .and_then(|value|value.parse::<u64>().ok()).ok_or("Could not read emulator free space")?;
+    // Allow for page/overflow overhead, indexes and bounded batch journals.
+    let minimum = payload_bytes.saturating_mul(HISTORY_ROWS as u64)
+        .saturating_mul(3)/2 + 3*1024*1024*1024;
+    fs::write(root.join("fixture_storage.txt"),format!("target_rows={HISTORY_ROWS}\npayload_bytes={payload_bytes}\nminimum_free_bytes={minimum}\n{capacity}"))
+        .map_err(|e|e.to_string())?;
+    if available_kib.saturating_mul(1024) < minimum {
+        return Err(format!("Insufficient emulator disk: need {minimum} bytes; available {} KiB",available_kib));
+    }
+    // Seed directly on the rooted test emulator. Preserve the original file
+    // owner/SELinux label. No multi-GiB pull, push or second database copy.
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    let write = |statement: &str| -> Result<String,String> {
+        require_stopped_app()?;
+        let command = format!("sqlite3 -batch -bail -cmd '.timeout 8000' {} {}",quote(DATABASE),quote(statement));
+        let result = cmd(&["shell",&command])?;
+        require_stopped_app()?;
+        Ok(result.trim().to_owned())
+    };
+    write("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; \
+           DROP INDEX snapshot_history_schema_guard; \
+           DROP INDEX snapshot_history_digest_guard; \
+           DROP INDEX snapshot_history_envelope_guard; \
+           PRAGMA user_version=5;")?;
+    // Identical payloads retain the original test's authenticated JSON and
+    // independently computed SHA-256. Each row has its own SQLite identity.
+    // Bounded transactions prevent a single giant journal or copy.
+    for first in (1..=HISTORY_ROWS).step_by(HISTORY_BATCH_ROWS) {
+        let last = (first + HISTORY_BATCH_ROWS - 1).min(HISTORY_ROWS);
+        write(&format!(
+            "BEGIN IMMEDIATE; \
+             WITH RECURSIVE seq(n) AS (SELECT {first} UNION ALL SELECT n+1 FROM seq WHERE n < {last}) \
+             INSERT INTO snapshot_history (workspace_key, schema_version, revision, item_count, \
+                 app_data_json, sha256, envelope_sha256, created_at_epoch_millis) \
+             SELECT c.workspace_key, c.schema_version, c.revision, c.item_count, \
+                 c.app_data_json || printf('%*s', {HISTORY_PADDING_BYTES}, ''), '{digest}', '', \
+                 c.updated_at_epoch_millis - {HISTORY_ROWS} + seq.n \
+             FROM current_snapshot c CROSS JOIN seq WHERE c.workspace_key='guest'; COMMIT;"
+        ))?;
+        println!("Seeded historical rows {first}..={last} / {HISTORY_ROWS}");
+    }
+    write("PRAGMA journal_mode=WAL; PRAGMA wal_checkpoint(TRUNCATE);")?;
+    let count: usize = stopped_sqlite("SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
+        .parse().map_err(|_| "Could not read seeded history count")?;
+    let exact = stopped_sqlite(&format!(
+        "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest' AND sha256='{digest}' \
+         AND envelope_sha256='' AND length(CAST(app_data_json AS BLOB))={payload_bytes};"))?;
+    if count < HISTORY_ROWS || exact.parse::<usize>() != Ok(HISTORY_ROWS) {
+        return Err(format!("Historical fixture mismatch: total={count}, exact={exact}, expected={HISTORY_ROWS}"));
+    }
+    let fixture_bytes = cmd(&["shell","stat","-c","%s",DATABASE])?;
+    let capacity = cmd(&["shell","df","-k","/data"])?;
+    fs::write(root.join("fixture_storage.txt"),format!("history_rows={count}\nexact_fixture_rows={exact}\npayload_bytes={payload_bytes}\nfixture_bytes={}\n{capacity}",fixture_bytes.trim()))
+        .map_err(|e|e.to_string())?;
+    fs::write(root.join("fixture_history_count.txt"),format!("{count}\n"))
+        .map_err(|e|e.to_string())?;
+    println!("Historical fixture: {count} rows, {exact} exact fixture rows, {} bytes",fixture_bytes.trim());
+    cmd(&["shell", "restorecon", DATABASE])?;
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     Ok(())
@@ -627,7 +633,7 @@ fn hold_sqlite_writer() -> Result<JoinHandle<Result<(), String>>, String> {
     }))
 }
 
-// Run on the same signed APK and 100,000-row SQLite history after the knowledge
+// Run on the same signed APK and 500,000-row SQLite history after the knowledge
 // checks. Do not replace the earlier assertions or accept a UI-only receipt.
 const STICKY_TITLE: &str = "7391804025006010";
 const STICKY_MARKER: &str = "12345678909876543210";
@@ -635,6 +641,7 @@ const STICKY_ROUNDS: usize = 24;
 const STICKY_BUDGET_MS: u128 = 8_000;
 
 fn sticky_home() -> Result<(), String> {
+    wait_for_workspace_restore()?;
     for _ in 0..8 {
         let xml = dump()?;
         if xml.contains("最近便签") && xml.contains("回收站") { return Ok(()); }
@@ -990,7 +997,7 @@ fn run(root: &Path) -> Result<String, String> {
     seed_history(root)?;
     let ready = directory(root);
     let elapsed = startup.elapsed().as_millis();
-    println!("100k fixture preparation plus startup navigation: {elapsed} ms; ready={}", ready.is_ok());
+    println!("{HISTORY_ROWS} historical rows fixture preparation plus startup navigation: {elapsed} ms; ready={}", ready.is_ok());
     fs::write(root.join("history_startup_elapsed_ms.txt"), format!("{elapsed}\n"))
         .map_err(|e| e.to_string())?;
     let log = cmd(&["logcat", "-d", "-s", "StartupLatency:I", "SQLiteLog:W", "AndroidRuntime:E"])?;

@@ -194,7 +194,7 @@ jobs:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4' || github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15'
     needs: release
     runs-on: ubuntu-22.04
-    timeout-minutes: 150
+    timeout-minutes: 240
     permissions:
       contents: read
       actions: read
@@ -217,6 +217,13 @@ jobs:
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
           rustc --edition=2021 -D warnings -O tools/android_document_typing_probe.rs -o document_typing_probe
+      - name: Reserve host storage for the 500000-row on-device history
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Remove unused preinstalled SDKs, not Android tools or the signed APK.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h .
       - name: Prepare SQLite for the Rust history-load fixture
         shell: bash
         run: |
@@ -237,7 +244,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          disk-size: 12G
+          disk-size: 32G
           disable-animations: true
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
