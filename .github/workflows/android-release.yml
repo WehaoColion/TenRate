@@ -1060,7 +1060,7 @@ jobs:
           retention-days: 21
 
   knowledge-motion-emulator:
-    name: Android 3.0.2.15 continuous knowledge motion on API 35
+    name: Android signed APK continuous knowledge motion on API 35
     if: github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15'
     needs: release
     runs-on: ubuntu-22.04
@@ -1080,7 +1080,10 @@ jobs:
         run: |
           set -euo pipefail
           cd motion_apk
-          tr -d '\r' < tenfold_v3.0.2.15.apk.sha256 | sha256sum -c -
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_knowledge_motion_probe.rs -o knowledge_motion_probe
       - name: Allow KVM
@@ -1102,7 +1105,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r motion_apk/tenfold_v3.0.2.15.apk
+            adb install -r motion_apk/tenfold_v*.apk
             adb shell settings put global window_animation_scale 1.0
             adb shell settings put global transition_animation_scale 1.0
             adb shell settings put global animator_duration_scale 1.0
@@ -1121,7 +1124,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: knowledge-motion-v3.0.2.15-api35-evidence
+          name: knowledge-motion-api35-evidence-${{ github.sha }}
           path: knowledge_motion_evidence/
           if-no-files-found: warn
           retention-days: 21

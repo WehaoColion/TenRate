@@ -1,3 +1,4 @@
+// v3.0.2.16 - Reveal real version count before timing and log independent UI/SQLite receipts.
 // v3.0.2.15 - Verify exact sticky authored lines in each durable version and in the actual PNG pixels.
 // v3.0.2.15 - Validate stopped-app durable SQLite directly on the emulator without multi-GiB transfers.
 // v3.0.2.15 - Scale genuine SQLite history to 100,000 rows without reducing per-row payload or latency gates.
@@ -660,6 +661,24 @@ fn sticky_authored_body() -> String {
     body
 }
 
+// Long authored notes can leave the LazyColumn scrolled when the IME closes.
+// The version action may be visible while its count is above the viewport.
+// Reveal the real count before starting the latency clock; never substitute
+// a database-only receipt or relax the eight-second operation deadline.
+fn reveal_sticky_version_bar(expected: usize) -> Result<String, String> {
+    let label = if expected == 1 { "第 1 版".to_owned() }
+        else { format!("版本 {expected} / {expected}") };
+    for attempt in 0..4 {
+        let xml = dump()?;
+        if xml.contains(&label) && xml.contains("下一个版本") { return Ok(xml); }
+        if attempt < 3 {
+            cmd(&["shell","input","swipe","535","760","535","1560","350"])?;
+            sleep(Duration::from_millis(250));
+        }
+    }
+    Err(format!("Could not reveal actual version header: {label}"))
+}
+
 fn sticky_stack(expected: usize) -> Result<bool, String> {
     // Numeric fixture, so literal LF is the only SQL escaping needed; hex
     // comparison avoids shell newline or JSON escaping ambiguities.
@@ -829,6 +848,10 @@ fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String>
     // The real version panel is the same control shown in the reported screenshot.
     let mut metrics = String::new();
     for round in 1..=rounds {
+        if let Err(error) = reveal_sticky_version_bar(round) {
+            capture(&evidence,"version_header_not_visible");
+            return Err(error);
+        }
         let action = find(&["下一个版本","Next version"])?.ok_or("Sticky version create action unavailable")?;
         let writer = if round%4==0 { Some(hold_sqlite_writer()?) } else { None };
         let started = std::time::Instant::now();
@@ -838,7 +861,10 @@ fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String>
         let mut confirmed=false;
         while started.elapsed().as_millis()<=STICKY_BUDGET_MS {
             let xml=dump()?;
-            if xml.contains(&label) && !xml.contains("正在创建新版本") && sticky_stack(expected)? {
+            let durable = sticky_stack(expected)?;
+            let visible = xml.contains(&label) && !xml.contains("正在创建新版本");
+            println!("Sticky version {expected}: elapsed={}ms visible={visible} durable={durable}", started.elapsed().as_millis());
+            if visible && durable {
                 confirmed=true;
                 break;
             }
@@ -861,7 +887,7 @@ fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String>
     sticky_home()?;
     if !tap_any(&[STICKY_TITLE])? { return Err("Persisted sticky note not visible after restart".into()); }
     let expected=rounds+1;
-    let xml=dump()?;
+    let xml=reveal_sticky_version_bar(expected)?;
     if !xml.contains(&format!("版本 {expected} / {expected}")) || !sticky_stack(expected)? {
         capture(&evidence,"restart_failure");
         return Err("Sticky version stack did not reopen intact".into());
@@ -911,14 +937,17 @@ fn sticky_rich_roundtrip(root: &Path, prior_versions: usize) -> Result<String, S
            AND json_extract(v.value,'$.id')=json_extract(n.value,'$.latestVersionId') \
            AND json_extract(v.value,'$.document.richTextEnabled')=1)=1;"
     );
+    reveal_sticky_version_bar(prior_versions)?;
     let action = find(&["下一个版本","Next version"])?.ok_or("RTF version create action missing")?;
     let started = std::time::Instant::now();
     send_tap(&action)?;
     let mut confirmed = false;
     while started.elapsed().as_millis() <= STICKY_BUDGET_MS {
         let ui = dump()?;
-        if ui.contains(&format!("版本 {expected} / {expected}")) && !ui.contains("正在创建新版本")
-            && live_sqlite(&query)?.trim()=="1" {
+        let durable = live_sqlite(&query)?.trim()=="1";
+        let visible = ui.contains(&format!("版本 {expected} / {expected}")) && !ui.contains("正在创建新版本");
+        println!("RTF version {expected}: elapsed={}ms visible={visible} durable={durable}", started.elapsed().as_millis());
+        if visible && durable {
             confirmed = true;
             break;
         }
@@ -937,7 +966,7 @@ fn sticky_rich_roundtrip(root: &Path, prior_versions: usize) -> Result<String, S
     sleep(Duration::from_secs(7));
     sticky_home()?;
     if !tap_any(&[STICKY_TITLE])? { return Err("RTF note missing after restart".into()); }
-    let xml = dump()?;
+    let xml = reveal_sticky_version_bar(expected)?;
     if !xml.contains("RTF") || !xml.contains(&format!("版本 {expected} / {expected}"))
         || live_sqlite(&query)?.trim()!="1" {
         capture(&evidence,"rtf_restart_failure");

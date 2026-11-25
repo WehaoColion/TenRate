@@ -4,7 +4,13 @@ use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sl
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-const VERSION: &str = "3.0.2.15";
+// The version contract follows the exact checked-out Android build definition,
+// so later revisions cannot accidentally verify an older signed package.
+fn expected_version() -> Result<&'static str, String> {
+    include_str!("../app/build.gradle").lines()
+        .find_map(|line| line.trim().strip_prefix("versionName '")?.strip_suffix('\''))
+        .ok_or_else(|| "Android build versionName missing".into())
+}
 const FOLDER: &str = "KnowledgeDesignFolder";
 
 #[derive(Clone)]
@@ -265,8 +271,9 @@ fn run(root: &Path) -> Result<String, String> {
     assert_animations_enabled()?;
     cmd(&["wait-for-device"])?;
     let package_info = cmd(&["shell", "dumpsys", "package", PACKAGE])?;
-    if !package_info.contains(&format!("versionName={VERSION}")) {
-        return Err(format!("Installed package is not Android {VERSION}"));
+    let version = expected_version()?;
+    if !package_info.lines().any(|line| line.trim() == format!("versionName={version}")) {
+        return Err(format!("Installed package is not Android {version}"));
     }
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
@@ -308,7 +315,7 @@ fn run(root: &Path) -> Result<String, String> {
     if !settings_menu.contains("排除法律风险分析") {
         return Err("Folder legal exclusion is not reachable from its settings".into());
     }
-    Ok(format!("PASS: signed Android {VERSION} launched with animation scales 1.0; knowledge directory, folder creation, management and exclusion controls passed; forward/back/re-entry passed; MP4 captured and independent unrecorded frame budget passed. Visual smoothness still requires reviewing evidence."))
+    Ok(format!("PASS: signed Android {version} launched with animation scales 1.0; knowledge directory, folder creation, management and exclusion controls passed; forward/back/re-entry passed; MP4 captured and independent unrecorded frame budget passed. Visual smoothness still requires reviewing evidence."))
 }
 fn main() {
     let path = env::args_os().nth(1).map(PathBuf::from)

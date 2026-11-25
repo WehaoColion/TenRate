@@ -1,3 +1,4 @@
+// v3.0.2.16 - Verify visible sticky version receipts without clipping the version header.
 // v3.0.2.15 - 知识模块连续空间转场与弹簧动效。
 // v3.0.2.14 - 修复本地保存重复扫描历史快照。
 // v3.0.2.13 - 知识页退出保存回执优化。
@@ -208,8 +209,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30017
-        versionName '3.0.2.15'
+        versionCode 30018
+        versionName '3.0.2.16'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
