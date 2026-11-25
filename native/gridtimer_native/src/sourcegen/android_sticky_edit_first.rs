@@ -1,3 +1,4 @@
+// v3.0.2.15 - Keep authored sticky-note line boundaries and trailing Enter in the editor and version draft.
 // v2.23.2.56 - Open Android sticky notes in the editable source, not rendered Markdown.
 // Preserve opt-in preview and read-only historical version rendering.
 const PATH: &str = "com/ofairyo/gridtimer/ui/SmartisanNoteUi.kt";
@@ -22,7 +23,54 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
             "sticky-note edit-first entry: expected one old preview initializer, found {count}"
         ));
     }
-    Ok(source.replacen(OLD_ENTRY_MODE, NEW_ENTRY_MODE, 1))
+    let mut output = source.replacen(OLD_ENTRY_MODE, NEW_ENTRY_MODE, 1);
+    // A search/preview digest intentionally strips formatting and compresses
+    // whitespace. It must never serve as the editable source of a sticky note.
+    let old = r####"    val fullBody = editableDocument.plainText(preserveStructure = true)
+    val trimmedBody = if (title.trim().isBlank() && !editableDocument.richTextEnabled) {
+        editableDocument.withoutLeadingMeaningfulTextLine().plainText(preserveStructure = true)
+    } else {
+        fullBody
+    }"####;
+    let new = r####"    fun authoredBody(document: NoteDocument): String =
+        if (document.richTextEnabled) {
+            document.richTextPlainText.replace("\r\n", "\n").replace('\r', '\n')
+        } else {
+            document.blocks.filter { it.type == NoteBlockType.TEXT }
+                .joinToString("\n\n") { it.text.replace("\r\n", "\n").replace('\r', '\n') }
+        }
+    val fullBody = authoredBody(editableDocument)
+    val trimmedBody = if (title.trim().isBlank() && !editableDocument.richTextEnabled) {
+        // For legacy notes with implicit titles, remove only the title line
+        // and its preceding whitespace, never trim the authored body tail.
+        val firstMeaningful = fullBody.split('\n').indexOfFirst { it.isNotBlank() }
+        if (firstMeaningful < 0) fullBody
+        else fullBody.split('\n').drop(firstMeaningful + 1).joinToString("\n")
+    } else {
+        fullBody
+    }"####;
+    if output.matches(old).count() != 1 {
+        return Err("sticky note editable body projection drifted".into());
+    }
+    output = output.replacen(old, new, 1);
+    // Keep trailing Enter presses meaningful in the draft, dirty detection,
+    // and version snapshots. Normalize only line-ending encodings.
+    for (before, after) in [
+        (r####"val normalizedBody = plainBody.replace("\r\n", "\n").trimEnd()"####,
+         r####"val normalizedBody = plainBody.replace("\r\n", "\n").replace('\r', '\n')"####),
+        (r####"currentDraft.plainBody.replace("\r\n", "\n").trimEnd() == normalizedBody"####,
+         r####"currentDraft.plainBody.replace("\r\n", "\n").replace('\r', '\n') == normalizedBody"####),
+        (r####"baseDraft.plainBody.replace("\r\n", "\n").trimEnd()"####,
+         r####"baseDraft.plainBody.replace("\r\n", "\n").replace('\r', '\n')"####),
+        (r####"candidateDraft.plainBody.replace("\r\n", "\n").trimEnd()"####,
+         r####"candidateDraft.plainBody.replace("\r\n", "\n").replace('\r', '\n')"####),
+    ] {
+        if output.matches(before).count() != 1 {
+            return Err(format!("sticky note exact draft anchor drifted: {before}"));
+        }
+        output = output.replacen(before, after, 1);
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
