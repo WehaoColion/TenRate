@@ -1,3 +1,4 @@
+// v3.0.2.19 - Record every intervening Android candidate without implying acceptance.
 // v3.0.2.15 - Record continuous knowledge motion.
 // v3.0.2.14 - Record the bounded local save preflight.
 // v3.0.2.13 - Record exact autosave receipt reuse and exit measurement.
@@ -93,7 +94,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.15";
+pub const LATEST_VERSION: &str = "3.0.2.19";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -123,6 +124,50 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.19",
+        updatedAt = "",
+        summary = "同步更新记录与安卓版本标识",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "补齐此前候选版本的应用内更新记录，保留正式签名和版本一致性检查。",
+                "继续执行五十万条历史快照、便签原文与分享图片以及知识动效验收；本候选尚未完成全部验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.18",
+        updatedAt = "2026-11-26 02:01",
+        summary = "提升历史快照压力测试规模（候选）",
+        sections = listOf(
+            AndroidUpdateSection("存储验收", listOf(
+                "模拟器内分批生成五十万条真实 SQLite 历史快照，保留每条额外数据填充和摘要核验。",
+                "前台保存时限保持八秒，继续核对进程重启后的资料完整性。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.17",
+        updatedAt = "2026-11-26 01:58",
+        summary = "减少知识目录动画期间的重复状态更新（候选）",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "导航记录和布局坐标不再触发不必要的界面重组。",
+                "同步 Rust 产品标识及安卓打包版本，动效改善幅度待实测。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.16",
+        updatedAt = "2026-11-26 01:48",
+        summary = "完善便签版本回执验收（候选）",
+        sections = listOf(
+            AndroidUpdateSection("便签验收", listOf(
+                "计时前显示实际版本栏，分别核对界面回执和 SQLite 正文回执。",
+                "保持八秒时限及逐字节正文核验，未将候选标记为已通过。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.15",
         updatedAt = "2026-11-24 19:41",
