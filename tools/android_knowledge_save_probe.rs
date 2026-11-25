@@ -1,3 +1,4 @@
+// v3.0.2.15 - Validate stopped-app durable SQLite directly on the emulator without multi-GiB transfers.
 // v3.0.2.15 - Scale genuine SQLite history to 100,000 rows without reducing per-row payload or latency gates.
 // v3.0.2.15 - Repeated nested-page body edits, real writer contention and immediate durable exit under historical load.
 // v3.0.2.15 - Exercise folder-to-child-page persistence under the loaded history and assert actual latency.
@@ -362,10 +363,9 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
 fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize), String> {
     // A visible "Saved" label is not proof: read the authoritative SQLite
     // snapshot after process death, including its WAL, before reopening the UI.
-    let local = root.join("durable_app_state.db");
-    pull_database(&local)?;
+    require_stopped_app()?;
     let escaped = page_name.replace('\'', "''");
-    let matches = sqlite(&local, &format!(
+    let matches = stopped_sqlite(&format!(
         "SELECT COUNT(DISTINCT json_extract(note.value, '$.title')) FROM current_snapshot AS s,
          json_each(s.app_data_json, '$.notes') AS note WHERE s.workspace_key='guest'
          AND json_extract(note.value, '$.title') IN ('{escaped}', '{CONTENDED}');"
@@ -374,7 +374,7 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
         return Err(format!("Expected two distinct saved page titles in SQLite after force-stop, found {matches}"));
     }
     // Confirm exactly one typed node per operation and the durable parent ID.
-    let folders = sqlite(&local, &format!(
+    let folders = stopped_sqlite(&format!(
         "WITH nodes AS (SELECT note.value AS n FROM current_snapshot AS s,
           json_each(s.app_data_json, '$.notes') AS note WHERE s.workspace_key='guest'),
           root AS (SELECT n FROM nodes WHERE json_extract(n,'$.title')='{ROOT_FOLDER}'),
@@ -395,11 +395,11 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     }
     let expected = (0..EDIT_ROUNDS).map(|round| format!("817{round:02}629")).collect::<String>()
         + &(0..BURST_ROUNDS).map(|round| format!("943{round:02}")).collect::<Vec<_>>().concat();
-    let all_body = sqlite(&local, &format!(
+    let all_body = stopped_sqlite(&format!(
         "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND EXISTS (SELECT 1 FROM json_each(n.value,'$.document.blocks') b WHERE instr(json_extract(b.value,'$.text'),'{expected}{EDIT_EXIT_MARKER}')>0);"
     ))?;
     if all_body != "1" { return Err("One or more nested body edits were lost after restart".into()); }
-    let history: usize = sqlite(&local,
+    let history: usize = stopped_sqlite(
         "SELECT COUNT(*) FROM snapshot_history WHERE workspace_key='guest';")?
         .parse().map_err(|_| "Durable history count is invalid")?;
     fs::write(root.join("durable_history_count.txt"), format!("{history}\n"))
@@ -407,13 +407,12 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
     if history < HISTORY_ROWS {
         return Err(format!("History was unexpectedly removed during saving: {history}"));
     }
-    let version = sqlite(&local, "PRAGMA user_version;")?;
-    let indexes = sqlite(&local, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('snapshot_history_schema_guard','snapshot_history_digest_guard','snapshot_history_envelope_guard');")?;
+    let version = stopped_sqlite("PRAGMA user_version;")?;
+    let indexes = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('snapshot_history_schema_guard','snapshot_history_digest_guard','snapshot_history_envelope_guard');")?;
     if version != "7" || indexes != "3" {
         return Err(format!("Database upgrade did not install all guards: version={version}, indexes={indexes}"));
     }
-    let packed = packed_legacy_rows(&local)?;
-    remove_local_database(&local)?;
+    let packed = packed_legacy_rows()?;
     if packed == 0 || packed >= HISTORY_ROWS {
         return Err(format!("Expected work remaining after partial legacy authentication, got {packed} packed rows"));
     }
@@ -445,10 +444,34 @@ fn sqlite(db: &Path, statement: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
-fn packed_legacy_rows(db: &Path) -> Result<usize, String> {
+// Independently query the actual on-device SQLite file (including committed WAL)
+// with the app stopped. Avoid copying a multi-GiB DB through adb or using app
+// APIs for evidence. Read-only mode prevents the verifier from changing data.
+fn require_stopped_app() -> Result<(), String> {
+    let output = adb(&["shell", "pidof", PACKAGE])?;
+    if output.status.success() || !String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+        return Err("App process must be stopped before durable SQLite verification".into());
+    }
+    if output.status.code() != Some(1) {
+        return Err(format!("Could not verify stopped app: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    Ok(())
+}
+
+fn stopped_sqlite(statement: &str) -> Result<String, String> {
+    require_stopped_app()?;
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    let command = format!("sqlite3 -readonly -batch -bail -cmd '.timeout 8000' {} {}",
+        quote(DATABASE), quote(statement));
+    let result = cmd(&["shell", &command])?;
+    require_stopped_app()?;
+    Ok(result.trim().to_owned())
+}
+
+fn packed_legacy_rows() -> Result<usize, String> {
     // The original v5 fixture rows have a valid digest; the separate live
     // fault fixture has neither a digest nor an envelope.
-    let state = sqlite(db,
+    let state = stopped_sqlite(
         "SELECT COUNT(*) || ':' || COUNT(CASE WHEN storage_encoding=1 AND app_data_json GLOB '!gridtimer-history-v1:*' THEN 1 END) \
          FROM snapshot_history WHERE workspace_key='guest' AND envelope_sha256='' AND sha256<>'';")?;
     let (total, packed) = state.split_once(':').ok_or("Invalid legacy row counts")?;
@@ -827,9 +850,8 @@ fn run(root: &Path) -> Result<String, String> {
     if !repaired { return Err("Verified startup did not repair the stale recovery copy".into()); }
     sleep(Duration::from_secs(4));
     cmd(&["shell", "am", "force-stop", PACKAGE])?;
-    let after = root.join("resumed_app_state.db");
-    pull_database(&after)?;
-    let quarantined_history = sqlite(&after, &format!(
+    require_stopped_app()?;
+    let quarantined_history = stopped_sqlite(&format!(
         "SELECT COUNT(*) FROM snapshot_quarantine WHERE workspace_key='guest' \
          AND source_table='snapshot_history' AND source_row_id='{unchecked_history}' \
          AND stored_sha256='' AND reason='sha256_mismatch' AND length(app_data_json)>0;"
@@ -837,8 +859,7 @@ fn run(root: &Path) -> Result<String, String> {
     if quarantined_history != "1" {
         return Err("Startup recovery did not preserve the unchecked history row in quarantine".into());
     }
-    let packed_after = packed_legacy_rows(&after)?;
-    remove_local_database(&after)?;
+    let packed_after = packed_legacy_rows()?;
     if packed_after <= packed_before {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
