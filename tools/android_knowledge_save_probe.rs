@@ -733,7 +733,7 @@ fn sticky_export_newlines(evidence: &Path) -> Result<String, String> {
     Ok(format!("PASS: real sticky PNG preserves six authored rows and blank-line spacing, measured row gaps {gaps:?} px after durable version creation and restart."))
 }
 
-fn sticky_version_pressure(root: &Path) -> Result<String, String> {
+fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String> {
     let evidence = root.join("sticky_version_pressure");
     fs::create_dir_all(&evidence).map_err(|e|e.to_string())?;
     cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
@@ -762,7 +762,7 @@ fn sticky_version_pressure(root: &Path) -> Result<String, String> {
     sleep(Duration::from_millis(600));
     // The real version panel is the same control shown in the reported screenshot.
     let mut metrics = String::new();
-    for round in 1..=STICKY_ROUNDS {
+    for round in 1..=rounds {
         let action = find(&["下一个版本","Next version"])?.ok_or("Sticky version create action unavailable")?;
         let writer = if round%4==0 { Some(hold_sqlite_writer()?) } else { None };
         let started = std::time::Instant::now();
@@ -789,12 +789,12 @@ fn sticky_version_pressure(root: &Path) -> Result<String, String> {
     }
     capture(&evidence,"all_versions_committed");
     cmd(&["shell","am","force-stop",PACKAGE])?;
-    if !sticky_stack(STICKY_ROUNDS+1)? { return Err("Sticky version stack lost or duplicated after force-stop".into()); }
+    if !sticky_stack(rounds+1)? { return Err("Sticky version stack lost or duplicated after force-stop".into()); }
     cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
     sleep(Duration::from_secs(7));
     sticky_home()?;
     if !tap_any(&[STICKY_TITLE])? { return Err("Persisted sticky note not visible after restart".into()); }
-    let expected=STICKY_ROUNDS+1;
+    let expected=rounds+1;
     let xml=dump()?;
     if !xml.contains(&format!("版本 {expected} / {expected}")) || !sticky_stack(expected)? {
         capture(&evidence,"restart_failure");
@@ -803,7 +803,7 @@ fn sticky_version_pressure(root: &Path) -> Result<String, String> {
     capture(&evidence,"reopened_versions");
     let share_report = sticky_export_newlines(&evidence)?;
     println!("{share_report}");
-    Ok(format!("Sticky: {STICKY_ROUNDS} real UI version creates including six competing SQLite writers, each <= {STICKY_BUDGET_MS}ms with unique durable IDs, exact latest pointer and retained marker in every version; force-stop and restart verified. {share_report}"))
+    Ok(format!("Sticky: {rounds} real UI version creates including {} competing SQLite writers, each <= {STICKY_BUDGET_MS}ms with unique durable IDs, exact latest pointer and retained marker in every version; force-stop and restart verified. {share_report}", rounds / 4))
 }
 
 fn run(root: &Path) -> Result<String, String> {
@@ -947,7 +947,7 @@ fn run(root: &Path) -> Result<String, String> {
     if packed_after <= packed_before {
         return Err(format!("Legacy authentication did not resume after restart: {packed_before} to {packed_after} packed rows"));
     }
-    let sticky_report = sticky_version_pressure(root)?;
+    let sticky_report = sticky_version_pressure(root, STICKY_ROUNDS)?;
     println!("{sticky_report}");
     Ok(format!(
         "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; {BURST_ROUNDS} additional rapid input events followed by immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories. {sticky_report}"
@@ -957,7 +957,15 @@ fn main() {
     let path = env::args_os().nth(1).map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("knowledge_save_evidence"));
     fs::create_dir_all(&path).expect("evidence directory");
-    let result = run(&path);
+    let result = if env::args().nth(2).as_deref() == Some("--sticky-newlines") {
+        // Standalone signed APK regression on clean state, before heavy load.
+        // Still exercises real editing, four version commits (one competing
+        // writer), exact SQLite bytes after process death and exported pixels.
+        cmd(&["root"]).and_then(|_| cmd(&["wait-for-device"]))
+            .and_then(|_| sticky_version_pressure(&path, 4))
+    } else {
+        run(&path)
+    };
     capture(&path, "08_final");
     if result.is_err() {
         if let Ok(trace) = cmd(&["logcat", "-d", "-s", "StartupLatency:I", "SQLiteLog:W", "AndroidRuntime:E", "NoteSaveLatency:I"]) {
