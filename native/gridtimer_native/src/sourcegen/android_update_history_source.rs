@@ -1,3 +1,4 @@
+// v3.0.2.27 - Record candidate diagnostics.
 // v3.0.2.26 - Record automatic cleanup admission budget.
 // v3.0.2.25 - Record candidate scope.
 // v3.0.2.24 - Record startup verification diagnostics.
@@ -101,7 +102,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.26";
+pub const LATEST_VERSION: &str = "3.0.2.27";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -131,6 +132,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.27",
+        updatedAt = "",
+        summary = "扩展 Android 16 存储验收并细分数据库升级耗时",
+        sections = listOf(
+            AndroidUpdateSection("存储验收", listOf(
+                "新增 API 36 模拟器的完整五十万条历史负载验收，保留 API 35 测试与原有完整性门槛。",
+                "分别记录三项历史守卫索引创建时间，用于定位冷启动数据库打开阶段的长延迟。",
+                "本轮未减少验证或改变历史保留规则；新测试结果待确认。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.26",
         updatedAt = "",

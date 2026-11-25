@@ -1,3 +1,4 @@
+// v3.0.2.27 - Trace each schema upgrade guard index.
 // v3.0.2.14 - Keep full history recovery out of the local write transaction.
 // v3.0.2.6 - Flush save diagnostics after SQLite unlock and resume legacy authentication.
 // v3.0.2.5 - Make preflight guards index-seeking and expose outer transaction wait.
@@ -163,16 +164,25 @@ const FLUSH_DIAGNOSTICS: &str = r####"                }
 
 const HISTORY_GUARD_INDEXES: &str = r####"    // Compact probes for unsafe headers and legacy payloads still awaiting validation.
     private fun createHistoryGuardIndexes(database: SQLiteDatabase) {
-        database.execSQL(
+        fun createIndex(stage: String, sql: String) {
+            val started = android.os.SystemClock.elapsedRealtime()
+            android.util.Log.i("StartupLatency", "historyGuard phase=$stage begin")
+            try {
+                database.execSQL(sql)
+            } finally {
+                android.util.Log.i("StartupLatency", "historyGuard phase=$stage elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
+            }
+        }
+        createIndex("schema",
             "CREATE INDEX IF NOT EXISTS snapshot_history_schema_guard " +
                 "ON $HISTORY_TABLE(workspace_key, schema_version)"
         )
-        database.execSQL(
+        createIndex("digest",
             "CREATE INDEX IF NOT EXISTS snapshot_history_digest_guard " +
                 "ON $HISTORY_TABLE(workspace_key) WHERE " +
                 "sha256 IS NULL OR sha256 = ''"
         )
-        database.execSQL(
+        createIndex("envelope",
             "CREATE INDEX IF NOT EXISTS snapshot_history_envelope_guard " +
                 "ON $HISTORY_TABLE(workspace_key) WHERE " +
                 "envelope_sha256 IS NULL OR (envelope_sha256 = '' AND storage_encoding != 1)"

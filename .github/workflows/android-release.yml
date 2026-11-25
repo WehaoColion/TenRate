@@ -1,3 +1,4 @@
+# v3.0.2.27 - Run unchanged acceptance on API 35 and 36.
 name: Android signed APK
 
 on:
@@ -190,11 +191,15 @@ jobs:
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.der')
 
   knowledge-save-emulator:
-    name: Android 35 signed APK knowledge save and editor acceptance
+    name: Android ${{ matrix.api }} signed APK knowledge save and editor acceptance
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4' || github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15'
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        api: ${{ fromJSON(github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15' && '[35,36]' || '[35]') }}
     permissions:
       contents: read
       actions: read
@@ -240,7 +245,7 @@ jobs:
       - name: Install, launch, create a page, force-stop and verify on device
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -250,6 +255,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${{ matrix.api }}"
             adb install -r signed_apk/tenfold_v*.apk
             ./document_typing_probe document_typing_evidence || touch document_typing_failed
             adb shell pm clear com.ofairyo.gridtimer
@@ -276,7 +282,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-knowledge-save-and-typing-${{ github.sha }}
+          name: android-knowledge-save-and-typing-api${{ matrix.api }}-${{ github.sha }}
           path: |
             document_typing_evidence/
             sticky_newline_evidence/

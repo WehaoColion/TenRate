@@ -1,3 +1,4 @@
+// v3.0.2.27 - Synchronize Android version.
 // v3.0.2.26 - Synchronize Android version.
 // v3.0.2.25 - Synchronize Android version.
 // v3.0.2.24 - Startup verification candidate.
@@ -173,8 +174,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.26";
-pub const ANDROID_VERSION_CODE: i32 = 30028;
+pub const ANDROID_APP_VERSION: &str = "3.0.2.27";
+pub const ANDROID_VERSION_CODE: i32 = 30029;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
