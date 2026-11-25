@@ -1,3 +1,4 @@
+// v3.0.2.23 - Batch history migration cursor reads without weakening verification.
 // v3.0.2.22 - Separate sticky input integrity from version latency acceptance.
 // v3.0.2.21 - Stabilize directory layout during order loading.
 // v3.0.2.20 - Reduce directory loading animation and capture exact Windows export receipt.
@@ -215,8 +216,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30024
-        versionName '3.0.2.22'
+        versionCode 30025
+        versionName '3.0.2.23'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

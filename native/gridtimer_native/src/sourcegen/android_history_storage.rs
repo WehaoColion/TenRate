@@ -1,3 +1,4 @@
+// v3.0.2.23 - Batch migration reads and exact per-row readback in the existing transaction.
 // v3.0.2.15 - Defer large history compression, retaining the canonical authenticated row.
 // v2.22.49.8 - Authenticate compact canonical history without expanding it at launch.
 const DATABASE: &str = "com/ofairyo/gridtimer/data/AppStateDatabase.kt";
@@ -137,13 +138,24 @@ const MIGRATION: &str = r####"
             }
             if (ids.isEmpty()) break
             withSnapshotWriteTransaction {
-                for (id in ids) {
-                    after = id
-                    database.query(HISTORY_TABLE, HISTORY_QUERY_COLUMNS, "id = ? AND workspace_key = ?",
-                        arrayOf(id.toString(), workspaceKey), null, null, null, "1").use { cursor ->
-                        if (cursor is android.database.sqlite.SQLiteCursor && android.os.Build.VERSION.SDK_INT >= 28)
-                            cursor.window = android.database.CursorWindow("history-pack", 16L * 1024 * 1024)
-                        check(cursor.moveToFirst())
+                // Read a bounded group through one cursor, then close it before
+                // updating the same table. Keep every per-row seal and compare
+                // the exact stored representation through a second group cursor.
+                val placeholders = ids.joinToString(",") { "?" }
+                val args = arrayOf(workspaceKey, *ids.map { it.toString() }.toTypedArray())
+                val packedRows = LinkedHashMap<Long, String>()
+                var retainedChars = 0L
+                var rawBytes = 0L
+                var visited = 0
+                database.query(HISTORY_TABLE, HISTORY_QUERY_COLUMNS,
+                    "workspace_key = ? AND id IN ($placeholders)", args, null, null, "id ASC").use { cursor ->
+                    if (cursor is android.database.sqlite.SQLiteCursor && android.os.Build.VERSION.SDK_INT >= 28)
+                        cursor.window = android.database.CursorWindow("history-pack", 16L * 1024 * 1024)
+                    while (retainedChars < 4L * 1024 * 1024 && cursor.moveToNext()) {
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow("id"))
+                        check(visited < ids.size && id == ids[visited]) { "History migration row identity changed" }
+                        visited++
+                        after = id
                         val stored = cursor.getString(cursor.getColumnIndexOrThrow("app_data_json"))
                         val raw = SnapshotPayload.decode(stored)
                         val prefix = historyPrefix(id.toString(), workspaceKey,
@@ -153,23 +165,41 @@ const MIGRATION: &str = r####"
                             cursor.getLong(cursor.getColumnIndexOrThrow("created_at_epoch_millis")))
                         val digest = cursor.getString(cursor.getColumnIndexOrThrow("sha256"))
                         val envelope = cursor.getString(cursor.getColumnIndexOrThrow("envelope_sha256"))
-                        // A future, corrupt or unrepresentable row stays untouched and
-                        // is handled by the original recovery / read-only barriers.
-                        val packed = NativeSnapshotVerifier.seal(raw, prefix, digest, envelope) ?: return@use
-                        check(database.update(HISTORY_TABLE, ContentValues().apply {
-                            put("app_data_json", packed)
-                            put("storage_encoding", 1)
-                        }, "id = ? AND workspace_key = ?", arrayOf(id.toString(), workspaceKey)) == 1)
-                        val roundTrip = database.rawQuery("SELECT app_data_json FROM $HISTORY_TABLE WHERE id = ?", arrayOf(id.toString())).use {
-                            if (it is android.database.sqlite.SQLiteCursor && android.os.Build.VERSION.SDK_INT >= 28)
-                                it.window = android.database.CursorWindow("history-pack-check", 16L * 1024 * 1024)
-                            check(it.moveToFirst()); it.getString(0)
-                        }
-                        check(roundTrip == packed) { "Compressed history write did not round-trip" }
-                        changed++
-                        beforeBytes += raw.toByteArray(Charsets.UTF_8).size
-                        afterBytes += packed.length
+                        // A future, corrupt or unrepresentable row stays untouched.
+                        val packed = NativeSnapshotVerifier.seal(raw, prefix, digest, envelope) ?: continue
+                        packedRows[id] = packed
+                        retainedChars += packed.length.toLong()
+                        rawBytes += raw.toByteArray(Charsets.UTF_8).size
                     }
+                }
+                check(visited > 0 && (visited == ids.size || retainedChars >= 4L * 1024 * 1024)) {
+                    "History migration group incomplete"
+                }
+                for ((id, packed) in packedRows) {
+                    check(database.update(HISTORY_TABLE, ContentValues().apply {
+                        put("app_data_json", packed)
+                        put("storage_encoding", 1)
+                    }, "id = ? AND workspace_key = ?", arrayOf(id.toString(), workspaceKey)) == 1)
+                }
+                if (packedRows.isNotEmpty()) {
+                    val packedArgs = arrayOf(workspaceKey, *packedRows.keys.map { it.toString() }.toTypedArray())
+                    val packedPlaceholders = packedRows.keys.joinToString(",") { "?" }
+                    var checked = 0
+                    database.rawQuery("SELECT id, app_data_json, storage_encoding FROM $HISTORY_TABLE WHERE workspace_key = ? AND id IN ($packedPlaceholders) ORDER BY id ASC", packedArgs).use { cursor ->
+                        if (cursor is android.database.sqlite.SQLiteCursor && android.os.Build.VERSION.SDK_INT >= 28)
+                            cursor.window = android.database.CursorWindow("history-pack-check", 16L * 1024 * 1024)
+                        for ((id, packed) in packedRows) {
+                            check(cursor.moveToNext() && cursor.getLong(0) == id &&
+                                cursor.getString(1) == packed && cursor.getInt(2) == 1) {
+                                "Compressed history write did not round-trip"
+                            }
+                            checked++
+                        }
+                        check(!cursor.moveToNext() && checked == packedRows.size) { "History write readback count mismatch" }
+                    }
+                    changed += checked
+                    beforeBytes += rawBytes
+                    afterBytes += retainedChars
                 }
             }
             if (changed > 0 && changed % 128 == 0) android.util.Log.i("StartupLatency", "historyCompact progress=$changed")
