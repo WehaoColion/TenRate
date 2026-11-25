@@ -1,3 +1,4 @@
+// v3.0.2.15 - Preserve authored sticky TXT lines in share images; formatted sticky uses its own renderer.
 // v3.0.2.11 - Render knowledge share images from authored Markdown blocks.
 // v2.23.2.41 - Require a painted, nonblank body before accepting share-image raster output.
 // v2.23.2.40 - Render share-image Markdown and formulas before rasterizing the knowledge page body.
@@ -195,10 +196,17 @@ const SAVE_FEEDBACK: &str = r####"    // Block new edits after capturing the exi
 const SHARE_BODY_LAYOUT_BEFORE: &str =
     r####"    val bodyLayout = buildStaticLayout(note.plainContent(), bodyPaint, contentWidth)"####;
 const SHARE_BODY_LAYOUT_AFTER: &str = r####"    val knowledgeMarkdown = knowledgeShareMarkdown(note)
-    val bodyText = knowledgeMarkdown ?: note.plainContent()
+    val stickyBody = stickyShareBody(note)
+    val bodyText = knowledgeMarkdown ?: stickyBody?.text ?: note.plainContent()
     val html = when {
         bodyText.isBlank() -> null
         knowledgeMarkdown != null -> NativeOptimizerBridge.renderAndroidKnowledgeShareHtml(bodyText)
+        stickyBody != null && stickyBody.markdown ->
+            NativeOptimizerBridge.renderAndroidStickyNoteHtml(bodyText, false)
+        // TXT and rich-text plain projections contain authored newlines.
+        // StaticLayout renders each of them, including consecutive blank lines.
+        // Never send sticky TXT through CommonMark's soft-break normalization.
+        stickyBody != null -> null
         else -> NativeOptimizerBridge.renderAndroidAiAnswerHtml(bodyText, false)
     }
     val renderedBody = try {
@@ -241,6 +249,23 @@ const SHARE_BODY_DRAW_AFTER: &str = r####"    if (renderedBody != null) {
     top += bodyHeight + 24f"####;
 
 const KNOWLEDGE_SHARE_CONTENT: &str = r####"
+
+private data class StickyShareBody(val text: String, val markdown: Boolean)
+
+private fun stickyShareBody(note: NoteEntry): StickyShareBody? {
+    if (note.kind != NoteEntryKind.STICKY || note.isEncryptionLocked()) return null
+    val document = note.presentationDocument()
+    val (textBlocks, otherBlocks) = document.blocks.partition { it.type == NoteBlockType.TEXT }
+    val text = if (document.richTextEnabled) {
+        document.richTextPlainText.ifBlank { document.copy(blocks = textBlocks).plainText() }
+    } else {
+        textBlocks.joinToString("\n\n") { it.text }
+    }.replace("\r\n", "\n").replace('\r', '\n')
+    val summaries = if (otherBlocks.isEmpty()) "" else
+        document.copy(richTextEnabled = false, richTextPlainText = "", blocks = otherBlocks).plainText()
+    val body = if (summaries.isBlank()) text else if (text.isEmpty()) summaries else "$text\n\n$summaries"
+    return StickyShareBody(body, document.markdownEnabled && !document.richTextEnabled)
+}
 
 private fun knowledgeShareMarkdown(note: NoteEntry): String? {
     if (note.kind != NoteEntryKind.DOCUMENT || note.isEncryptionLocked()) return null
