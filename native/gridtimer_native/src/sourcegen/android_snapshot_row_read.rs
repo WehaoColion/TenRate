@@ -1,3 +1,4 @@
+// v3.0.2.28 - Trace legacy synchronized DB methods without changing lock semantics.
 // v3.0.2.15 - Read fallback history payloads in one pinned API35 statement.
 // v3.0.2.2 - Use bounded 512-KiB verified SQLite payload chunks to reduce round-trips.
 // v2.23.2.36 - Read large snapshot payloads outside Android's bounded CursorWindow.
@@ -93,10 +94,99 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     // Close the per-table iteration after the original envelope verification.
     envelope.push_str("            }\n");
     source.replace_range(union_start..union_end, &envelope);
+    // The real device reported a 399536ms monitor wait with an untracked
+    // owner. Install coverage after the complete repository/database pipeline
+    // so prior privacy, recovery and row-reader rewrites remain intact.
+    if source.contains("private var snapshotWriteOwner: String? = null") {
+        trace_snapshot_monitor_owners(&mut source)?;
+    }
     source.push_str(ROW_CURSOR);
     source.push_str(CHUNKS);
     Ok(source)
 }
+
+// All these methods previously used @Synchronized on this exact helper
+// instance. Replace the annotation with an inline synchronized wrapper
+// retaining the same reentrant monitor, nonlocal returns, and exceptions.
+fn trace_snapshot_monitor_owners(source: &mut String) -> Result<(), String> {
+    for (method, operation) in [
+        ("fun currentSnapshotMatches(", "currentSnapshotMatches"),
+        ("fun redactEncryptedNoteFromRetainedSnapshots(", "privacyRedaction"),
+        ("fun sealLegacyCurrentSnapshot(", "sealLegacyCurrentSnapshot"),
+        ("fun createVerifiedBackup(", "createVerifiedBackup"),
+        ("private fun quarantineDigestMismatches(", "quarantineDigestMismatches"),
+        ("fun compactHistoryBatch(", "compactHistoryBatch"),
+    ] {
+        let anchor = format!("    @Synchronized\n    {method}");
+        if source.matches(&anchor).count() != 1 {
+            return Err(format!("snapshot monitor coverage anchor changed: {method}"));
+        }
+        let start = source.find(&anchor).unwrap();
+        // The first body brace follows the parameter list. A top-level
+        // method-closing brace has exactly four spaces and its own line.
+        let body = start + source[start..].find(" {\n")
+            .ok_or_else(|| format!("missing monitor body: {method}"))? + 3;
+        let end = body + source[body..].find("\n    }\n")
+            .ok_or_else(|| format!("missing monitor body end: {method}"))?;
+        let original = &source[start..end];
+        let relative_body = body - start;
+        let header = original[..relative_body].strip_prefix("    @Synchronized\n")
+            .ok_or("missing synchronized annotation")?;
+        let expression = if operation == "quarantineDigestMismatches" {
+            "\"quarantineDigestMismatches(includeHistory=$includeHistory)\"".to_owned()
+        } else {
+            format!("\"{operation}\"")
+        };
+        let replaced = format!("{header}        return tracedSnapshotMonitor({expression}) {{\n{}\n        }}",
+            &original[relative_body..]);
+        source.replace_range(start..end, &replaced);
+    }
+    let anchor = "    fun writeSnapshot(";
+    replace(source, anchor, &format!("{MONITOR_OWNER_TRACE}{anchor}"))
+}
+
+const MONITOR_OWNER_TRACE: &str = r####"    // Same monitor as the original synchronized methods. A nested trace
+    // restores the outer owner. No file logging while a monitor is held.
+    private inline fun <T> tracedSnapshotMonitor(operation: String, action: () -> T): T {
+        val queuedAt = android.os.SystemClock.elapsedRealtime()
+        var acquiredAt = queuedAt
+        var releasedAt = queuedAt
+        val thread = Thread.currentThread()
+        val caller = thread.stackTrace.firstOrNull {
+            it.className.contains("TimerRepository")
+        }?.let { it.className.substringAfterLast('.') + "." + it.methodName } ?: "unknown"
+        try {
+            return synchronized(this) {
+                acquiredAt = android.os.SystemClock.elapsedRealtime()
+                val previousOwner = snapshotWriteOwner
+                snapshotWriteOwner = "${thread.name}:$operation"
+                try {
+                    action()
+                } finally {
+                    releasedAt = android.os.SystemClock.elapsedRealtime()
+                    snapshotWriteOwner = previousOwner
+                }
+            }
+        } finally {
+            val heldMs = releasedAt - acquiredAt
+            val queuedMs = acquiredAt - queuedAt
+            if (heldMs >= 1_000L || queuedMs >= 1_000L) {
+                val message = "operation=$operation caller=$caller thread=${thread.name} threadId=${android.os.Process.myTid()} waitMs=$queuedMs heldMs=$heldMs"
+                android.util.Log.w("NoteSaveLatency", "database_monitor_owner $message")
+                if (!Thread.holdsLock(this)) {
+                    runCatching {
+                        com.ofairyo.gridtimer.diagnostics.DiagnosticLogStore.record(
+                            context = snapshotDiagnosticContext,
+                            category = "notes.local_save.monitor_owner",
+                            message = message
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+"####;
 
 const ROW_CURSOR: &str = r####"
 

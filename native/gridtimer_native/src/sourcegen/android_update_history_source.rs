@@ -1,3 +1,4 @@
+// v3.0.2.28 - Record real-device contention evidence.
 // v3.0.2.27 - Record candidate diagnostics.
 // v3.0.2.26 - Record automatic cleanup admission budget.
 // v3.0.2.25 - Record candidate scope.
@@ -102,7 +103,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.27";
+pub const LATEST_VERSION: &str = "3.0.2.28";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -132,6 +133,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.28",
+        updatedAt = "",
+        summary = "覆盖未追踪的数据库监视器持有者",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "真机3.0.2.25仍记录399.536秒监视器等待，SQLite事务入口等待为零。",
+                "为历史摘要隔离、当前快照匹配、隐私清理、旧快照封装、备份和历史压缩记录同一监视器的持有者及耗时。",
+                "不改变监视器保护范围和事务顺序，慢操作诊断在外层监视器释放后记录；不记录正文、账户标识或路径。实际阻塞原因和新版本表现待验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.27",
         updatedAt = "",
