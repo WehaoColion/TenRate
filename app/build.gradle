@@ -1,3 +1,4 @@
+// v3.0.2.20 - Reduce directory loading animation and capture exact Windows export receipt.
 // v3.0.2.19 - Synchronize in-app update history and Android version identity.
 // v3.0.2.18 - Raise Android history stress to 500000 records.
 // v3.0.2.17 - Synchronize Rust identity and reduce directory layout-driven recomposition.
@@ -212,8 +213,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30021
-        versionName '3.0.2.19'
+        versionCode 30022
+        versionName '3.0.2.20'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

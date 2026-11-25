@@ -1,3 +1,4 @@
+// v3.0.2.20 - Record reduced directory loading animation.
 // v3.0.2.19 - Record every intervening Android candidate without implying acceptance.
 // v3.0.2.15 - Record continuous knowledge motion.
 // v3.0.2.14 - Record the bounded local save preflight.
@@ -94,7 +95,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.19";
+pub const LATEST_VERSION: &str = "3.0.2.20";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -124,6 +125,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.20",
+        updatedAt = "",
+        summary = "减少目录切换中的重复动画",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "读取本机目录排序时显示静态状态，避免加载指示器和目录转场同时持续绘制。",
+                "仍保留保存中的进度指示、目录排序安全检查及原有转场。",
+                "继续执行五十万条历史快照及真实动效验收，结果尚待确认。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.19",
         updatedAt = "",

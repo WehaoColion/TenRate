@@ -1,3 +1,4 @@
+// v3.0.2.20 - Avoid competing order-load animation during directory navigation.
 // v3.0.2.17 - Avoid snapshot invalidation from navigation bookkeeping and layout coordinates.
 // v3.0.2.15 - Render one directory surface with layer-only motion and indexed row actions.
 // v3.0.2.15 - Keep hierarchy inputs on bounded pre-admission failure; do not cancel a running transaction.
@@ -1456,7 +1457,15 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                     }
                     Text("知识目录", style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.SemiBold, color = archive.ink))
-                    if (busy || saving || loading) CircularProgressIndicator(Modifier.size(22.dp))
+                    if (busy || saving) {
+                        CircularProgressIndicator(Modifier.size(22.dp))
+                    } else if (loading) {
+                        // Directory-local ordering is an auxiliary read. Do not
+                        // run an indeterminate animation on every navigation
+                        // while the main directory layer is moving.
+                        Text("读取排序", style = MaterialTheme.typography.labelSmall,
+                            color = archive.ink.copy(alpha = 0.72f))
+                    }
                 }
                 if (parentId != null) KnowledgeBreadcrumbs(index, parentId) {
                     navigation { onBrowse(it) }
