@@ -1,3 +1,4 @@
+// v3.0.2.22 - Record sticky input and share navigation verification.
 // v3.0.2.21 - Record stable directory row layout.
 // v3.0.2.20 - Record reduced directory loading animation.
 // v3.0.2.19 - Record every intervening Android candidate without implying acceptance.
@@ -96,7 +97,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.21";
+pub const LATEST_VERSION: &str = "3.0.2.22";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -126,6 +127,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.22",
+        updatedAt = "",
+        summary = "区分便签输入完整性与版本保存验收",
+        sections = listOf(
+            AndroidUpdateSection("模拟器验收", listOf(
+                "五十万条负载下，先核对原始输入的逐字节完整性，再计时验证版本保存。",
+                "发现缺字立即保留证据并判定失败，不自动补写、不放宽八秒时限。",
+                "分享后重新进入便签时区分系统分享界面和桌面，继续验证富文本往返。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.21",
         updatedAt = "",

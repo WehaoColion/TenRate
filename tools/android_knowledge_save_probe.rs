@@ -1,3 +1,4 @@
+// v3.0.2.22 - Preserve exact pre-version input evidence and recover from Android share/launcher navigation.
 // v3.0.2.18 - Seed 500,000 real authenticated SQLite history rows in place with bounded transactions.
 // v3.0.2.16 - Reveal real version count before timing and log independent UI/SQLite receipts.
 // v3.0.2.15 - Verify exact sticky authored lines in each durable version and in the actual PNG pixels.
@@ -645,6 +646,21 @@ fn sticky_home() -> Result<(), String> {
     for _ in 0..8 {
         let xml = dump()?;
         if xml.contains("最近便签") && xml.contains("回收站") { return Ok(()); }
+        // Sharing is an external Android activity. Back can leave the launcher
+        // foreground after a process restart; never keep pressing Back there.
+        if xml.contains("package=\"com.google.android.apps.nexuslauncher\"") ||
+            xml.contains("package=\"com.android.launcher3\"") {
+            cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
+            sleep(Duration::from_secs(2));
+            wait_for_workspace_restore()?;
+            continue;
+        }
+        if xml.contains("package=\"com.android.intentresolver\"") ||
+            xml.contains("package=\"com.android.internal.app\"") {
+            cmd(&["shell","input","keyevent","4"])?;
+            sleep(Duration::from_millis(700));
+            continue;
+        }
         if tap_any(&["便签", "Sticky notes", "Quick notes"])? { continue; }
         cmd(&["shell", "input", "keyevent", "4"])?;
         sleep(Duration::from_millis(700));
@@ -666,6 +682,27 @@ fn sticky_authored_body() -> String {
         body.push_str(&"\n".repeat(gap));
     }
     body
+}
+
+// Check the original real input, not a replacement or pasted fixture.
+fn verify_sticky_authored_input(evidence: &Path, xml: &str) -> Result<(), String> {
+    let expected = sticky_authored_body();
+    let actual = elements(xml).into_iter()
+        .filter(|n| n.class_name.ends_with("EditText"))
+        .map(|n| n.label.replace("&#10;", "\n").replace("&#xA;", "\n")
+            .replace("&#xa;", "\n"))
+        .find(|text| text.contains(&sticky_authored_row(0)));
+    let observed = actual.as_deref().unwrap_or("");
+    fs::write(evidence.join("authored_input.xml"), xml).map_err(|e|e.to_string())?;
+    fs::write(evidence.join("authored_input_comparison.txt"),
+        format!("expected_bytes={} observed_bytes={}\nexpected={expected:?}\nobserved={observed:?}\n",
+            expected.len(), observed.len())).map_err(|e|e.to_string())?;
+    if observed != expected {
+        capture(evidence,"authored_input_failure");
+        return Err(format!("Sticky input integrity failed before version creation: expected {} bytes, observed {} bytes; no repair or version timing attempted",
+            expected.len(), observed.len()));
+    }
+    Ok(())
 }
 
 // Long authored notes can leave the LazyColumn scrolled when the IME closes.
@@ -852,6 +889,10 @@ fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String>
     }
     cmd(&["shell","input","keyevent","4"])?;
     sleep(Duration::from_millis(600));
+    // Validate input separately from persistence. Preserve the same rapid
+    // input sequence and fail rather than retrying or repairing lost digits.
+    let authored = reveal_sticky_version_bar(1)?;
+    verify_sticky_authored_input(&evidence, &authored)?;
     // The real version panel is the same control shown in the reported screenshot.
     let mut metrics = String::new();
     for round in 1..=rounds {
@@ -910,6 +951,12 @@ fn sticky_version_pressure(root: &Path, rounds: usize) -> Result<String, String>
 fn sticky_rich_roundtrip(root: &Path, prior_versions: usize) -> Result<String, String> {
     let evidence = root.join("sticky_rich_roundtrip");
     fs::create_dir_all(&evidence).map_err(|e|e.to_string())?;
+    // Dismiss the real share sheet before killing its originating activity.
+    let foreground = dump()?;
+    if foreground.contains("package=\"com.android.intentresolver\"") {
+        cmd(&["shell","input","keyevent","4"])?;
+        sleep(Duration::from_millis(700));
+    }
     cmd(&["shell","am","force-stop",PACKAGE])?;
     cmd(&["shell","am","start","-W","-n",ACTIVITY])?;
     sleep(Duration::from_secs(7));

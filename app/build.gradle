@@ -1,3 +1,4 @@
+// v3.0.2.22 - Separate sticky input integrity from version latency acceptance.
 // v3.0.2.21 - Stabilize directory layout during order loading.
 // v3.0.2.20 - Reduce directory loading animation and capture exact Windows export receipt.
 // v3.0.2.19 - Synchronize in-app update history and Android version identity.
@@ -214,8 +215,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30023
-        versionName '3.0.2.21'
+        versionCode 30024
+        versionName '3.0.2.22'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

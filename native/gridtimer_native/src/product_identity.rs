@@ -1,3 +1,4 @@
+// v3.0.2.22 - Sticky input integrity candidate.
 // v3.0.2.21 - Directory layout candidate.
 // v3.0.2.20 - Android directory rendering candidate.
 // v3.0.2.19 - Android update history alignment.
@@ -168,8 +169,8 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.21";
-pub const ANDROID_VERSION_CODE: i32 = 30023;
+pub const ANDROID_APP_VERSION: &str = "3.0.2.22";
+pub const ANDROID_VERSION_CODE: i32 = 30024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {
