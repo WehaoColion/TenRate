@@ -1,3 +1,4 @@
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.31 - Bound maintenance duty cycle and sample routine diagnostic logs.
 // v3.0.2.30 - Skip proofless background writer and record lock duration.
 // v3.0.2.26 - Prevent unbounded automatic retained-snapshot GC scans.
@@ -110,14 +111,14 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 replace(&mut compact, line, "")?;
             }
             source.replace_range(start..end, &compact);
-            // Both APIs follow the existing workspace/time/id index, rather than
-            // traversing payload pages belonging to other accounts.
-            // Newer Android startup templates select the existing workspace index
-            // directly. Older templates still need the indexed rewrite below.
-            // Never silently accept an unrecognized scan or drop the workspace filter.
+            // Native verification order is independent of recovery candidate priority.
+            // API 35+ walks the existing v5 encoding queue in row-id order;
+            // older templates retain the workspace/time index. Never lose the
+            // workspace filter or silently revert to an unrelated table scan.
             if source.contains("FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder") {
-                if !source.contains("INDEXED BY snapshot_history_workspace_time") {
-                    return Err("indexed snapshot scan must retain its workspace index".into());
+                if !source.contains("INDEXED BY history_encoding_queue") ||
+                    !source.contains("storage_encoding ASC, id ASC") {
+                    return Err("native history verification must use the workspace encoding queue in ascending row-id order".into());
                 }
             } else {
                 replace(&mut source, "            \"FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid\"",
@@ -484,7 +485,8 @@ mod tests {
     #[test]
     fn composed_database_uses_forced_workspace_index_and_keeps_verification() {
         let source = rendered_database();
-        assert!(source.contains("INDEXED BY snapshot_history_workspace_time"));
+        assert!(source.contains("INDEXED BY history_encoding_queue"));
+        assert!(source.contains("storage_encoding ASC, id ASC"));
         assert!(source.contains("FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder"));
         assert!(!source.contains("FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid"));
         assert!(source.contains("verifyNativeSnapshotRows(workspaceKey)"));

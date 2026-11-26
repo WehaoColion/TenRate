@@ -1,3 +1,4 @@
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.27 - Trace each schema upgrade guard index.
 // v3.0.2.14 - Keep full history recovery out of the local write transaction.
@@ -167,9 +168,39 @@ const HISTORY_GUARD_INDEXES: &str = r####"    // Bit 0: missing digest. Bit 1: u
     private fun createHistoryGuardIndexes(database: SQLiteDatabase) {
         val started = android.os.SystemClock.elapsedRealtime()
         android.util.Log.i("StartupLatency", "historyGuard phase=header begin")
+        // Cache sizing is a connection-local performance hint, never a proof.
+        // Bound the temporary allocation to 32 MiB and restore the prior
+        // setting even when index construction fails. A device that rejects
+        // the optional tuning still uses the identical mandatory index DDL.
+        val previous = runCatching {
+            database.rawQuery("PRAGMA main.cache_size", null).use { cursor ->
+                check(cursor.moveToFirst()); cursor.getInt(0)
+            }
+        }.getOrNull()
+        val pageSize = runCatching {
+            database.rawQuery("PRAGMA main.page_size", null).use { cursor ->
+                check(cursor.moveToFirst()); cursor.getLong(0)
+            }
+        }.getOrNull()
+        val oldBytes = previous?.let { pages ->
+            if (pages < 0) -pages.toLong() * 1024L else pageSize?.let { it * pages.toLong() }
+        }
+        var tuned = false
         try {
+            if (previous != null && oldBytes != null && oldBytes < 32L * 1024L * 1024L) {
+                tuned = runCatching {
+                    database.execSQL("PRAGMA main.cache_size = -32768")
+                }.onFailure {
+                    android.util.Log.w("StartupLatency", "historyGuard cache hint unavailable", it)
+                }.isSuccess
+            }
+            android.util.Log.i("StartupLatency", "historyGuard pageSize=$pageSize previousCache=$previous tuned=$tuned")
             database.execSQL(historyGuardIndexSql())
         } finally {
+            if (tuned && previous != null) {
+                runCatching { database.execSQL("PRAGMA main.cache_size = $previous") }
+                    .onFailure { android.util.Log.w("StartupLatency", "historyGuard cache restore failed", it) }
+            }
             android.util.Log.i("StartupLatency", "historyGuard phase=header elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
         }
     }

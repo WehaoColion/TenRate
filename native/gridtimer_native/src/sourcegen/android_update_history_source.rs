@@ -1,3 +1,4 @@
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.33 - Canonical Android release identity and checked update history.
@@ -146,6 +147,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.36",
+        updatedAt = "",
+        summary = "改善百万历史迁移与完整认证的读取局部性",
+        sections = listOf(
+            AndroidUpdateSection("本地存储", listOf(
+                "完整历史认证按已有工作区与编码队列索引的递增记录顺序读取，减少大库倒序回表造成的随机读取；不改变历史恢复优先级。",
+                "建立历史安全索引时临时使用有界SQLite页缓存，结束后恢复连接原有设置。输出缓存配置和分阶段耗时诊断。",
+                "五十万及百万条双档、全部实际正文认证、工作区隔离、八秒保存及600秒恢复限制保持不变。本版实际性能待验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.35",
         updatedAt = "",

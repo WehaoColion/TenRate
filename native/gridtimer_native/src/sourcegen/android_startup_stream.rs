@@ -1,3 +1,4 @@
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.24 - Identify database open, header probe and payload scan latency without changing verification.
 // v2.23.2.55 - Restore authenticated current snapshot without eager historical payload scans.
 // v2.23.2.54 - Index workspace history in Android 35+ save verification.
@@ -230,11 +231,14 @@ const WORKSPACE_READ: &str = r####"    // A current-only receipt must never beco
         check(database.inTransaction())
         val timestamp = if (table == CURRENT_TABLE) "updated_at_epoch_millis" else "created_at_epoch_millis"
         val identity = if (table == CURRENT_TABLE) "workspace_key" else "id"
-        // NOT INDEXED previously scanned other accounts' entire history.
-        // Seek this account's indexed history while authenticating every matching row.
+        // Verification is an order-independent proof of EVERY matching row.
+        // The separately ordered recovery candidate reader still picks newest first.
+        // The existing v5 encoding queue gives an ascending row-id walk within
+        // each encoding group, avoiding the backwards time-index walk over large
+        // legacy payload pages. It also avoids scanning any other workspace.
         val indexedTable = if (table == HISTORY_TABLE)
-            "$HISTORY_TABLE INDEXED BY snapshot_history_workspace_time" else CURRENT_TABLE
-        val rowOrder = if (table == HISTORY_TABLE) "created_at_epoch_millis DESC, id DESC" else "workspace_key"
+            "$HISTORY_TABLE INDEXED BY history_encoding_queue" else CURRENT_TABLE
+        val rowOrder = if (table == HISTORY_TABLE) "storage_encoding ASC, id ASC" else "workspace_key"
         val sql = "SELECT $identity, workspace_key, schema_version, revision, item_count, $timestamp, " +
             "CAST(app_data_json AS BLOB) AS app_data_json, sha256, envelope_sha256 " +
             "FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder"
@@ -433,8 +437,8 @@ mod tests {
 
     #[test]
     fn api35_snapshot_scan_is_indexed_and_visits_every_workspace_row() {
-        assert!(WORKSPACE_READ.contains("INDEXED BY snapshot_history_workspace_time"));
-        assert!(WORKSPACE_READ.contains("created_at_epoch_millis DESC, id DESC"));
+        assert!(WORKSPACE_READ.contains("INDEXED BY history_encoding_queue"));
+        assert!(WORKSPACE_READ.contains("storage_encoding ASC, id ASC"));
         assert!(!WORKSPACE_READ.contains(
             "FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid"
         ));
@@ -443,21 +447,24 @@ mod tests {
             "CREATE TABLE snapshot_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 workspace_key TEXT NOT NULL,
-                created_at_epoch_millis INTEGER NOT NULL
+                created_at_epoch_millis INTEGER NOT NULL,
+                storage_encoding INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX snapshot_history_workspace_time
-                ON snapshot_history(workspace_key, created_at_epoch_millis DESC, id DESC);"
+                ON snapshot_history(workspace_key, created_at_epoch_millis DESC, id DESC);
+            CREATE INDEX history_encoding_queue
+                ON snapshot_history(workspace_key, storage_encoding, id);"
         ).unwrap();
         for id in 0..1500 {
             let workspace = if id % 73 == 0 { "target" } else { "unrelated" };
             database.execute(
-                "INSERT INTO snapshot_history(workspace_key, created_at_epoch_millis) VALUES (?1, ?2)",
-                rusqlite::params![workspace, (id % 7) as i64]
+                "INSERT INTO snapshot_history(workspace_key, created_at_epoch_millis, storage_encoding) VALUES (?1, ?2, ?3)",
+                rusqlite::params![workspace, (id % 7) as i64, (id % 3 == 0) as i64]
             ).unwrap();
         }
         let old = "SELECT id FROM snapshot_history NOT INDEXED WHERE workspace_key = ?1 ORDER BY rowid";
-        let fast = "SELECT id FROM snapshot_history INDEXED BY snapshot_history_workspace_time
-            WHERE workspace_key = ?1 ORDER BY created_at_epoch_millis DESC, id DESC";
+        let fast = "SELECT id FROM snapshot_history INDEXED BY history_encoding_queue
+            WHERE workspace_key = ?1 ORDER BY storage_encoding ASC, id ASC";
         let ids = |sql: &str| -> std::collections::BTreeSet<i64> {
             let mut statement = database.prepare(sql).unwrap();
             let mapped = statement.query_map(["target"], |row| row.get::<_, i64>(0)).unwrap();
@@ -466,12 +473,19 @@ mod tests {
         let baseline = ids(old);
         assert_eq!(baseline.len(), 21);
         assert_eq!(baseline, ids(fast));
+        let mut ordered = database.prepare(fast).unwrap();
+        let actual = ordered.query_map(["target"], |row| row.get::<_, i64>(0)).unwrap()
+            .collect::<Result<Vec<_>, _>>().unwrap();
+        let mut expected: Vec<_> = baseline.iter().copied().collect();
+        // Inserted IDs start at 1, while fixture encoding is based on the zero-based loop.
+        expected.sort_by_key(|&id| (((id - 1) % 3 == 0), id));
+        assert_eq!(actual, expected);
 
         let mut explain = database.prepare(&format!("EXPLAIN QUERY PLAN {fast}")).unwrap();
         let details: Vec<String> = explain.query_map(["target"], |row| row.get(3))
             .unwrap().collect::<Result<_, _>>().unwrap();
         assert!(details.iter().any(|line| line.contains(
-            "USING COVERING INDEX snapshot_history_workspace_time")), "{details:?}");
+            "USING COVERING INDEX history_encoding_queue")), "{details:?}");
         assert!(!details.iter().any(|line| line.contains("SCAN snapshot_history")
             || line.contains("USE TEMP B-TREE")), "{details:?}");
     }
