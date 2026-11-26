@@ -1,3 +1,4 @@
+// v3.0.2.30 - Track interaction and commit completion before admitting recovery work.
 // v3.0.2.25 - Move ordinary sync preparation outside writer; defer optional maintenance during note edits.
 // v3.0.2.15 - Give safe sticky version creation the authoritative SQLite receipt.
 // v3.0.2.15 - Avoid synchronous full recovery mirrors for strictly scoped empty folder inserts.
@@ -124,7 +125,7 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
 
 fn install_foreground_write_priority(source: &mut String) -> Result<(), String> {
     replace_one(source, "    private val writeMutex = Mutex()",
-        "    private val writeMutex = Mutex()\n    private val lastForegroundNoteWriteAt = java.util.concurrent.atomic.AtomicLong(0L)")?;
+        "    private val writeMutex = Mutex()\n    private val lastForegroundNoteWriteAt = java.util.concurrent.atomic.AtomicLong(0L)\n    private val lastNoteMaintenanceInteractionAt = java.util.concurrent.atomic.AtomicLong(0L)")?;
     replace_one(source,
         r####"        val writeWaitStarted = System.nanoTime()
         writeMutex.withLock {
@@ -229,6 +230,8 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
         ("            // Only publish the cache after commit AND successful recovery mirrors.\n            // Any failure leaves it invalid, so the next attempt checks every surface.\n            runCatching {",
          "            fun refresh(committedStamp: AppStateDatabase.SnapshotWriteStamp): Boolean = runCatching {"),
         ("            }\n            stageFinished(\"recovery_mirror\")", r#"            }.isSuccess
+            // A slow foreground transaction is not idle time.
+            lastForegroundNoteWriteAt.set(android.os.SystemClock.elapsedRealtime())
             pendingRecoveryMirrorJob?.cancel()
             pendingRecoveryMirrorJob = null
             if (deferRecoveryMirrors && receipt.primary.size >= 0L && receipt.backup.size >= 0L) {
@@ -260,10 +263,15 @@ const RECOVERY_WORKER: &str = r#"
 
     // Optional maintenance must not start in the background or in the middle
     // of a series of accepted note writes. Do not cancel admitted transactions.
+    // Activity interaction does not perform database work on the UI thread.
+    internal fun recordNoteMaintenanceInteraction() {
+        lastNoteMaintenanceInteractionAt.set(android.os.SystemClock.elapsedRealtime())
+    }
+
     private fun noteMaintenanceMayStart(quietMillis: Long): Boolean {
         val nowElapsed = android.os.SystemClock.elapsedRealtime()
-        val lastWrite = lastForegroundNoteWriteAt.get()
-        if (lastWrite != 0L && nowElapsed - lastWrite < quietMillis) return false
+        val lastActivity = maxOf(lastForegroundNoteWriteAt.get(), lastNoteMaintenanceInteractionAt.get())
+        if (lastActivity != 0L && nowElapsed - lastActivity < quietMillis) return false
         val info = android.app.ActivityManager.RunningAppProcessInfo()
         return runCatching {
             android.app.ActivityManager.getMyMemoryState(info)
@@ -306,10 +314,14 @@ const RECOVERY_WORKER: &str = r#"
             while (true) {
                 delay(retryMillis)
                 if (!noteMaintenanceMayStart(10_000L) || !writeMutex.tryLock()) continue
+                val maintenanceStarted = android.os.SystemClock.elapsedRealtime()
+                var admitted = false
                 val finished = try {
                     if (!noteMaintenanceMayStart(10_000L)) continue
                     if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
                         persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@launch
+                    admitted = true
+                    Log.i("NoteSaveLatency", "maintenance=recovery_mirror begin")
                     runCatching {
                         stateDatabase.withSnapshotWriteTransaction {
                             val files = workspaceFiles(workspaceKey)
@@ -330,6 +342,7 @@ const RECOVERY_WORKER: &str = r#"
                     }
                 } finally {
                     writeMutex.unlock()
+                    if (admitted) Log.i("NoteSaveLatency", "maintenance=recovery_mirror heldMs=${android.os.SystemClock.elapsedRealtime() - maintenanceStarted}")
                 }
                 if (finished) return@launch
                 retryMillis = (retryMillis * 2L).coerceAtMost(30_000L)

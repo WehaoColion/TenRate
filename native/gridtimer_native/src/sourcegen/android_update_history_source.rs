@@ -1,3 +1,4 @@
+// v3.0.2.30 - Record candidate maintenance priority changes.
 // v3.0.2.29 - Record probe-only correction.
 // v3.0.2.28 - Record real-device contention evidence.
 // v3.0.2.27 - Record candidate diagnostics.
@@ -104,7 +105,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.29";
+pub const LATEST_VERSION: &str = "3.0.2.30";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -134,6 +135,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.30",
+        updatedAt = "",
+        summary = "避免活跃交互与后台快照维护争抢保存资源",
+        sections = listOf(
+            AndroidUpdateSection("存储性能", listOf(
+                "后台恢复镜像及历史压缩同时考虑用户交互和最近提交完成时间，避免在连续操作时抢占写锁。",
+                "无有效预检凭据时不启动历史压缩事务；记录后台维护实际持锁耗时。",
+                "保留50万条压力规模、8秒真实保存回执及完整历史校验。本版本仍待模拟器验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.29",
         updatedAt = "",

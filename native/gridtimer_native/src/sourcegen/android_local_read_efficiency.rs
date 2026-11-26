@@ -1,3 +1,4 @@
+// v3.0.2.30 - Skip proofless background writer and record lock duration.
 // v3.0.2.26 - Prevent unbounded automatic retained-snapshot GC scans.
 // v3.0.2.25 - Gate history maintenance on foreground idle.
 // v3.0.2.15 - Idle history worker continues to pick up newly deferred rows.
@@ -221,12 +222,18 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
                 delay(1_000L)
                 continue
             }
+            val maintenanceStarted = android.os.SystemClock.elapsedRealtime()
+            var admitted = false
             val next = try {
                 if (!noteMaintenanceMayStart(5_000L)) continue
                 if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
                     loadedFromRecoveryCandidate || persistenceWriteBlockedReason != null) break
                 withContext(Dispatchers.IO) {
-                    val cached = verifiedWritePreflight
+                    val cached = verifiedWritePreflight?.takeIf { it.first == workspaceKey }
+                        ?: return@withContext null
+                    // No valid workspace proof means no background writer.
+                    admitted = true
+                    Log.i("NoteSaveLatency", "maintenance=history_compaction begin")
                     verifiedWritePreflight = null
                     val files = workspaceFiles(workspaceKey)
                     val result = compactVerifiedHistoryBatch(
@@ -249,6 +256,7 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
                 break
             } finally {
                 writeMutex.unlock()
+                if (admitted) Log.i("NoteSaveLatency", "maintenance=history_compaction heldMs=${android.os.SystemClock.elapsedRealtime() - maintenanceStarted}")
             }
             if (next == null) {
                 // Keep the monotonic cursor: new foreground snapshots may add
@@ -275,13 +283,16 @@ internal fun <S : Any> compactVerifiedHistoryBatch(
     stamp: () -> S,
     mirrorsUnchanged: (S, S) -> Boolean,
     compact: () -> Long?
-): HistoryMaintenanceResult<S> = transaction {
-    val before = stamp()
-    if (expected != before) HistoryMaintenanceResult(null, null)
-    else {
-        val next = compact()
-        val after = stamp()
-        HistoryMaintenanceResult(next, after.takeIf { mirrorsUnchanged(before, it) })
+): HistoryMaintenanceResult<S> {
+    if (expected == null) return HistoryMaintenanceResult(null, null)
+    return transaction {
+        val before = stamp()
+        if (expected != before) HistoryMaintenanceResult(null, null)
+        else {
+            val next = compact()
+            val after = stamp()
+            HistoryMaintenanceResult(next, after.takeIf { mirrorsUnchanged(before, it) })
+        }
     }
 }
 "####;
@@ -408,7 +419,13 @@ class MissingMediaHashesTest {
     }
 
     @Test fun staleProofChangedMirrorAndCommitFailureCannotPublishMaintenanceProof() {
-        for (expected in listOf(null, Stamp(0, 1), Stamp(1, 0))) {
+        val missing = compactVerifiedHistoryBatch<Stamp>(null, { error("No proof: writer must not open") },
+            { error("No proof: stamp must not be read") }, { _, _ -> true }) {
+            error("No proof: history must not be modified")
+        }
+        assertNull(missing.stamp)
+        assertNull(missing.nextRow)
+        for (expected in listOf(Stamp(0, 1), Stamp(1, 0))) {
             val result = compactVerifiedHistoryBatch(expected, { it() }, { Stamp(1, 1) }, { _, _ -> true }) {
                 error("Unverified workspace must not be compacted")
             }

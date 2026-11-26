@@ -1,3 +1,4 @@
+// v3.0.2.30 - Prioritize active interaction over optional snapshot maintenance.
 // v3.0.2.29 - Correct resumed-editor acceptance input position.
 // v3.0.2.28 - Cover all known snapshot monitor entry points.
 // v3.0.2.27 - Extend Android 16 validation.
@@ -222,8 +223,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30031
-        versionName '3.0.2.29'
+        versionCode 30032
+        versionName '3.0.2.30'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
