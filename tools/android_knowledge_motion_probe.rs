@@ -1,3 +1,4 @@
+// v3.0.2.41 - Preserve independent motion gate and emit Android frame bottleneck counters.
 // v3.0.2.33 - Share release identity and visible navigation evidence.
 //! Android API 35 smoke and visual evidence for the knowledge workspace.
 //! The driver runs only against an installed signed APK, never a mocked UI.
@@ -258,6 +259,17 @@ fn open_folder_with_motion(root: &Path) -> Result<(), String> {
     let summary = format!("Unrecorded navigation: {total} frames, {janky} janky, p90 {p90}ms");
     fs::write(root.join("motion_unrecorded_metrics.txt"), &summary).map_err(|e| e.to_string())?;
     println!("{summary}");
+    // Keep the original gate; these independent Android counters distinguish
+    // scheduling, input, UI thread, upload and draw pressure for the next fix.
+    let counters = timing.lines().filter(|line| {
+        let line = line.trim();
+        ["Number Missed Vsync:", "Number High input latency:", "Number Slow UI thread:",
+         "Number Slow bitmap uploads:", "Number Slow issue draw commands:",
+         "Number Frame deadline missed:", "Number Frame deadline missed (legacy):"]
+            .iter().any(|prefix| line.starts_with(prefix))
+    }).collect::<Vec<_>>().join("\n");
+    println!("Unrecorded frame bottlenecks:\n{counters}");
+    fs::write(root.join("motion_unrecorded_bottlenecks.txt"), &counters).map_err(|e| e.to_string())?;
     if !prove_directory(&dump()?, Some(FOLDER)) { return Err("Repeated navigation did not return to the folder".into()); }
     // Conservative emulator gate; this is not a claim of production 60fps.
     // Do not pass a sparse or overwhelmingly janky sample.

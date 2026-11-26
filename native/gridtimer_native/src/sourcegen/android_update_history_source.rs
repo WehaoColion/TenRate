@@ -1,3 +1,4 @@
+// v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
 // v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // v3.0.2.38 - Compose component-local hook and production source-generation regression.
@@ -151,6 +152,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.41",
+        updatedAt = "",
+        summary = "减少知识目录导航主线程重复计算，补充动效瓶颈证据",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "仅当实时数据与当前目录使用完全相同的快照时复用现有层级索引；实时数据变化时仍重新验证权限、目录和排序范围。",
+                "独立动效测试记录系统错过同步、主线程、输入、位图上传、绘制及帧截止时间计数，不改变原卡顿比例和P90时限。",
+                "保留原签名和双模拟器50万及百万条压力测试，本版尚待实际验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.40",
         updatedAt = "",

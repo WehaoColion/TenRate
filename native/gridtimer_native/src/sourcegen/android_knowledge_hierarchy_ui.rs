@@ -1,3 +1,4 @@
+// v3.0.2.41 - Reuse directory hierarchy only for the same live data snapshot.
 // v3.0.2.32 - Move exclusion reads off Main and remove redundant directory row layers.
 // v3.0.2.21 - Preserve row/header geometry during auxiliary order reads.
 // v3.0.2.20 - Avoid competing order-load animation during directory navigation.
@@ -486,11 +487,18 @@ const STUDIO_NAVIGATION: &str = r####"    fun pushKnowledgeReturn() {
 const HIERARCHY_BROWSER: &str = r####"                    KnowledgeHierarchyBrowser(index = hierarchyIndex, parentId = hierarchyParentId,
                         currentScope = {
                             if (!hierarchyCallbacksAlive.get() || !isCurrentFrame() || !hierarchyVisible) null
-                            else com.ofairyo.gridtimer.data.knowledgeDirectoryOrderScope(
-                                viewModel.appData.value.knowledgeHierarchy(), viewModel.currentWorkspaceKey(), hierarchyParentId,
-                                canInteract = com.ofairyo.gridtimer.data.knowledgeDirectoryCollectionMayInteract(
-                                    currentFrame = isCurrentFrame(), collectionFrame = frame == null,
-                                    visible = hierarchyVisible, busy = hierarchyBusy || hierarchyRequest != null))
+                            else {
+                                // Navigation and drag validation both run on Main. Reuse the
+                                // already rendered index only when it describes the exact live
+                                // immutable snapshot; a newer snapshot must still be validated.
+                                val liveData = viewModel.appData.value
+                                val liveIndex = if (liveData === appData) hierarchyIndex else liveData.knowledgeHierarchy()
+                                com.ofairyo.gridtimer.data.knowledgeDirectoryOrderScope(
+                                    liveIndex, viewModel.currentWorkspaceKey(), hierarchyParentId,
+                                    canInteract = com.ofairyo.gridtimer.data.knowledgeDirectoryCollectionMayInteract(
+                                        currentFrame = isCurrentFrame(), collectionFrame = frame == null,
+                                        visible = hierarchyVisible, busy = hierarchyBusy || hierarchyRequest != null))
+                            }
                         },
                         busy = hierarchyBusy, message = hierarchyMessage, onBack = {
                             if (isCurrentFrame() && !hierarchyBusy) {
