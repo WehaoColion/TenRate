@@ -1,3 +1,4 @@
+// v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 //! Cheap fail-closed checks run before any signing or simulator work.
 #[allow(dead_code)]
@@ -62,6 +63,7 @@ fn check_repository() -> Result<(), String> {
     ANDROID_RELEASE.require_history_head(HISTORY)?;
     require_core_job(WORKFLOW, "knowledge-save-emulator", true)?;
     require_core_job(WORKFLOW, "knowledge-motion-emulator", false)?;
+    require_core_job(WORKFLOW, "ai-conversation-emulator", true)?;
     require_stress_profiles(WORKFLOW)?;
     let _ = job_lines(WORKFLOW, "publish-signed-test-candidate")?;
     for old in ["publish-build37-download", "publish-signed-motion-test-candidate", "publish-knowledge-save-candidate", "publish-candidate"] {

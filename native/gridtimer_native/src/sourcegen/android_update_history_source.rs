@@ -1,3 +1,4 @@
+// v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // v3.0.2.38 - Compose component-local hook and production source-generation regression.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
@@ -149,6 +150,19 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.39",
+        updatedAt = "",
+        summary = "重构普通AI问答阅读、输入、历史及整段保存布局",
+        sections = listOf(
+            AndroidUpdateSection("AI问答", listOf(
+                "紧凑顶栏保留历史、新对话和关闭，历史独立显示，不再与正文混排。",
+                "整段保存固定在对话顶部，输入与图片选择、发送合并，隐去重复保存按钮及常驻长说明。",
+                "保留实际发送范围预览、模型设置、图片隐私提示、原有授权与本地持久化边界。",
+                "加入API 35和36签名APK实际界面验收。本版尚待模拟器验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.38",
         updatedAt = "",

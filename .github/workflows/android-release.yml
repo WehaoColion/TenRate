@@ -1,3 +1,4 @@
+# v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 # v3.0.2.35 - Execute baseline and million-row workloads on both emulator APIs.
 # v3.0.2.33 - One candidate publisher and mandatory branch-independent emulator acceptance.
 # v3.0.2.27 - Run unchanged acceptance on API 35 and 36.
@@ -864,11 +865,14 @@ jobs:
 
 
   ai-conversation-emulator:
-    name: Android 2.13.5.9 AI conversation on API 35 emulator
-    if: github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9'
+    name: Android ${{ matrix.api }} signed AI conversation layout acceptance
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
     permissions:
       contents: read
       actions: read
@@ -884,7 +888,10 @@ jobs:
         run: |
           set -euo pipefail
           cd ai_chat_apk
-          tr -d '\r' < tenfold_v2.13.5.9.apk.sha256 | sha256sum -c -
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_ai_conversation_probe.rs -o android_ai_conversation_probe
       - name: Enable KVM acceleration
@@ -894,10 +901,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
           test -e /dev/kvm
-      - name: Boot API 35 Android emulator, install signed APK and inspect AI history
+      - name: Boot Android emulator, install signed APK and inspect AI chat
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -906,7 +913,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r ai_chat_apk/tenfold_v2.13.5.9.apk
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${{ matrix.api }}"
+            adb install -r ai_chat_apk/tenfold_v*.apk
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
             ./android_ai_conversation_probe ai_chat_evidence
       - name: Report real emulator result
@@ -922,7 +930,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ai-conversation-v2.13.5.9-emulator-evidence
+          name: ai-conversation-api${{ matrix.api }}-${{ github.sha }}
           path: ai_chat_evidence/
           if-no-files-found: warn
           retention-days: 21
