@@ -1,3 +1,4 @@
+// v3.0.2.33 - Share release identity and visible navigation evidence.
 // v3.0.2.31 - Bound read-only log collection and preserve strict durable assertions.
 // v3.0.2.29 - Use document-end key chord and preserve exact failure evidence.
 // v3.0.2.25 - Exercise actual background/resume during body saves.
@@ -27,6 +28,8 @@ use std::{
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 mod android_save_probe_fixture;
+mod android_directory_evidence;
+use android_directory_evidence::prove_directory;
 use android_save_probe_fixture::{installed_version, SqliteWriter, DATABASE};
 // Numeric page titles commit on both Latin and Pinyin keyboards without
 // depending on the input method's candidate selection or word boundaries.
@@ -187,8 +190,7 @@ fn directory(root: &Path) -> Result<(), String> {
     for step in 0..13 {
         clear_system_dialog()?;
         let view = dump()?;
-        if (view.contains("新建子页面") && view.contains("新建子文件夹")) ||
-            (view.contains("New subpage") && view.contains("New subfolder")) {
+        if prove_directory(&view, None) {
             capture(root, "02_directory");
             return Ok(());
         }
@@ -378,11 +380,7 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     while started.elapsed().as_millis() < EDIT_BUDGET_MS {
         let ui = dump()?;
         let visible = elements(&ui);
-        let is_parent = visible.iter().any(|n| n.label == NESTED_FOLDER)
-            && visible.iter().any(|n| n.label == "新建子页面")
-            && visible.iter().any(|n| n.description == "文件夹设置")
-            && !visible.iter().any(|n| n.class_name.ends_with("EditText") ||
-                n.description.contains("拖动调整块顺序"));
+        let is_parent = prove_directory(&ui, Some(NESTED_FOLDER));
         if !is_parent && !back_sent {
             if let Some(back) = visible.iter().find(|n| n.description == "返回" || n.description == "Back") {
                 send_tap(back)?;
@@ -1144,11 +1142,7 @@ fn run(root: &Path) -> Result<String, String> {
     let mut returned_to_folder = false;
     for _ in 0..12 {
         let current = dump()?;
-        let visible = elements(&current);
-        if visible.iter().any(|n| n.label == NESTED_FOLDER)
-            && visible.iter().any(|n| n.label == "新建子页面")
-            && visible.iter().any(|n| n.description == "文件夹设置")
-            && !visible.iter().any(|n| n.class_name.ends_with("EditText")) {
+        if prove_directory(&current, Some(NESTED_FOLDER)) {
             returned_to_folder = true;
             break;
         }
@@ -1235,7 +1229,11 @@ fn main() {
         // Standalone signed APK regression on clean state, before heavy load.
         // Still exercises real editing, four version commits (one competing
         // writer), exact SQLite bytes after process death and exported pixels.
-        cmd(&["root"]).and_then(|_| cmd(&["wait-for-device"]))
+        cmd(&["wait-for-device"])
+            .and_then(|_| cmd(&["shell", "dumpsys", "package", PACKAGE]))
+            .and_then(|info| installed_version(&info).map(|_| ()))
+            .and_then(|_| cmd(&["root"]))
+            .and_then(|_| cmd(&["wait-for-device"]))
             .and_then(|_| sticky_blank_body(&path))
             .and_then(|_| sticky_version_pressure(&path, 4))
             .and_then(|plain| sticky_rich_roundtrip(&path, 5).map(|rich| format!("{plain}\n{rich}")))

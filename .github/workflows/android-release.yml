@@ -1,16 +1,41 @@
+# v3.0.2.33 - One candidate publisher and mandatory branch-independent emulator acceptance.
 # v3.0.2.27 - Run unchanged acceptance on API 35 and 36.
 name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11, feat/android-legal-knowledge-exclusions-20261108, feat/android-startup-shell-refresh-v2.23.4.14, feat/android-customer-network-canvas-ux-20261111, feat/android-universal-canvas-entry-20261111, feat/android-canvas-zoom-1percent-20261111, feat/android-document-block-drag-v2.23.4.18, feat/android-referral-forest-layout-v2.13.5.1, feat/android-knowledge-skeuomorphic-ui-v2.13.5.2, fix/android-home-today-badge-v2.13.5.3, feat/android-customer-payment-v2.13.5.5, feat/android-client-payment-ledger-v2.13.5.6, feat/android-knowledge-workspace-design-v2.13.5.8, feat/android-ai-durable-conversation-v2.13.5.9, feat/android-knowledge-actions-v2.13.5.10, feat/android-knowledge-motion-v2.13.5.11, feat/android-knowledge-atelier-v2.13.5.12, feat/android-canvas-ai-question-v2.13.5.13, feat/android-canvas-qa-redesign-v3.0, feat/android-canvas-answer-ux-v3.0.2, perf/android-knowledge-create-delta-v3.0.2.1, fix/android-sticky-summary-v3.0.2.3, perf/android-save-preflight-current-v3.0.2.4, fix/android-document-typing-stability-v3.0.2.7, perf/android-knowledge-commit-*, fix/android-knowledge-motion-v3.0.2.15]
+    paths:
+      - 'app/**'
+      - 'native/gridtimer_native/**'
+      - 'tools/android*'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - 'build.gradle*'
+      - 'settings.gradle*'
+      - '.github/workflows/android-release.yml'
+      - '.github/workflows/publish-apk.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  repository-contract:
+    name: Android repository contract and historical error replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and execute the Rust contract before signing
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustc +stable --edition=2021 -D warnings --test tools/android_repository_contract.rs -o android_repository_contract_tests
+          ./android_repository_contract_tests --nocapture
+          rustc +stable --edition=2021 -D warnings tools/android_repository_contract.rs -o android_repository_contract
+          ./android_repository_contract
+
   release:
+    needs: repository-contract
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -192,14 +217,13 @@ jobs:
 
   knowledge-save-emulator:
     name: Android ${{ matrix.api }} signed APK knowledge save and editor acceptance
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4' || github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15'
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        api: ${{ fromJSON(github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15' && '[35,36]' || '[35]') }}
+        api: [35, 36]
     permissions:
       contents: read
       actions: read
@@ -292,41 +316,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 21
 
-  publish-build37-download:
-    name: Publish exact build 37 as a downloadable test prerelease
-    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15' && github.event.before == 'e2e3b7ac410daaed4b3ebecb2446b764428c22d0'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify original build provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          test "$(gh run view 45643590098 --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)" = "e2e3b7ac410daaed4b3ebecb2446b764428c22d0"
-      - uses: actions/download-artifact@v4
-        with:
-          name: tenrate-signed-apk
-          path: package
-          github-token: ${{ github.token }}
-          run-id: 45643590098
-          repository: ${{ github.repository }}
-      - name: Publish byte-identical signed APK with its original commit tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          echo 'eb2779b9cbe8828ce31d17d7475bc46d9d872d729e946ed4c98122d20eec2f18  package/tenfold_v3.0.2.15.apk' | sha256sum -c -
-          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
-          GITHUB_SHA=e2e3b7ac410daaed4b3ebecb2446b764428c22d0 ./android_candidate_publish
-          gh release view v3.0.2.15-candidate-e2e3b7ac410d --repo "$GITHUB_REPOSITORY" --json url,isPrerelease,assets
-
-  publish-signed-motion-test-candidate:
+  publish-signed-test-candidate:
     name: Publish signed Android test APK (acceptance independently tracked)
-    if: github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15'
+    if: github.ref != 'refs/heads/main'
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -344,94 +336,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
-          ./android_candidate_publish
-
-  publish-knowledge-save-candidate:
-    name: Publish emulator-verified knowledge save APK
-    if: startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
-    needs: [release, knowledge-save-emulator]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: tenrate-signed-apk
-          path: package
-      - name: Publish immutable commit-scoped candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
-          ./android_candidate_publish
-
-  publish-candidate:
-    name: Publish signed prerelease
-    needs: release
-    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57' || github.ref == 'refs/heads/fix/android-empty-document-exit-v2.23.2.59' || github.ref == 'refs/heads/feat/android-inline-children-v2.23.3' || github.ref == 'refs/heads/perf/android-rust-hierarchy-create-save-2.23.4' || github.ref == 'refs/heads/release/android-2.23.4.6-integrated-20261103' || github.ref == 'refs/heads/feat/android-move-frequent-destinations-20261104' || github.ref == 'refs/heads/feat/android-canvas-usability-safety-20261104' || github.ref == 'refs/heads/fix/android-header-archive-single-row-v2.23.4.9' || github.ref == 'refs/heads/feat/android-home-header-refine-v2.23.4.10' || github.ref == 'refs/heads/fix/android-canvas-gesture-flicker-v2.23.4.11' || github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' || github.ref == 'refs/heads/fix/android-sticky-summary-v3.0.2.3' || github.ref == 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' || github.ref == 'refs/heads/fix/android-sticky-summary-v3.0.2.3' || github.ref == 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
-      - uses: actions/download-artifact@v4
-        with:
-          name: tenrate-signed-apk
-          path: package
-      - name: Verify checksum and push immutable GitHub Release assets
-        if: github.ref != 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' && github.ref != 'refs/heads/fix/android-home-today-badge-v2.13.5.3' && github.ref != 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' && github.ref != 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' && github.ref != 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' && github.ref != 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' && github.ref != 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' && github.ref != 'refs/heads/feat/android-canvas-qa-redesign-v3.0' && github.ref != 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' && github.ref != 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' && github.ref != 'refs/heads/fix/android-sticky-summary-v3.0.2.3' && github.ref != 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import hashlib, pathlib, subprocess, os, re, json
-          def gh(*args, check=True):
-              result = subprocess.run(['gh', *args, '--repo', os.environ['GITHUB_REPOSITORY']], text=True, capture_output=True)
-              if check and result.returncode:
-                  raise SystemExit(result.stderr or result.stdout)
-              return result
-          assets = list(pathlib.Path('package').glob('*.apk'))
-          if len(assets) != 1:
-              raise SystemExit('Exactly one signed APK is required')
-          apk = assets[0]
-          match = re.fullmatch(r'tenfold_v(\d+(?:\.\d+){2,3})\.apk', apk.name)
-          if not match:
-              raise SystemExit('Unexpected APK filename')
-          checksum = apk.with_name(apk.name + '.sha256')
-          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
-          if checksum.read_text().split() != [digest, apk.name]:
-              raise SystemExit('APK SHA256 mismatch')
-          version = match.group(1)
-          tag = 'v' + version
-          found = gh('release', 'view', tag, '--json', 'assets', check=False)
-          if found.returncode:
-              if 'not found' not in (found.stderr + found.stdout).lower():
-                  raise SystemExit(found.stderr or found.stdout)
-              gh('release', 'create', tag, str(apk), str(checksum), '--target', os.environ['GITHUB_SHA'], '--prerelease', '--title', f'Android {version}', '--notes', f'Signed candidate APK from {os.environ["GITHUB_SHA"]}. SHA256: {digest}. Not device-verified.')
-          else:
-              names = {item['name'] for item in json.loads(found.stdout)['assets']}
-              for item in [apk, checksum]:
-                  if item.name in names:
-                      folder = pathlib.Path('previous'); folder.mkdir(exist_ok=True)
-                      gh('release', 'download', tag, '--pattern', item.name, '--dir', str(folder))
-                      if (folder / item.name).read_bytes() != item.read_bytes():
-                          raise SystemExit('Existing release asset differs; refusing overwrite')
-                  else:
-                      gh('release', 'upload', tag, str(item))
-          gh('release', 'edit', tag, '--prerelease')
-          print(f'Published {apk.name} SHA256 {digest}')
-          PY
-      - name: Publish immutable commit-scoped candidate with Rust
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' || github.ref == 'refs/heads/fix/android-sticky-summary-v3.0.2.3' || github.ref == 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
           rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
           ./android_candidate_publish
 
@@ -1074,7 +978,6 @@ jobs:
 
   knowledge-motion-emulator:
     name: Android signed APK continuous knowledge motion on API 35
-    if: github.ref == 'refs/heads/fix/android-knowledge-motion-v3.0.2.15'
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 95

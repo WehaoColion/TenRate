@@ -1,3 +1,4 @@
+// v3.0.2.33 - Share release identity and visible navigation evidence.
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, Command, Stdio},
@@ -5,16 +6,10 @@ use std::{
 
 pub const DATABASE: &str = "/data/user/0/com.ofairyo.gridtimer/databases/app_state.db";
 
-pub fn installed_version(info: &str) -> Result<&'static str, String> {
-    let version = include_str!("../app/build.gradle").lines()
-        .find_map(|line| line.trim().strip_prefix("versionName '")?.strip_suffix('\''))
-        .ok_or("Missing Android release version")?;
-    if info.lines().any(|line| line.trim().strip_prefix("versionName=") == Some(version)) {
-        Ok(version)
-    } else {
-        Err(format!("Expected Android {version} in the installed package"))
-    }
-}
+#[allow(dead_code)]
+#[path = "../native/gridtimer_native/src/android_release_identity.rs"]
+mod android_release_identity;
+pub use self::android_release_identity::installed_version;
 
 // Drive a real competing writer in the emulator. Closing stdin also releases the
 // transaction if a UI assertion returns early.

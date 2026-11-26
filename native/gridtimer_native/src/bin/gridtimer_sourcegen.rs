@@ -1,3 +1,4 @@
+// v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.3 - Bound the sticky home preview through the Rust-generated UI.
 // v2.23.2.56 - Open existing sticky notes in editable source by default.
 // v2.23.2.6 - Generate offline Markdown and formula reading with safe render boundaries.
@@ -187,6 +188,8 @@ fn main() {
 }
 
 fn run() -> io::Result<()> {
+    let checked_update_history = android_update_history_source::checked_contents()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let output_root = env::args_os()
         .nth(1)
         .map(PathBuf::from)
@@ -628,7 +631,7 @@ fn run() -> io::Result<()> {
     write_source(
         &output_root,
         android_update_history_source::PATH,
-        android_update_history_source::CONTENTS,
+        checked_update_history,
     )?;
 
     write_source(

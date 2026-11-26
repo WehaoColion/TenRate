@@ -1,8 +1,13 @@
+// v3.0.2.33 - Share release identity and visible navigation evidence.
 // v3.0 - Permit exact two-part Android 3.0 version labels in immutable candidates.
 // Publish a signed Android candidate to a commit-scoped immutable prerelease.
 // This prevents later CI runs for the same Android version from replacing
 // artifacts that were signed and published by an earlier commit.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}};
+#[allow(dead_code)]
+#[path = "../native/gridtimer_native/src/android_release_identity.rs"]
+mod android_release_identity;
+use android_release_identity::{ANDROID_RELEASE, ANDROID_APP_VERSION};
 
 fn gh(repo: &str, args: &[&str]) -> Result<Output, String> {
     Command::new("gh")
@@ -49,9 +54,8 @@ fn publish() -> Result<(), String> {
     let version = filename.strip_prefix("tenfold_v")
         .and_then(|rest| rest.strip_suffix(".apk"))
         .ok_or("unexpected APK filename")?;
-    if !(2..=4).contains(&version.split('.').count())
-        || version.split('.').any(|segment| segment.is_empty() || !segment.bytes().all(|b| b.is_ascii_digit())) {
-        return Err("invalid APK version".into());
+    if version != ANDROID_APP_VERSION {
+        return Err(format!("APK filename does not match app/build.gradle: expected tenfold_v{ANDROID_APP_VERSION}.apk; use the exact build artifact"));
     }
     let checksum = apk.with_file_name(format!("{filename}.sha256"));
     let checksum_text = fs::read_to_string(&checksum).map_err(|e| e.to_string())?;
@@ -62,7 +66,7 @@ fn publish() -> Result<(), String> {
     let expected = checksum_text.split_whitespace().collect::<Vec<_>>();
     if expected != [digest, filename] { return Err("APK checksum mismatch".into()); }
 
-    let tag = format!("v{version}-candidate-{}", &commit[..12]);
+    let tag = ANDROID_RELEASE.candidate_tag(&commit)?;
     let old = gh(&repo, &["release", "view", &tag, "--json", "tagName"])?;
     if old.status.success() {
         let previous = Path::new("previous");
@@ -88,6 +92,14 @@ fn publish() -> Result<(), String> {
             "--target", &commit, "--prerelease", "--title", &title, "--notes", &notes
         ])?;
         println!("Published immutable candidate {tag} ({digest})");
+    }
+    // The API endpoint itself identifies the repository. Do not reuse the
+    // release CLI wrapper, whose --repo option is not an option of gh api.
+    let reference = format!("repos/{repo}/git/ref/tags/{tag}");
+    let output = Command::new("gh").args(["api", &reference, "--jq", ".object.sha"])
+        .output().map_err(|error| error.to_string())?;
+    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != commit {
+        return Err(format!("Candidate tag {tag} does not resolve to the exact build commit; never reuse or overwrite it"));
     }
     Ok(())
 }

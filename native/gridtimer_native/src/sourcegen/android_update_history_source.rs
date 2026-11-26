@@ -1,3 +1,4 @@
+// v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.32 - Record directory rendering changes.
 // v3.0.2.31 - Record candidate maintenance and diagnostic changes.
 // v3.0.2.30 - Record candidate maintenance priority changes.
@@ -107,7 +108,13 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.32";
+pub const LATEST_VERSION: &str = gridtimer_native::product_identity::ANDROID_APP_VERSION;
+
+pub fn checked_contents() -> Result<&'static str, String> {
+    gridtimer_native::product_identity::android_release_identity::ANDROID_RELEASE
+        .require_history_head(CONTENTS)?;
+    Ok(CONTENTS)
+}
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -137,6 +144,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.33",
+        updatedAt = "",
+        summary = "统一安卓版本、候选发布及模拟器验收契约",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "安卓构建配置作为唯一版本标识来源，Rust、应用内更新记录及真机验收读取同一版本和版本代码。",
+                "所有签名构建执行双系统版本保存验收和动效验收，候选包按提交发布，不覆盖历史资产。",
+                "目录返回验收使用真实可见节点与编辑器排除条件，保留五十万条、八秒、完整SQLite回执及动效门槛。本版待模拟器验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.32",
         updatedAt = "",

@@ -1,3 +1,4 @@
+// v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.32 - Synchronize Android version.
 // v3.0.2.31 - Synchronize Android version.
 // v3.0.2.30 - Synchronize Android version.
@@ -179,8 +180,9 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.32";
-pub const ANDROID_VERSION_CODE: i32 = 30034;
+#[path = "android_release_identity.rs"]
+pub mod android_release_identity;
+pub use self::android_release_identity::{ANDROID_APP_VERSION, ANDROID_VERSION_CODE};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

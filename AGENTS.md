@@ -33,3 +33,11 @@ APK 交付保持项目根目录、`APK/` 和 `app/build/outputs/apk/release/`；
 每次完成 Android 更新，必须将已构建、通过检查的最新正式签名 APK 及 SHA256 校验文件上传到 GitHub Releases，并向用户提供版本页或 APK 下载链接；不能只交付聊天附件或短期 Actions 产物。沿用原签名证书与同步发现身份，不得上传密钥库、密码或签名配置。
 
 主分支的成功 Android 构建由 `Publish Android APK` 工作流自动发布；已有构建使用该工作流的 `run_id` 手动发布，复用经过验证的原始产物。未合并版本标为预发布，合并后发布为正式版本。已存在的同名资产须字节一致，不得静默覆盖不同 APK。用户仅确认 APK 可用时，不推断所有设备与同步场景已验收；合并按用户明确指令执行。
+
+## Android 仓库硬性契约
+
+版本只修改 `app/build.gradle` 中的 versionName 与 versionCode，并在 Android 更新记录首项新增对应修订；Rust 运行身份、模拟器及候选发布统一读取该配置。不要重新声明另一份版本常量。源码生成器会拒绝缺失、错序或滞后的更新记录。
+
+`Android repository contract and historical error replay` 必须通过才允许签名构建；所有签名构建必须执行 API 35、36 保存验收及真实动效验收。不要新增按历史分支名跳过核心验收的条件。候选 APK 统一由 `tools/android_candidate_publish.rs` 按版本与构建提交生成不可覆盖的预发布，不以候选发布成功代替模拟器验收。正式发布仍使用原有独立流程。
+
+目录导航验收复用 `tools/android_directory_evidence.rs` 的真实可见节点证明，不以面包屑、编辑器内联创建按钮或隐藏节点断言已返回目录。保留原压力规模、回执、重启及帧预算。

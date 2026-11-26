@@ -1,3 +1,4 @@
+// v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.32 - Reduce directory composition and render-layer work.
 // v3.0.2.31 - Pace optional history compaction and harden acceptance capture.
 // v3.0.2.30 - Prioritize active interaction over optional snapshot maintenance.
@@ -225,8 +226,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30034
-        versionName '3.0.2.32'
+        versionCode 30035
+        versionName '3.0.2.33'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

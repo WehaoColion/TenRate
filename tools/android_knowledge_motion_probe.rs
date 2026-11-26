@@ -1,16 +1,16 @@
+// v3.0.2.33 - Share release identity and visible navigation evidence.
 //! Android API 35 smoke and visual evidence for the knowledge workspace.
 //! The driver runs only against an installed signed APK, never a mocked UI.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
-// The version contract follows the exact checked-out Android build definition,
-// so later revisions cannot accidentally verify an older signed package.
-fn expected_version() -> Result<&'static str, String> {
-    include_str!("../app/build.gradle").lines()
-        .find_map(|line| line.trim().strip_prefix("versionName '")?.strip_suffix('\''))
-        .ok_or_else(|| "Android build versionName missing".into())
-}
+#[allow(dead_code)]
+#[path = "../native/gridtimer_native/src/android_release_identity.rs"]
+mod android_release_identity;
+mod android_directory_evidence;
+use android_release_identity::installed_version;
+use android_directory_evidence::prove_directory;
 const FOLDER: &str = "KnowledgeDesignFolder";
 
 #[derive(Clone)]
@@ -118,8 +118,7 @@ fn directory(root: &Path) -> Result<(), String> {
     for step in 0..13 {
         clear_system_dialog()?;
         let view = dump()?;
-        if (view.contains("新建子页面") && view.contains("新建子文件夹")) ||
-            (view.contains("New subpage") && view.contains("New subfolder")) {
+        if prove_directory(&view, None) {
             capture(root, "02_directory");
             return Ok(());
         }
@@ -179,7 +178,7 @@ fn capture_motion_frame(dir: &Path, title: &str) {
 fn open_folder_with_motion(root: &Path) -> Result<(), String> {
     // Creation automatically opens the folder; start the recording at its parent
     // so the first tap is a real navigation, not a tap on the current title.
-    if dump()?.contains("文件夹设置") {
+    if prove_directory(&dump()?, Some(FOLDER)) {
         cmd(&["shell", "input", "keyevent", "4"])?;
         sleep(Duration::from_millis(800));
     }
@@ -197,7 +196,7 @@ fn open_folder_with_motion(root: &Path) -> Result<(), String> {
     let result = (|| -> Result<(), String> {
         cmd(&["shell", "input", "tap", &x, &y])?;
         sleep(Duration::from_millis(800));
-        if !dump()?.contains("文件夹设置") {
+        if !prove_directory(&dump()?, Some(FOLDER)) {
             return Err("Forward directory transition failed".into());
         }
         capture_motion_frame(root, "05_folder_opened");
@@ -208,7 +207,7 @@ fn open_folder_with_motion(root: &Path) -> Result<(), String> {
         let ry = ((returned.bounds[1] + returned.bounds[3]) / 2).to_string();
         cmd(&["shell", "input", "tap", &rx, &ry])?;
         sleep(Duration::from_millis(800));
-        if !dump()?.contains("文件夹设置") {
+        if !prove_directory(&dump()?, Some(FOLDER)) {
             return Err("Re-entry after back failed".into());
         }
         capture_motion_frame(root, "06_folder_reentered");
@@ -259,7 +258,7 @@ fn open_folder_with_motion(root: &Path) -> Result<(), String> {
     let summary = format!("Unrecorded navigation: {total} frames, {janky} janky, p90 {p90}ms");
     fs::write(root.join("motion_unrecorded_metrics.txt"), &summary).map_err(|e| e.to_string())?;
     println!("{summary}");
-    if !dump()?.contains("文件夹设置") { return Err("Repeated navigation did not return to the folder".into()); }
+    if !prove_directory(&dump()?, Some(FOLDER)) { return Err("Repeated navigation did not return to the folder".into()); }
     // Conservative emulator gate; this is not a claim of production 60fps.
     // Do not pass a sparse or overwhelmingly janky sample.
     if total < 40 || janky.saturating_mul(100) > total.saturating_mul(25) || p90 > 50 {
@@ -271,10 +270,7 @@ fn run(root: &Path) -> Result<String, String> {
     assert_animations_enabled()?;
     cmd(&["wait-for-device"])?;
     let package_info = cmd(&["shell", "dumpsys", "package", PACKAGE])?;
-    let version = expected_version()?;
-    if !package_info.lines().any(|line| line.trim() == format!("versionName={version}")) {
-        return Err(format!("Installed package is not Android {version}"));
-    }
+    let version = installed_version(&package_info)?;
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
