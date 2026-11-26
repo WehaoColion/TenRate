@@ -1,3 +1,4 @@
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
@@ -229,8 +230,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30038
-        versionName '3.0.2.36'
+        versionCode 30039
+        versionName '3.0.2.37'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

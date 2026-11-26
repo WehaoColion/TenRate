@@ -1,3 +1,4 @@
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.33 - Share release identity and visible navigation evidence.
@@ -66,9 +67,12 @@ fn adb(args: &[&str]) -> Result<Output, String> {
     Command::new("adb").args(args).output().map_err(|e| e.to_string())
 }
 fn cmd(args: &[&str]) -> Result<String, String> {
-    // Retry only read-only log dumps. Never replay a tap, key event, SQL
-    // mutation, or log clear. A failed evidence read remains a failed probe.
-    let attempts = if args.first() == Some(&"logcat") && args.contains(&"-d") { 3 } else { 1 };
+    // Retry only specific read-only evidence operations. Never replay a tap,
+    // key event, SQL mutation, log clear or version creation.
+    let diagnostic = args.first() == Some(&"logcat") && args.contains(&"-d");
+    let share_listing = args.len() == 2 && args[0] == "shell"
+        && args[1].starts_with("ls -1t /data/user/0/com.ofairyo.gridtimer/cache/note_shares/note_share_*.png ");
+    let attempts = if diagnostic || share_listing { 3 } else { 1 };
     for attempt in 0..attempts {
         let out = adb(args)?;
         if out.status.success() {
@@ -297,6 +301,44 @@ fn nested_body_has(marker: &str) -> Result<bool, String> {
     ))?;
     Ok(count.trim() == "1")
 }
+// A real text-field selection receipt is independent of saved-state receipts.
+// Do not start a timed append while the IME still owns a stale selection.
+fn append_caret_proven(xml: &str, expected: &str) -> bool {
+    let length = expected.encode_utf16().count();
+    let tag = format!("document_body_cursor_{length}_{length}_{length}_committed");
+    xml.split("<node ").skip(1).filter_map(|entry| entry.split('>').next()).any(|node| {
+        attr(node, "class").ends_with("EditText")
+            && attr(node, "focused") == "true"
+            && attr(node, "resource-id").ends_with(&tag)
+            && (expected.is_empty() || attr(node, "text") == expected)
+    })
+}
+
+fn ensure_append_caret(root: &Path, expected: &str, label: &str) -> Result<(), String> {
+    let mut xml = dump()?;
+    if append_caret_proven(&xml, expected) { return Ok(()); }
+    let mut fields: Vec<Node> = elements(&xml).into_iter().filter(|n|
+        n.class_name.ends_with("EditText") && n.bounds[2] - n.bounds[0] > 80).collect();
+    fields.sort_by_key(|n| n.bounds[1]);
+    if fields.len() < 2 { return Err("Body not visible for real cursor positioning".into()); }
+    tap(fields.last().unwrap())?;
+    cmd(&["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_MOVE_END"])?;
+    for attempt in 0..=3 {
+        xml = dump()?;
+        if append_caret_proven(&xml, expected) { return Ok(()); }
+        if attempt == 3 { break; }
+        // No replacement, paste or extra characters. Each pass is bounded by
+        // the existing source length; an actual selection receipt is mandatory.
+        let mut keys = vec!["shell", "input", "keyevent", "KEYCODE_MOVE_END"];
+        keys.extend(std::iter::repeat("KEYCODE_DPAD_RIGHT").take(expected.encode_utf16().count() + 1));
+        cmd(&keys)?;
+        sleep(Duration::from_millis(200));
+    }
+    fs::write(root.join(format!("cursor_{label}_not_proven.xml")), &xml).map_err(|e| e.to_string())?;
+    capture(root, &format!("cursor_{label}_not_proven"));
+    Err(format!("Body cursor not confirmed at exact append position before {label}; no input or save attempted"))
+}
+
 fn edit_nested_page(root: &Path) -> Result<(), String> {
     let view = dump()?;
     let mut fields: Vec<Node> = elements(&view).into_iter().filter(|n|
@@ -308,6 +350,7 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     let mut measurements = String::from("round,elapsed_ms,writer_contention,background_resume\n");
     let mut expected = String::new();
     for round in 0..EDIT_ROUNDS {
+        ensure_append_caret(root, &expected, &format!("round_{round}"))?;
         let marker = format!("817{round:02}629");
         expected.push_str(&marker);
         let writer = if round % 4 == 1 { Some(hold_sqlite_writer()?) } else { None };
@@ -358,29 +401,12 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
             return Err(format!("Nested page body save round {round} exceeded {EDIT_BUDGET_MS}ms: {elapsed}ms; UI and SQLite receipt required"));
         }
         if lifecycle_round {
-            let resumed = dump()?;
-            let mut fields: Vec<Node> = elements(&resumed).into_iter().filter(|n|
-                n.class_name.ends_with("EditText") && n.bounds[2] - n.bounds[0] > 80).collect();
-            fields.sort_by_key(|n| n.bounds[1]);
-            let body = fields.last().ok_or("Editor body missing after real background/resume")?;
-            if fields.len() < 2 { return Err("Editor lost body after real background/resume".into()); }
-            tap(body)?;
-            // 3.0.2.34 actual failure: 81700629817016298181703629702629,
-            // visible_saved=true. Ctrl+End is not reliable in this Compose/IME
-            // combination. Move the real caret right at most the number of
-            // ASCII characters already authored, plus one. This cannot edit
-            // or replace the text, and does not count as an additional save.
-            // All input, receipt and restart assertions remain exact.
-            let mut keys = vec!["shell", "input", "keyevent", "KEYCODE_MOVE_END"];
-            keys.extend(std::iter::repeat("KEYCODE_DPAD_RIGHT").take(expected.len() + 1));
-            cmd(&keys)?;
-            let after = dump()?;
-            if !after.contains(&expected) {
-                capture(root, &format!("resumed_caret_body_changed_{round}"));
-                return Err(format!("Existing body changed while positioning caret after resume in round {round}"));
-            }
+            // The next round must obtain a new real selection receipt after
+            // returning from background. Never assume coordinate taps mean end.
+            ensure_append_caret(root, &expected, &format!("resume_{round}"))?;
         }
     }
+    ensure_append_caret(root, &expected, "burst")?;
     // Burst of real key injections without waiting for autosave between edits.
     // One adb shell command preserves the input order, but no app state is mocked.
     let burst = (0..BURST_ROUNDS).map(|i| format!("943{i:02}")).collect::<Vec<_>>();

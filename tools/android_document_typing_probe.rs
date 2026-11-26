@@ -1,3 +1,4 @@
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.31 - Capture exact editor state when heading or paragraph disappears.
 //! GitHub Android emulator acceptance of stable text entry and knowledge share images.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
@@ -22,11 +23,19 @@ fn adb(args: &[&str]) -> Result<Output,String> {
     Command::new("adb").args(args).output().map_err(|e| e.to_string())
 }
 fn command(args: &[&str]) -> Result<String,String> {
-    let out=adb(args)?;
-    if !out.status.success() {
-        return Err(format!("adb {args:?}: {}",String::from_utf8_lossy(&out.stderr)));
+    // The 3.0.2.35 and .36 jobs both lost the read-only IME dump. Retry only
+    // this diagnostic, never a mutating action or an input event.
+    let attempts = if args == ["shell", "dumpsys", "input_method"] { 3 } else { 1 };
+    for attempt in 0..attempts {
+        let out = adb(args)?;
+        if out.status.success() { return Ok(String::from_utf8_lossy(&out.stdout).into_owned()); }
+        let error = format!("adb {args:?}: status={} stderr={} stdout_bytes={}",
+            out.status, String::from_utf8_lossy(&out.stderr), out.stdout.len());
+        if attempt + 1 == attempts { return Err(error); }
+        eprintln!("Read-only IME diagnostic retry: {error}");
+        sleep(Duration::from_millis(350 * (attempt as u64 + 1)));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    unreachable!("at least one ADB attempt")
 }
 fn attr(node: &str,key:&str)->String{
     let pat=format!("{key}=\"");

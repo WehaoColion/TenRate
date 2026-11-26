@@ -1,3 +1,4 @@
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v1.0.3.8 Windows - Verify multi-block sticky keyboard edits and undo after frame optimization.
 // v1.0.3.17 Windows - Cover asynchronous timer clicks and durable receipts.
 
@@ -1008,18 +1009,22 @@ fn workspace_completed_focus_is_recorded_while_timer_remains_running() {
     let mut client = test_client_for_account_scope(&dir, "account-a", state);
     client.settings.timer_bell_enabled = false;
     client.refresh_timer_projection(now);
-    let elapsed_before = client.projected_elapsed(1);
+    let before = app_data::TimerProjector::parse(&client.state_json).unwrap();
     client.settle_timer_phase(1);
     assert!(client.data.sessions.is_empty());
     workspace_commit_pending_save(&mut client);
     assert!(!client.data.sessions.is_empty());
     assert!(client.data.slots[0].running_since_epoch_millis.is_some());
+    // Settlement persists asynchronously and refreshes the running projection
+    // at a later wall-clock instant. Compare both states at the same instant:
+    // a slow runner must not be mistaken for a reset or a double-counted timer.
+    let at = client.desktop_ui.projection.as_ref().unwrap().projected_at_epoch_millis;
+    let expected = before.project(at).slots.into_iter()
+        .find(|slot| slot.id == 1).unwrap().accumulated_millis;
+    let actual = client.projected_elapsed(1);
     assert!(
-        client
-            .projected_elapsed(1)
-            .saturating_sub(elapsed_before)
-            .abs()
-            < 5_000
+        actual.saturating_sub(expected).abs() < 5_000,
+        "settlement changed running elapsed at the same instant: expected={expected} actual={actual}"
     );
     let count = client.data.sessions.len();
     client.settle_timer_phase(1);

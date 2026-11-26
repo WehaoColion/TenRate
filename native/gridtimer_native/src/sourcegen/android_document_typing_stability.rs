@@ -1,3 +1,4 @@
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.13 - Retain exact autosave receipts for the full-entry exit guard.
 //! Android document editing: keep keystrokes stationary and avoid phantom heading blocks.
 //! This Rust source transform runs after the document drag and caret transforms.
@@ -173,6 +174,37 @@ private fun Modifier.documentSaveReceipt(state: DocumentEditorSaveState): Modifi
 }}
 
 {helper}"#))?;
+    // Raw Markdown/source text is authoritative. Predictive autocorrection on
+    // Enter previously changed the literal heading (StableHeading -> Stable heading).
+    // Use the Compose 1.6 KeyboardOptions API from the pinned BOM.
+    replace_once(source, "                            value = textFieldState,\n                            onValueChange = onTextChanged,",
+        "                            value = textFieldState,\n                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(autoCorrect = false),\n                            onValueChange = onTextChanged,")?;
+    // The editor owns the latest TextFieldValue; a block's recomposed value is
+    // only a projection. Focus loss must never replay that potentially stale
+    // projection, especially after splitting a block or finishing an IME edit.
+    replace_once(source, "                onFocused = { activeTextBlockId = block.id },",
+        r#"                onFocused = { activeTextBlockId = block.id },
+                onCompositionCommit = {
+                    if (documentTransitionActive && !isSavingDraft) {
+                        val latest = textFieldStates[block.id]
+                        if (latest?.composition != null) {
+                            textFieldStates[block.id] = latest.copy(composition = null)
+                            updateTextBlock(block.id, latest.text)
+                        }
+                    }
+                },"#)?;
+    replace_once(source, "    onFocused: () -> Unit,\n    onOpenActions: () -> Unit,\n    onTextChanged: (TextFieldValue) -> Unit,",
+        "    onFocused: () -> Unit,\n    onCompositionCommit: () -> Unit,\n    onOpenActions: () -> Unit,\n    onTextChanged: (TextFieldValue) -> Unit,")?;
+    replace_once(source, "                                    } else if (textFieldState.composition != null) {\n                                        onTextChanged(textFieldState.copy(composition = null))\n                                    }",
+        "                                    } else {\n                                        onCompositionCommit()\n                                    }")?;
+    // Expose only offsets/length, not contents, via the existing semantics ID
+    // system. The field itself remains the authority for accessibility text.
+    replace_once(source, "                                .onFocusChanged { focusState ->\n                                    caretVisibility.focused = focusState.isFocused",
+        r#"                                .semantics {
+                                    testTag = "document_body_cursor_${textFieldState.selection.start}_${textFieldState.selection.end}_${textFieldState.text.length}_${if (textFieldState.composition == null) "committed" else "composing"}"
+                                }
+                                .onFocusChanged { focusState ->
+                                    caretVisibility.focused = focusState.isFocused"#)?;
     replace_once(source, "encrypted = previewNote.encryption != null,", "encrypted = note.encryption != null,")?;
     replace_between(source, "            DocumentCanvasBlock(", "                active = ",
         "note = previewNote,", "note = note,")?;

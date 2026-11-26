@@ -1,3 +1,4 @@
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
@@ -147,6 +148,19 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.37",
+        updatedAt = "",
+        summary = "统一正文输入提交与光标证据，稳定输入法及跨平台验收",
+        sections = listOf(
+            AndroidUpdateSection("正文与验收", listOf(
+                "正文原文编辑关闭输入法自动纠错；焦点离开时由编辑状态所有者提交最新组合输入，不再回放组件上一帧的旧值。",
+                "真实光标位置成为追加输入的前置证据，不以盲发方向键代替已到末尾的证明，保留所有原文与SQLite检查。",
+                "Windows连续计时回归按同一投影时刻比较计时值，不扩大原容差；只读模拟器取证增加有限重试。",
+                "保留五十万及百万条双档、八秒保存、600秒恢复及动效门槛。本版尚待完整验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.36",
         updatedAt = "",
