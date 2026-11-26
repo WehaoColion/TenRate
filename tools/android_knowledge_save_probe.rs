@@ -1,3 +1,4 @@
+// v3.0.2.31 - Bound read-only log collection and preserve strict durable assertions.
 // v3.0.2.29 - Use document-end key chord and preserve exact failure evidence.
 // v3.0.2.25 - Exercise actual background/resume during body saves.
 // v3.0.2.22 - Preserve exact pre-version input evidence and recover from Android share/launcher navigation.
@@ -59,11 +60,21 @@ fn adb(args: &[&str]) -> Result<Output, String> {
     Command::new("adb").args(args).output().map_err(|e| e.to_string())
 }
 fn cmd(args: &[&str]) -> Result<String, String> {
-    let out = adb(args)?;
-    if !out.status.success() {
-        return Err(format!("adb {args:?}: {}", String::from_utf8_lossy(&out.stderr)));
+    // Retry only read-only log dumps. Never replay a tap, key event, SQL
+    // mutation, or log clear. A failed evidence read remains a failed probe.
+    let attempts = if args.first() == Some(&"logcat") && args.contains(&"-d") { 3 } else { 1 };
+    for attempt in 0..attempts {
+        let out = adb(args)?;
+        if out.status.success() {
+            return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+        let error = format!("adb {args:?}: status={} stderr={} stdout_bytes={}",
+            out.status, String::from_utf8_lossy(&out.stderr), out.stdout.len());
+        if attempt + 1 == attempts { return Err(error); }
+        eprintln!("Read-only diagnostic retry: {error}");
+        sleep(Duration::from_millis(350 * (attempt as u64 + 1)));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    unreachable!("at least one ADB attempt")
 }
 fn attr(xml: &str, name: &str) -> String {
     let marker = format!("{name}=\"");
@@ -622,7 +633,9 @@ fn seed_history(root: &Path) -> Result<(), String> {
 fn inspect_preflight_logs(root: &Path) -> Result<&'static str, String> {
     // The signed release often omits Logcat. Use the application's durable
     // diagnostic store to prove which transaction-bound receipt was used.
-    let log = cmd(&["logcat", "-d", "-b", "main", "-v", "brief"])?;
+    // Avoid transferring unrelated main-buffer traffic from a busy emulator.
+    // The application diagnostic file remains the authoritative scope proof.
+    let log = cmd(&["logcat", "-d", "-b", "main", "-v", "brief", "-s", "NoteSaveLatency:I", "StartupLatency:I", "SQLiteLog:W", "AndroidRuntime:E"])?;
     let matching_logcat = log.lines()
         .filter(|line| line.contains("NoteSaveLatency")
             || line.contains("savePreflight scope"))

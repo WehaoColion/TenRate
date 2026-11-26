@@ -1,3 +1,4 @@
+// v3.0.2.31 - Record candidate maintenance and diagnostic changes.
 // v3.0.2.30 - Record candidate maintenance priority changes.
 // v3.0.2.29 - Record probe-only correction.
 // v3.0.2.28 - Record real-device contention evidence.
@@ -105,7 +106,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.30";
+pub const LATEST_VERSION: &str = "3.0.2.31";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -135,6 +136,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.31",
+        updatedAt = "",
+        summary = "降低后台历史维护调度频率并修复验收日志采集",
+        sections = listOf(
+            AndroidUpdateSection("存储与验收", listOf(
+                "单行历史压缩之间至少间隔一秒，慢事务自动延长间隔；保留全部认证和原始历史数据。",
+                "只读日志采集限定相关标签并允许有限重试，保留失败状态及原始诊断证据。",
+                "标题回车失败增加界面证据；保留50万条历史、8秒保存门槛及独立动效验收。启动恢复仍待优化。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.30",
         updatedAt = "",

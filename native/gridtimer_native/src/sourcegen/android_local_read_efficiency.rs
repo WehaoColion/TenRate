@@ -1,3 +1,4 @@
+// v3.0.2.31 - Bound maintenance duty cycle and sample routine diagnostic logs.
 // v3.0.2.30 - Skip proofless background writer and record lock duration.
 // v3.0.2.26 - Prevent unbounded automatic retained-snapshot GC scans.
 // v3.0.2.25 - Gate history maintenance on foreground idle.
@@ -217,6 +218,8 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
         delay(2_000L)
         val workspaceKey = activeWorkspaceKey
         var afterId = 0L
+        var completedBatches = 0L
+        var nextIdleDelay = 1_000L
         while (true) {
             if (!noteMaintenanceMayStart(5_000L) || !writeMutex.tryLock()) {
                 delay(1_000L)
@@ -233,7 +236,6 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
                         ?: return@withContext null
                     // No valid workspace proof means no background writer.
                     admitted = true
-                    Log.i("NoteSaveLatency", "maintenance=history_compaction begin")
                     verifiedWritePreflight = null
                     val files = workspaceFiles(workspaceKey)
                     val result = compactVerifiedHistoryBatch(
@@ -256,7 +258,16 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
                 break
             } finally {
                 writeMutex.unlock()
-                if (admitted) Log.i("NoteSaveLatency", "maintenance=history_compaction heldMs=${android.os.SystemClock.elapsedRealtime() - maintenanceStarted}")
+                if (admitted) {
+                    val heldMs = android.os.SystemClock.elapsedRealtime() - maintenanceStarted
+                    completedBatches++
+                    // Keep a low duty cycle even on slow storage. Never shorten
+                    // the idle interval after an expensive writer transaction.
+                    nextIdleDelay = historyCompactionIdleDelay(heldMs)
+                    if (heldMs >= 50L || completedBatches == 1L || completedBatches % 64L == 0L) {
+                        Log.i("NoteSaveLatency", "maintenance=history_compaction heldMs=$heldMs batches=$completedBatches nextIdleMs=$nextIdleDelay")
+                    }
+                }
             }
             if (next == null) {
                 // Keep the monotonic cursor: new foreground snapshots may add
@@ -265,15 +276,17 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
                 continue
             }
             afterId = next
-            // Each transaction still packs only one authenticated row; shorter
-            // paced idle gaps drain old histories sooner for subsequent launches.
-            // Foreground writes always take precedence via writeMutex.tryLock().
-            delay(250L)
+            // Preserve bounded one-row work, but do not continually contend
+            // for storage during an otherwise quiet editing session.
+            delay(nextIdleDelay)
         }
     }
 "####;
 
 pub const MAINTENANCE_POLICY: &str = r####"
+
+internal fun historyCompactionIdleDelay(heldMs: Long): Long =
+    (heldMs.coerceIn(0L, 3_000L) * 8L).coerceAtLeast(1_000L)
 
 internal data class HistoryMaintenanceResult<S>(val nextRow: Long?, val stamp: S?)
 
@@ -400,6 +413,13 @@ class MissingMediaHashesTest {
     }
 
     private data class Stamp(val db: Int, val mirror: Int)
+
+    @Test fun slowStorageReducesOptionalWriterDutyCycle() {
+        assertEquals(1_000L, historyCompactionIdleDelay(0))
+        assertEquals(1_000L, historyCompactionIdleDelay(15))
+        assertEquals(4_000L, historyCompactionIdleDelay(500))
+        assertEquals(24_000L, historyCompactionIdleDelay(Long.MAX_VALUE))
+    }
 
     @Test fun maintenanceReusesProofOnlyAfterItsTransactionCommits() {
         var inTransaction = false
@@ -656,7 +676,7 @@ mod tests {
         assert!(INDEXED_BATCHES.contains("(created_at_epoch_millis, id) < (?, ?)"));
         assert!(!INDEXED_BATCHES.contains("NOT INDEXED"));
         assert!(INDEXED_BATCHES.contains("val batchSize = if (sizedWindow) 64 else 1"));
-        assert!(MAINTENANCE_JOB.contains("delay(250L)"));
+        assert!(MAINTENANCE_JOB.contains("delay(nextIdleDelay)"));
         assert!(MAINTENANCE_JOB.contains("stateDatabase.compactHistoryBatch(workspaceKey, afterId)"));
     }
 }

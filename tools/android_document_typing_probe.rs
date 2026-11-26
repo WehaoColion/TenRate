@@ -1,3 +1,4 @@
+// v3.0.2.31 - Capture exact editor state when heading or paragraph disappears.
 //! GitHub Android emulator acceptance of stable text entry and knowledge share images.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
 
@@ -224,8 +225,14 @@ fn run(out:&Path)->Result<String,String>{
         evidence(out,"wrong_enter_block_count");
         return Err(format!("H1 Enter must produce exactly two blocks, got {after_enter}"));
     }
-    let first=seek(&["StableHeading"])?.ok_or("Heading lost after Enter")?;
-    let second=seek(&["StableParagraph"])?.ok_or("Paragraph not accessible")?;
+    let first=match seek(&["StableHeading"])? {
+        Some(node) => node,
+        None => { evidence(out,"heading_lost_after_enter"); return Err("Heading lost after Enter".into()); }
+    };
+    let second=match seek(&["StableParagraph"])? {
+        Some(node) => node,
+        None => { evidence(out,"paragraph_missing_after_enter"); return Err("Paragraph not accessible".into()); }
+    };
     let before_y=(center(&first).1,center(&second).1);
     evidence(out,"05_editor_before_regular_typing");
 
