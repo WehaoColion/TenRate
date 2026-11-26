@@ -1,3 +1,4 @@
+// v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // Android Agent mobile UX: task-first flow and honest foreground-only execution.
 // This layer runs after android_agent_workspace_ui and keeps Rust authorization,
@@ -179,6 +180,13 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
 // Ordinary chat only. Run after the task workspace has separated its own UI.
 // Keep the same request, history, save and consent callbacks.
 fn compact_chat_surface(source: &mut String) -> Result<(), String> {
+    // The compact composer introduces this extension. Own its import here,
+    // instead of relying on a different source generator or another screen.
+    const FOCUS_IMPORT: &str = "import androidx.compose.ui.focus.onFocusChanged";
+    if !source.lines().any(|line| line.trim() == FOCUS_IMPORT) {
+        replace_once(source, "package com.ofairyo.gridtimer.ui\n",
+            "package com.ofairyo.gridtimer.ui\n\nimport androidx.compose.ui.focus.onFocusChanged\n")?;
+    }
     replace_once(source, "    val messageListState = rememberLazyListState()",
         "    val messageListState = rememberLazyListState()\n    val chatHistoryListState = rememberLazyListState()\n    var showChatOptions by remember(activeChatId) { mutableStateOf(false) }")?;
     replace_once(source, "LaunchedEffect(conversation.size, busy) {",

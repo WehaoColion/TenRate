@@ -1,3 +1,4 @@
+// v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // v3.0.2.38 - Compose component-local hook and production source-generation regression.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
@@ -150,6 +151,17 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.40",
+        updatedAt = "",
+        summary = "修复AI问答输入框焦点监听生成依赖",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "Rust生成紧凑问答输入框时同步补齐焦点监听扩展导入，解决3.0.2.39签名构建的实际编译错误。",
+                "保留原有输入法焦点行为、对话布局、签名及双模拟器压力验收门槛。本版尚待编译与模拟器验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.39",
         updatedAt = "",

@@ -1,3 +1,4 @@
+// v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // v3.0.2.38 - Compose component-local hook and production source-generation regression.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
@@ -232,8 +233,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30041
-        versionName '3.0.2.39'
+        versionCode 30042
+        versionName '3.0.2.40'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
