@@ -1,3 +1,4 @@
+// v3.0.2.32 - Move exclusion reads off Main and remove redundant directory row layers.
 // v3.0.2.21 - Preserve row/header geometry during auxiliary order reads.
 // v3.0.2.20 - Avoid competing order-load animation during directory navigation.
 // v3.0.2.17 - Avoid snapshot invalidation from navigation bookkeeping and layout coordinates.
@@ -828,21 +829,13 @@ private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: Knowledge
     modifier: Modifier = Modifier, enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null, onOpen: () -> Unit) {
     val archive = knowledgeArchivePalette()
-    val pressSource = remember { MutableInteractionSource() }
-    val pressed by pressSource.collectIsPressedAsState()
-    val rowScale by animateFloatAsState(
-        targetValue = if (enabled && pressed) 0.992f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh),
-        label = "knowledge-row-press"
-    )
-    Surface(modifier = modifier.fillMaxWidth().graphicsLayer {
-            scaleX = rowScale; scaleY = rowScale
-        }, shape = RoundedCornerShape(13.dp),
+    // The entire directory already has a navigation layer. Ordinary rows
+    // need ripple feedback, not a second animated RenderNode per item.
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp),
         color = if (node.isFolder) archive.folder else archive.paper,
         border = BorderStroke(1.dp, archive.edge),
         tonalElevation = 0.dp, shadowElevation = 0.dp) {
     ListItem(modifier = Modifier.fillMaxWidth().clickable(
-            interactionSource = pressSource, indication = LocalIndication.current,
             enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT,
             onClick = onOpen),
         headlineContent = { Text(node.title.ifBlank { "无标题" }, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
@@ -1170,11 +1163,16 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
         val translation = remember { Animatable(initialOffset) }
         LaunchedEffect(translation, active) {
             if (!active) translation.snapTo(0f)
-            else translation.animateTo(0f, spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMedium,
-                visibilityThreshold = 0.001f
-            ))
+            else if (initialOffset != 0f) {
+                // Let the new LazyColumn complete its initial composition and
+                // layout before advancing the layer animation clock.
+                withFrameNanos { }
+                translation.animateTo(0f, spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMedium,
+                    visibilityThreshold = 0.001f
+                ))
+            }
         }
         Box(Modifier.fillMaxSize().clipToBounds().knowledgeNavigationSurface()) {
             CompositionLocalProvider(LocalDocumentTransitionActive provides active) {
@@ -1696,25 +1694,47 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
 
 // All exclusion UI is Android-only. The underlying encrypted policy never
 // changes knowledge data, shared synchronization state, or other risk modules.
+private data class KnowledgeLegalExclusionPolicy(
+    val rootExcluded: Boolean,
+    val ids: Set<String>
+)
+
 private object KnowledgeLegalExclusionRevisions {
     val values = androidx.compose.runtime.mutableStateMapOf<String, Int>()
-    // One disk/Keystore read per workspace revision, not one per visible row.
-    private val cache = HashMap<String, Pair<Int, Result<org.json.JSONObject>>>()
+    // Immutable parsed result is shared by all rows. The main thread only
+    // performs a nonblocking cache lookup; IO and Keystore stay off Main.
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, Result<KnowledgeLegalExclusionPolicy>>>()
 
-    @Synchronized
-    fun load(
+    fun cached(workspaceKey: String, revision: Int): Result<KnowledgeLegalExclusionPolicy>? =
+        cache[workspaceKey]?.takeIf { it.first == revision }?.second
+
+    suspend fun load(
         context: android.content.Context,
         workspaceKey: String,
         revision: Int
-    ): Result<org.json.JSONObject> {
-        val previous = cache[workspaceKey]
-        if (previous != null && previous.first == revision) return previous.second
+    ): Result<KnowledgeLegalExclusionPolicy> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        loadOnWorker(context, workspaceKey, revision)
+    }
+
+    @Synchronized
+    private fun loadOnWorker(
+        context: android.content.Context,
+        workspaceKey: String,
+        revision: Int
+    ): Result<KnowledgeLegalExclusionPolicy> {
+        cached(workspaceKey, revision)?.let { return it }
         val current = runCatching {
-            org.json.JSONObject(
+            val policy = org.json.JSONObject(
                 com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.snapshot(context, workspaceKey)
             )
+            val ids = buildSet {
+                val all = policy.optJSONArray("nodeIds")
+                if (all != null) for (i in 0 until all.length()) add(all.optString(i))
+            }
+            KnowledgeLegalExclusionPolicy(policy.optBoolean("rootExcluded"), ids)
         }
-        cache[workspaceKey] = revision to current
+        // A delayed old-revision reader cannot evict the newer result.
+        if ((cache[workspaceKey]?.first ?: revision) <= revision) cache[workspaceKey] = revision to current
         return current
     }
 }
@@ -1731,23 +1751,24 @@ private fun KnowledgeLegalExclusionAction(
     val context = LocalContext.current.applicationContext
     val archive = knowledgeArchivePalette()
     val revision = KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0
-    val loaded = remember(workspaceKey, revision) {
-        KnowledgeLegalExclusionRevisions.load(context, workspaceKey, revision)
+    // Key the result to the revision so a stale policy is never actionable
+    // while a new workspace/revision is being loaded.
+    var loaded by remember(workspaceKey, revision) {
+        mutableStateOf(KnowledgeLegalExclusionRevisions.cached(workspaceKey, revision))
     }
-    val policy = loaded.getOrNull()
-    val ids = remember(policy) {
-        buildSet {
-            val all = policy?.optJSONArray("nodeIds")
-            if (all != null) for (i in 0 until all.length()) add(all.optString(i))
-        }
+    LaunchedEffect(context, workspaceKey, revision) {
+        if (loaded == null) loaded = KnowledgeLegalExclusionRevisions.load(context, workspaceKey, revision)
     }
-    val direct = if (nodeId == null) policy?.optBoolean("rootExcluded") == true else nodeId in ids
-    val inherited = nodeId != null && (
-        policy?.optBoolean("rootExcluded") == true ||
-        index.ancestors(nodeId).any { ancestor -> ancestor.id in ids }
-    )
-    var menuOpen by remember(workspaceKey, nodeId) { mutableStateOf(false) }
-    var confirmation by remember(workspaceKey, nodeId) { mutableStateOf(false) }
+    val policy = loaded?.getOrNull()
+    val ids = policy?.ids.orEmpty()
+    val direct = if (nodeId == null) policy?.rootExcluded == true else nodeId in ids
+    val inherited = remember(index, nodeId, policy) {
+        nodeId != null && policy != null && (
+            policy.rootExcluded || index.ancestors(nodeId).any { ancestor -> ancestor.id in ids }
+        )
+    }
+    var menuOpen by remember(workspaceKey, nodeId, revision) { mutableStateOf(false) }
+    var confirmation by remember(workspaceKey, nodeId, revision) { mutableStateOf(false) }
     var failure by remember(workspaceKey, nodeId) { mutableStateOf<String?>(null) }
     val nextExcluded = !direct
     val caption = when {
@@ -1755,11 +1776,11 @@ private fun KnowledgeLegalExclusionAction(
         direct -> "恢复参与法律分析"
         else -> "排除法律风险分析"
     }
-    val enabled = loaded.isSuccess && !inherited
+    val enabled = loaded?.isSuccess == true && !inherited
 
     if (compact) {
         Box {
-            TextButton(enabled = loaded.isSuccess, onClick = { menuOpen = true },
+            TextButton(enabled = loaded?.isSuccess == true, onClick = { menuOpen = true },
                 colors = ButtonDefaults.textButtonColors(contentColor = archive.ink),
                 modifier = Modifier.heightIn(min = 48.dp).semantics {
                     contentDescription = settingsLabel ?: "法律风险分析设置"
@@ -1778,13 +1799,13 @@ private fun KnowledgeLegalExclusionAction(
             Text(if (nodeId == null && !direct) "排除整个知识模块" else caption)
         }
     }
-    if (loaded.isFailure) {
+    if (loaded?.isFailure == true) {
         Text("排除规则不可读取，法律分析已阻止发送。", color = MaterialTheme.colorScheme.error)
     }
     if (failure != null) {
         Text(failure.orEmpty(), color = MaterialTheme.colorScheme.error)
     }
-    if (confirmation) {
+    if (confirmation && enabled) {
         AlertDialog(
             onDismissRequest = { confirmation = false },
             title = { Text(if (nextExcluded) "确认排除法律分析？" else "恢复参与法律分析？") },
@@ -1796,7 +1817,13 @@ private fun KnowledgeLegalExclusionAction(
                     "恢复后，这个范围将重新参与未来的法律风险分析；仍受其他上级排除规则约束。"
             ) },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = enabled, onClick = {
+                    // A queued click from a retired revision must not mutate the
+                    // new policy. The underlying store keeps its original checks.
+                    if ((KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0) != revision) {
+                        confirmation = false
+                        return@TextButton
+                    }
                     val result = runCatching {
                         com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.update(
                             context, workspaceKey, nodeId, nextExcluded

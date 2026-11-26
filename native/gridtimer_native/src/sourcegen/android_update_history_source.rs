@@ -1,3 +1,4 @@
+// v3.0.2.32 - Record directory rendering changes.
 // v3.0.2.31 - Record candidate maintenance and diagnostic changes.
 // v3.0.2.30 - Record candidate maintenance priority changes.
 // v3.0.2.29 - Record probe-only correction.
@@ -106,7 +107,7 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.31";
+pub const LATEST_VERSION: &str = "3.0.2.32";
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -136,6 +137,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.32",
+        updatedAt = "",
+        summary = "减少知识目录首帧读取与条目图层开销",
+        sections = listOf(
+            AndroidUpdateSection("知识动效", listOf(
+                "法律排除规则按工作区与修订号后台读取及解析，未取得当前规则时禁用对应操作。",
+                "目录条目保留原生点击反馈，移除冗余的独立缩放图层；目录位移动效等待首帧提交后启动。",
+                "保留目录排序、工作区隔离及完整模拟器帧耗时门槛。本版本仍待验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.31",
         updatedAt = "",
