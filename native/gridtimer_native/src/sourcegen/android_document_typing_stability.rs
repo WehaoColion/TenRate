@@ -1,3 +1,4 @@
+// v3.0.2.38 - Compose component-local hook and production source-generation regression.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.13 - Retain exact autosave receipts for the full-entry exit guard.
 //! Android document editing: keep keystrokes stationary and avoid phantom heading blocks.
@@ -193,8 +194,11 @@ private fun Modifier.documentSaveReceipt(state: DocumentEditorSaveState): Modifi
                         }
                     }
                 },"#)?;
-    replace_once(source, "    onFocused: () -> Unit,\n    onOpenActions: () -> Unit,\n    onTextChanged: (TextFieldValue) -> Unit,",
-        "    onFocused: () -> Unit,\n    onCompositionCommit: () -> Unit,\n    onOpenActions: () -> Unit,\n    onTextChanged: (TextFieldValue) -> Unit,")?;
+    // Image insertion and drag reorder legitimately extend the parameter list.
+    // Only the stable focus parameter inside this component owns the new hook.
+    replace_between(source, "private fun DocumentCanvasBlock(", "private fun DocumentInlineField(",
+        "    onFocused: () -> Unit,\n",
+        "    onFocused: () -> Unit,\n    onCompositionCommit: () -> Unit,\n")?;
     replace_once(source, "                                    } else if (textFieldState.composition != null) {\n                                        onTextChanged(textFieldState.copy(composition = null))\n                                    }",
         "                                    } else {\n                                        onCompositionCommit()\n                                    }")?;
     // Expose only offsets/length, not contents, via the existing semantics ID

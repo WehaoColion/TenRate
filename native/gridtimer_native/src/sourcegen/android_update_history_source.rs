@@ -1,3 +1,4 @@
+// v3.0.2.38 - Compose component-local hook and production source-generation regression.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
@@ -148,6 +149,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.38",
+        updatedAt = "",
+        summary = "修复正文组件生成边界，并将实际生成流程纳入构建前验收",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "正文输入提交回调仅依赖正文组件内部稳定的焦点参数，不再要求拖拽及图片插入之前的旧签名。",
+                "生产Android源码生成与Rust构建前回归共用同一入口，实际生成正文、便签及数据库代码后再允许进入签名构建。",
+                "保留逐字验证、原签名、五十万和百万条压力规模及原有保存、恢复和动效验收门槛。本版尚待实际模拟器验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.37",
         updatedAt = "",
