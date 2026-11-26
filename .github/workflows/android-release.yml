@@ -1,3 +1,4 @@
+# v3.0.2.35 - Execute baseline and million-row workloads on both emulator APIs.
 # v3.0.2.33 - One candidate publisher and mandatory branch-independent emulator acceptance.
 # v3.0.2.27 - Run unchanged acceptance on API 35 and 36.
 name: Android signed APK
@@ -216,7 +217,7 @@ jobs:
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.der')
 
   knowledge-save-emulator:
-    name: Android ${{ matrix.api }} signed APK knowledge save and editor acceptance
+    name: Android ${{ matrix.api }} ${{ matrix.history }} signed APK knowledge save and editor acceptance
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 240
@@ -224,6 +225,7 @@ jobs:
       fail-fast: false
       matrix:
         api: [35, 36]
+        history: [baseline, extreme]
     permissions:
       contents: read
       actions: read
@@ -244,15 +246,27 @@ jobs:
           test "${#packages[@]}" -eq 1
           tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
           cd ..
-          rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
+          case "${{ matrix.history }}" in
+            baseline) stress_flags=() ;;
+            extreme) stress_flags=(--cfg tenrate_extreme_history) ;;
+            *) echo "Unknown stress profile"; exit 1 ;;
+          esac
+          rustc --edition=2021 -D warnings -O "${stress_flags[@]}" tools/android_knowledge_save_probe.rs -o knowledge_save_probe
           rustc --edition=2021 -D warnings -O tools/android_document_typing_probe.rs -o document_typing_probe
-      - name: Reserve host storage for the 500000-row on-device history
+      - name: Reserve host storage for the selected real history workload
         shell: bash
         run: |
           set -euo pipefail
           # Remove unused preinstalled SDKs, not Android tools or the signed APK.
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
           df -h .
+          available_kib="$(df -Pk . | awk 'NR==2 {print $4}')"
+          minimum_gib=40
+          if [ "${{ matrix.history }}" = extreme ]; then minimum_gib=72; fi
+          if [ "$available_kib" -lt "$((minimum_gib * 1024 * 1024))" ]; then
+            echo "Insufficient host disk for selected workload: ${{ matrix.history }}. Need ${minimum_gib} GiB before emulator setup. Refusing to shrink fixture."
+            exit 1
+          fi
       - name: Prepare SQLite for the Rust history-load fixture
         shell: bash
         run: |
@@ -273,7 +287,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          disk-size: 32G
+          disk-size: ${{ matrix.history == 'extreme' && '64G' || '32G' }}
           disable-animations: true
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
@@ -288,6 +302,7 @@ jobs:
             adb shell pm clear com.ofairyo.gridtimer
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
             ./knowledge_save_probe knowledge_save_evidence || touch knowledge_save_failed
+            grep -Fx 'profile=${{ matrix.history }}' knowledge_save_evidence/stress_profile.txt
             test ! -f document_typing_failed
             test ! -f sticky_newlines_failed
             test ! -f knowledge_save_failed
@@ -306,7 +321,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-knowledge-save-and-typing-api${{ matrix.api }}-${{ github.sha }}
+          name: android-knowledge-save-and-typing-api${{ matrix.api }}-${{ matrix.history }}-${{ github.sha }}
           path: |
             document_typing_evidence/
             sticky_newline_evidence/

@@ -1,3 +1,4 @@
+// v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.32 - Reduce directory composition and render-layer work.
@@ -227,8 +228,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30036
-        versionName '3.0.2.34'
+        versionCode 30037
+        versionName '3.0.2.35'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

@@ -1,3 +1,4 @@
+// v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 //! Cheap fail-closed checks run before any signing or simulator work.
 #[allow(dead_code)]
 #[path = "../native/gridtimer_native/src/android_release_identity.rs"]
@@ -5,6 +6,9 @@ mod android_release_identity;
 #[cfg(test)]
 mod android_directory_evidence;
 use android_release_identity::ANDROID_RELEASE;
+#[allow(dead_code)]
+mod android_stress_profile;
+use android_stress_profile::{BASELINE, EXTREME, HISTORY_PADDING_BYTES, SAVE_BUDGET_MS, RECOVERY_BUDGET_SECONDS};
 
 const WORKFLOW: &str = include_str!("../.github/workflows/android-release.yml");
 const HISTORY: &str = include_str!("../native/gridtimer_native/src/sourcegen/android_update_history_source.rs");
@@ -38,10 +42,27 @@ fn require_core_job(yaml: &str, name: &str, dual_api: bool) -> Result<(), String
     Ok(())
 }
 
+fn require_stress_profiles(yaml: &str) -> Result<(), String> {
+    let lines = job_lines(yaml, "knowledge-save-emulator")?;
+    let history = lines.iter().filter_map(|line| line.trim().strip_prefix("history:")).collect::<Vec<_>>();
+    if history.len() != 1 || history[0].chars().filter(|c| !c.is_whitespace()).collect::<String>() != "[baseline,extreme]" {
+        return Err("Knowledge save must run both baseline and extreme on each API; restore history: [baseline, extreme]".into());
+    }
+    if BASELINE.history_rows < 500_000 || EXTREME.history_rows < 1_000_000
+        || BASELINE.edit_rounds < 12 || EXTREME.edit_rounds < 48
+        || BASELINE.burst_rounds < 30 || EXTREME.burst_rounds < 90
+        || BASELINE.sticky_rounds < 24 || EXTREME.sticky_rounds < 48
+        || HISTORY_PADDING_BYTES < 16 * 1024 || SAVE_BUDGET_MS > 8_000 || RECOVERY_BUDGET_SECONDS > 600 {
+        return Err("Stress workload or deadline was weakened; restore the baseline and million-row profile in tools/android_stress_profile.rs".into());
+    }
+    Ok(())
+}
+
 fn check_repository() -> Result<(), String> {
     ANDROID_RELEASE.require_history_head(HISTORY)?;
     require_core_job(WORKFLOW, "knowledge-save-emulator", true)?;
     require_core_job(WORKFLOW, "knowledge-motion-emulator", false)?;
+    require_stress_profiles(WORKFLOW)?;
     let _ = job_lines(WORKFLOW, "publish-signed-test-candidate")?;
     for old in ["publish-build37-download", "publish-signed-motion-test-candidate", "publish-knowledge-save-candidate", "publish-candidate"] {
         if job_lines(WORKFLOW, old).is_ok() {
@@ -68,6 +89,14 @@ mod tests {
 
     #[test]
     fn current_repository_contract() { check_repository().unwrap(); }
+
+    #[test]
+    fn historical_single_workload_is_rejected() {
+        // 3.0.2.34 ran only one 500,000-row workload on both APIs.
+        let previous = "  knowledge-save-emulator:\n    needs: release\n    strategy:\n      matrix:\n        api: [35, 36]\n";
+        assert!(require_stress_profiles(previous).unwrap_err().contains("baseline and extreme"));
+        assert!(require_stress_profiles(WORKFLOW).is_ok());
+    }
 
     #[test]
     fn historical_8f4b42d54bd3_stale_native_identity_is_rejected() {

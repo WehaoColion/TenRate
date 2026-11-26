@@ -1,3 +1,4 @@
+// v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.32 - Record directory rendering changes.
@@ -145,6 +146,19 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.35",
+        updatedAt = "",
+        summary = "新增百万条历史极限压力档与精确输入失败分类",
+        sections = listOf(
+            AndroidUpdateSection("存储与输入验收", listOf(
+                "保留五十万条基线，并在API 35及36独立执行百万条真实SQLite历史档，每条仍包含至少16KiB附加数据。",
+                "极限档连续48轮正文编辑、90次突发输入和48次便签版本创建，保持八秒保存和原文及重启校验。",
+                "恢复前台后使用真实方向键把光标移至正文末尾；保留原文，记录输入顺序不符与持久化超时的不同证据。",
+                "百万条恢复仍使用原有600秒限制；本版尚未完成模拟器验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.34",
         updatedAt = "",

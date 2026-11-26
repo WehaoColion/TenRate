@@ -1,3 +1,4 @@
+// v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.33 - Share release identity and visible navigation evidence.
 // v3.0.2.31 - Bound read-only log collection and preserve strict durable assertions.
@@ -30,7 +31,9 @@ const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 mod android_save_probe_fixture;
 mod android_directory_evidence;
+mod android_stress_profile;
 use android_directory_evidence::prove_directory;
+use android_stress_profile::{ACTIVE, HISTORY_PADDING_BYTES, RECOVERY_BUDGET_SECONDS, SAVE_BUDGET_MS};
 use android_save_probe_fixture::{installed_version, SqliteWriter, DATABASE};
 // Numeric page titles commit on both Latin and Pinyin keyboards without
 // depending on the input method's candidate selection or word boundaries.
@@ -41,13 +44,12 @@ const ROOT_FOLDER: &str = "7391804025006004";
 const NESTED_FOLDER: &str = "7391804025006005";
 const NESTED_PAGE: &str = "7391804025006006";
 // Digits are committed by both Pinyin and Latin IMEs without a composition candidate.
-const EDIT_ROUNDS: usize = 12;
-const BURST_ROUNDS: usize = 30;
+const EDIT_ROUNDS: usize = ACTIVE.edit_rounds;
+const BURST_ROUNDS: usize = ACTIVE.burst_rounds;
 const EDIT_EXIT_MARKER: &str = "98765432109876543210";
-const EDIT_BUDGET_MS: u128 = 8_000;
-const HISTORY_ROWS: usize = 500_000;
+const EDIT_BUDGET_MS: u128 = SAVE_BUDGET_MS;
+const HISTORY_ROWS: usize = ACTIVE.history_rows;
 const HISTORY_BATCH_ROWS: usize = 10_000;
-const HISTORY_PADDING_BYTES: usize = 16 * 1024;
 const PRIMARY_MIRROR: &str =
     "/data/user/0/com.ofairyo.gridtimer/files/state_workspaces/guest/timer_state.json";
 const DIAGNOSTIC_LOG: &str = "/data/user/0/com.ofairyo.gridtimer/files/diagnostic_events.log";
@@ -179,7 +181,7 @@ fn wait_for_workspace_restore() -> Result<(), String> {
         if !xml.contains("正在恢复本机数据") && !xml.contains("数据准备完成后自动进入工作台") {
             return Ok(());
         }
-        if started.elapsed() >= Duration::from_secs(600) {
+        if started.elapsed() >= Duration::from_secs(RECOVERY_BUDGET_SECONDS) {
             return Err("Verified workspace recovery still blocked after 600 seconds".into());
         }
         sleep(Duration::from_secs(2));
@@ -345,9 +347,13 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
                     n.class_name.ends_with("EditText") && n.bounds[2] - n.bounds[0] > 80).collect();
                 fields.sort_by_key(|n| n.bounds[1]);
                 let observed = fields.last().map(|n| n.label.as_str()).unwrap_or("");
+                let visible_saved = has_save_state(&xml, "document_save_local_saved");
+                let expected_durable = nested_body_has(&expected).unwrap_or(false);
                 fs::write(root.join(format!("body_save_failure_comparison_{round}.txt")),
-                    format!("expected={expected:?}\nobserved={observed:?}\nvisible_saved={}\n",
-                        has_save_state(&xml, "document_save_local_saved"))).map_err(|e|e.to_string())?;
+                    format!("expected={expected:?}\nobserved={observed:?}\nvisible_saved={visible_saved}\nexpected_durable={expected_durable}\n")).map_err(|e|e.to_string())?;
+                if visible_saved && !observed.is_empty() && observed != expected && !expected_durable {
+                    return Err(format!("Nested page body round {round} failed exact input order despite visible saved receipt; expected {expected:?}, observed {observed:?}; {elapsed}ms (not a proven write timeout)"));
+                }
             }
             return Err(format!("Nested page body save round {round} exceeded {EDIT_BUDGET_MS}ms: {elapsed}ms; UI and SQLite receipt required"));
         }
@@ -359,11 +365,20 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
             let body = fields.last().ok_or("Editor body missing after real background/resume")?;
             if fields.len() < 2 { return Err("Editor lost body after real background/resume".into()); }
             tap(body)?;
-            // KEYCODE_MOVE_END alone maps to the visual line end in Compose.
-            // The failed 3.0.2.26 tree showed round 11 inserted before round 9.
-            // A real Ctrl+End targets the whole document, not the tapped line.
-            // Keep the exact same ordered text and durability assertions.
-            cmd(&["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_MOVE_END"])?;
+            // 3.0.2.34 actual failure: 81700629817016298181703629702629,
+            // visible_saved=true. Ctrl+End is not reliable in this Compose/IME
+            // combination. Move the real caret right at most the number of
+            // ASCII characters already authored, plus one. This cannot edit
+            // or replace the text, and does not count as an additional save.
+            // All input, receipt and restart assertions remain exact.
+            let mut keys = vec!["shell", "input", "keyevent", "KEYCODE_MOVE_END"];
+            keys.extend(std::iter::repeat("KEYCODE_DPAD_RIGHT").take(expected.len() + 1));
+            cmd(&keys)?;
+            let after = dump()?;
+            if !after.contains(&expected) {
+                capture(root, &format!("resumed_caret_body_changed_{round}"));
+                return Err(format!("Existing body changed while positioning caret after resume in round {round}"));
+            }
         }
     }
     // Burst of real key injections without waiting for autosave between edits.
@@ -685,8 +700,8 @@ fn hold_sqlite_writer() -> Result<JoinHandle<Result<(), String>>, String> {
 // checks. Do not replace the earlier assertions or accept a UI-only receipt.
 const STICKY_TITLE: &str = "7391804025006010";
 const STICKY_MARKER: &str = "12345678909876543210";
-const STICKY_ROUNDS: usize = 24;
-const STICKY_BUDGET_MS: u128 = 8_000;
+const STICKY_ROUNDS: usize = ACTIVE.sticky_rounds;
+const STICKY_BUDGET_MS: u128 = SAVE_BUDGET_MS;
 
 fn sticky_home() -> Result<(), String> {
     wait_for_workspace_restore()?;
@@ -1225,6 +1240,9 @@ fn main() {
     let path = env::args_os().nth(1).map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("knowledge_save_evidence"));
     fs::create_dir_all(&path).expect("evidence directory");
+    let workload = format!("profile={}\nhistory_rows={HISTORY_ROWS}\nhistory_padding_bytes={HISTORY_PADDING_BYTES}\nedit_rounds={EDIT_ROUNDS}\nburst_rounds={BURST_ROUNDS}\nsticky_rounds={STICKY_ROUNDS}\nsave_budget_ms={SAVE_BUDGET_MS}\nrecovery_budget_seconds={RECOVERY_BUDGET_SECONDS}\n", ACTIVE.name);
+    fs::write(path.join("stress_profile.txt"), &workload).expect("workload evidence");
+    println!("{workload}");
     let result = if env::args().nth(2).as_deref() == Some("--sticky-newlines") {
         // Standalone signed APK regression on clean state, before heavy load.
         // Still exercises real editing, four version commits (one competing
