@@ -1,3 +1,4 @@
+// v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.32 - Record directory rendering changes.
 // v3.0.2.31 - Record candidate maintenance and diagnostic changes.
@@ -144,6 +145,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.34",
+        updatedAt = "",
+        summary = "合并历史快照安全索引，减少旧数据库迁移扫描",
+        sections = listOf(
+            AndroidUpdateSection("本地存储", listOf(
+                "以一个紧凑表达式索引维护缺摘要、未封装及数据版本状态，旧数据库由三次大表索引扫描改为一次。",
+                "迁移、备份导出和前台安全查询共用索引定义，保留完整历史认证、原始历史及工作区隔离。",
+                "继续执行五十万条压力测试、八秒正文保存及双系统模拟器验收；本版尚未完成验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.33",
         updatedAt = "",

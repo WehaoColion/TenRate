@@ -1,3 +1,4 @@
+// v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.33 - Share release identity and visible navigation evidence.
 // v3.0.2.31 - Bound read-only log collection and preserve strict durable assertions.
 // v3.0.2.29 - Use document-end key chord and preserve exact failure evidence.
@@ -452,9 +453,10 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
         return Err(format!("History was unexpectedly removed during saving: {history}"));
     }
     let version = stopped_sqlite("PRAGMA user_version;")?;
-    let indexes = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('snapshot_history_schema_guard','snapshot_history_digest_guard','snapshot_history_envelope_guard');")?;
-    if version != "7" || indexes != "3" {
-        return Err(format!("Database upgrade did not install all guards: version={version}, indexes={indexes}"));
+    let indexes = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='snapshot_history_header_guard';")?;
+    let obsolete = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('snapshot_history_schema_guard','snapshot_history_digest_guard','snapshot_history_envelope_guard');")?;
+    if version != "8" || indexes != "1" || obsolete != "0" {
+        return Err(format!("Database upgrade did not converge to the single header guard: version={version}, indexes={indexes}, obsolete={obsolete}"));
     }
     let packed = packed_legacy_rows()?;
     if packed == 0 || packed >= HISTORY_ROWS {
@@ -585,9 +587,7 @@ fn seed_history(root: &Path) -> Result<(), String> {
         Ok(result.trim().to_owned())
     };
     write("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; \
-           DROP INDEX snapshot_history_schema_guard; \
-           DROP INDEX snapshot_history_digest_guard; \
-           DROP INDEX snapshot_history_envelope_guard; \
+           DROP INDEX snapshot_history_header_guard; \
            PRAGMA user_version=5;")?;
     // Identical payloads retain the original test's authenticated JSON and
     // independently computed SHA-256. Each row has its own SQLite identity.
