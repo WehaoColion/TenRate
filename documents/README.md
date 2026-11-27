@@ -6,6 +6,11 @@ v0.0.6 - 纳入安卓结构页编辑验收与后续路线。
 
 [全部版本更新说明](releases/README.md)
 
+## iOS
+
+- [iPhone 首版 1.0.0.1 功能与交付边界](releases/ios/release_notes_v1.0.0.1.md)
+- [构建和安装说明](../ios/README.md)
+
 ## Android 验收与性能记录
 
 - [文档AI打开与来源边界](android/whole_document_ai_crash_fix.md)
