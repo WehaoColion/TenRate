@@ -1,6 +1,7 @@
 // v2.22.48 - Inspect timer records, archive navigation and Android risk labels.
 // v2.22.47 - Inspect Android parity pages and render PNG exports in a real native window.
 // Opt-in visual inspection only; this is not a pixel snapshot assertion.
+// 2026-11-16: Optional real-window Chinese-caption video frames and native mouse event receipts.
 
 fn parity_visual_finance_profile() -> Value {
     let mut ledgers = serde_json::Map::new();
@@ -29,6 +30,8 @@ fn native_window_visual_review() {
         std::env::var_os("TIMER_VISUAL_REVIEW_DIR").expect("review output directory"),
     );
     fs::create_dir_all(&output).unwrap();
+    let video_dir = std::env::var_os("TIMER_CHINESE_VIDEO_FRAMES_DIR").map(PathBuf::from);
+    if let Some(dir) = &video_dir { fs::create_dir_all(dir).unwrap(); }
     let profile = output.join(format!("profile-{}", std::process::id()));
     fs::create_dir_all(&profile).unwrap();
     let now = now_millis();
@@ -68,6 +71,8 @@ fn native_window_visual_review() {
     client.sync.token.clear();
     client.sync.server_url.clear();
     client.settings.timer_bell_enabled = false;
+    client.settings.language = "zh".into();
+    ACTIVE_DESKTOP_LANGUAGE.store(desktop_language_code("zh"), AtomicOrdering::Relaxed);
     client.status = "本地数据已就绪".into();
     struct ReviewApp {
         client: TimerWindowsClient,
@@ -75,6 +80,86 @@ fn native_window_visual_review() {
         scene: usize,
         frames: usize,
         started: Instant,
+        video_dir: Option<PathBuf>,
+        video_index: usize,
+        clicked_positions: usize,
+        attempted_clicks: usize,
+        last_click: Option<(egui::Pos2, usize)>,
+    }
+    #[cfg(target_os = "windows")]
+    fn send_native_demo_click(ctx: &egui::Context, scene: &str) -> bool {
+        #[repr(C)]
+        struct NativePoint { x: i32, y: i32 }
+        #[link(name = "user32")]
+        extern "system" {
+            fn FindWindowW(class: *const u16, title: *const u16) -> isize;
+            fn ClientToScreen(window: isize, point: *mut NativePoint) -> i32;
+            fn SetCursorPos(x: i32, y: i32) -> i32;
+            fn SetForegroundWindow(window: isize) -> i32;
+            fn mouse_event(flags: u32, x: u32, y: u32, data: u32, extra: usize);
+        }
+        let (x, y) = match scene {
+            "board_light" | "board_running" => (273.0, 474.0),
+            "notes_light" => (260.0, 97.0),
+            "knowledge_light" => (282.0, 84.0),
+            "canvas_customer" => (551.0, 491.0),
+            "finance_light" => (258.0, 151.0),
+            "finance_cockpit" => (331.0, 151.0),
+            "account_light" => (900.0, 136.0),
+            _ => return false,
+        };
+        let title = "十倍率 · 界面检查".encode_utf16().chain(std::iter::once(0)).collect::<Vec<_>>();
+        let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+        if window == 0 { return false; }
+        let scale = ctx.pixels_per_point();
+        let mut point = NativePoint { x: (x * scale) as i32, y: (y * scale) as i32 };
+        if unsafe { ClientToScreen(window, &mut point) } == 0 { return false; }
+        unsafe {
+            SetForegroundWindow(window);
+            if SetCursorPos(point.x, point.y) == 0 { return false; }
+            mouse_event(0x0002, 0, 0, 0, 0);
+            mouse_event(0x0004, 0, 0, 0, 0);
+        }
+        true
+    }
+    fn scene_caption(scene: &str) -> &'static str {
+        match scene {
+            "board_light" => "计时：查看任务、点击开始",
+            "board_running" => "计时：运行中的任务、点击暂停",
+            "board_dark" => "计时：深色模式",
+            "board_compact" => "计时：紧凑窗口",
+            "board_minimum" => "计时：最小窗口",
+            "timer_editor" => "计时：任务详情与编辑",
+            "board_empty" => "计时：搜索无结果",
+            "notes_light" => "便签：列表与内容",
+            "notes_dark" => "便签：深色模式",
+            "notes_compact" => "便签：紧凑窗口",
+            "notes_minimum" => "便签：最小窗口",
+            "knowledge_light" => "知识：页面浏览",
+            "knowledge_dark" => "知识：深色模式",
+            "canvas_customer" => "知识：客户画布与收付款记录",
+            "canvas_customer_zoom" => "知识：客户画布缩放",
+            "history_light" => "计时历史：记录列表",
+            "history_minimum" => "计时历史：最小窗口",
+            "history_empty" => "计时历史：搜索无结果",
+            "history_detail_return" => "计时历史：从任务详情返回",
+            "archive_light" => "计时历史：归档任务",
+            "finance_light" => "风控：财务与交易记录",
+            "finance_dark" => "风控：深色模式",
+            "account_light" => "我的：账户与设置",
+            "knowledge_compact" => "知识：紧凑窗口",
+            "knowledge_minimum" => "知识：最小窗口",
+            "finance_compact" => "风控：紧凑窗口",
+            "finance_minimum" => "风控：最小窗口",
+            "account_oled" => "我的：深黑主题",
+            "finance_cockpit" => "风控：总览",
+            "finance_budgets" => "风控：预算",
+            "finance_forecast" => "风控：预测",
+            "finance_health" => "风控：健康评估",
+            "finance_snapshot" => "风控：财务快照",
+            "finance_trend" => "风控：趋势",
+            _ => "十倍率 Windows 客户端",
+        }
     }
     const SCENES: &[(&str, AppTab, u8, f32, f32)] = &[
         ("board_light", AppTab::Board, 1, 1240.0, 800.0),
@@ -121,11 +206,21 @@ fn native_window_visual_review() {
                     return;
                 }
                 fs::write(self.output.join("export_status.json"),json!({"status":self.client.status,"path":self.client.transfers.last_note_export}).to_string()).unwrap();
+                if self.video_dir.is_some() {
+                    fs::write(self.output.join("video_receipts.json"), json!({
+                        "videoMode": true,
+                        "frames": self.video_index,
+                        "scenes": SCENES.len(),
+                        "nativeClickAttempts": self.attempted_clicks,
+                        "nativeClickEventsObserved": self.clicked_positions,
+                        "note": "Scenes other than native click receipts are programmatic visual states, not interactive coverage."
+                    }).to_string()).unwrap();
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
             assert!(
-                self.started.elapsed() < Duration::from_secs(150),
+                self.started.elapsed() < Duration::from_secs(if self.video_dir.is_some() { 450 } else { 150 }),
                 "native capture timeout"
             );
             if self.frames > 0 {
@@ -141,6 +236,26 @@ fn native_window_visual_review() {
                 for captured in images {
                     let pixels: Vec<u8> =
                         captured.pixels.iter().flat_map(|p| p.to_array()).collect();
+                    if let Some(video_dir) = &self.video_dir {
+                        let width = captured.width() as u32;
+                        let height = captured.height() as u32;
+                        let native = image::RgbaImage::from_raw(width, height, pixels.clone()).unwrap();
+                        let factor = f64::min(1280.0 / width as f64, 840.0 / height as f64);
+                        let target_w = (width as f64 * factor).round() as u32;
+                        let target_h = (height as f64 * factor).round() as u32;
+                        let scaled = image::imageops::resize(
+                            &native, target_w, target_h, image::imageops::FilterType::Triangle
+                        );
+                        let mut canvas = image::RgbaImage::from_pixel(
+                            1280, 840, image::Rgba([239, 243, 249, 255])
+                        );
+                        image::imageops::overlay(&mut canvas, &scaled,
+                            ((1280 - target_w) / 2) as i64, ((840 - target_h) / 2) as i64
+                        );
+                        canvas.save(video_dir.join(format!("{:05}.png", self.video_index))).unwrap();
+                        self.video_index += 1;
+                        if self.frames < 12 { continue; }
+                    }
                     image::save_buffer(
                         self.output.join(format!("{}.png", SCENES[self.scene].0)),
                         &pixels,
@@ -149,8 +264,17 @@ fn native_window_visual_review() {
                         image::ColorType::Rgba8,
                     )
                     .unwrap();
+                    if self.video_dir.is_some() {
+                        println!("WINDOWS_VIDEO_PROGRESS scene={} frames={} clicks={}",
+                            SCENES[self.scene].0, self.video_index, self.clicked_positions);
+                        fs::write(self.output.join("video_progress.json"),
+                            json!({"finishedScenes": self.scene + 1, "frames": self.video_index,
+                                "clicks": self.clicked_positions, "attempts": self.attempted_clicks,
+                                "lastScene": SCENES[self.scene].0}).to_string()).unwrap();
+                    }
                     self.scene += 1;
                     self.frames = 0;
+                    self.last_click = None;
                     if self.scene == SCENES.len() {
                         ctx.request_repaint();
                         return;
@@ -256,10 +380,45 @@ fn native_window_visual_review() {
             }
             self.client.poll_note_image_export(ctx, frame);
             self.client.refresh_timer_projection(now_millis());
-            ctx.input_mut(|i| i.pointer = Default::default());
+            if self.video_dir.is_none() {
+                ctx.input_mut(|i| i.pointer = Default::default());
+            }
+            if self.video_dir.is_some() && self.frames == 4 &&
+                send_native_demo_click(ctx, SCENES[self.scene].0) {
+                self.attempted_clicks += 1;
+            }
+            if self.video_dir.is_some() {
+                if let Some(pos) = ctx.input(|i| {
+                    if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None }
+                }) {
+                    self.clicked_positions += 1;
+                    self.last_click = Some((pos, self.frames));
+                }
+            }
             self.client.ui_workspace(ctx);
+            if self.video_dir.is_some() {
+                let screen = ctx.screen_rect();
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground, egui::Id::new("chinese_video_caption")
+                ));
+                let footer = egui::Rect::from_min_max(
+                    egui::pos2(205.0, screen.bottom() - 51.0),
+                    egui::pos2(screen.right() - 10.0, screen.bottom() - 9.0)
+                );
+                painter.rect_filled(footer, 6.0, egui::Color32::from_rgba_unmultiplied(15, 32, 57, 240));
+                painter.text(footer.center(), egui::Align2::CENTER_CENTER,
+                    scene_caption(SCENES[self.scene].0),
+                    egui::FontId::proportional(19.0), egui::Color32::WHITE);
+                if let Some((pos, at)) = self.last_click {
+                    if self.frames.saturating_sub(at) < 10 {
+                        painter.circle_filled(pos, 12.0, egui::Color32::from_rgba_unmultiplied(252, 176, 37, 75));
+                        painter.circle_stroke(pos, 15.0, egui::Stroke::new(3.0, egui::Color32::from_rgb(255, 172, 41)));
+                    }
+                }
+            }
             self.frames += 1;
-            if self.frames == 8 {
+            if (self.video_dir.is_some() && self.frames % 2 == 0 && self.frames <= 12)
+                || (self.video_dir.is_none() && self.frames == 8) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             }
             ctx.request_repaint_after(Duration::from_millis(80));
@@ -287,6 +446,11 @@ fn native_window_visual_review() {
                 scene: 0,
                 frames: 0,
                 started: Instant::now(),
+                video_dir,
+                video_index: 0,
+                clicked_positions: 0,
+                attempted_clicks: 0,
+                last_click: None,
             })
         }),
     )
