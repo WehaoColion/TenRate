@@ -1,3 +1,4 @@
+// v3.0.2.48 - Expand Android multilingual coverage.
 // v3.0.2.47 - Bound navigation layer to archive card.
 // v3.0.2.46 - Disambiguate actual document exit from observation delays.
 // v3.0.2.45 - Require fresh Android accessibility evidence.
@@ -158,6 +159,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.48",
+        updatedAt = "",
+        summary = "补齐多语言系统界面翻译及最终生成入口",
+        sections = listOf(
+            AndroidUpdateSection("多语言", listOf(
+                "最终界面生成统一接入翻译适配器，补齐十种非中文语言的目录、问答、工作台和保存提示核心词条。",
+                "已知界面词条缺少本语种时回退英语，保留既有译文和用户正文，不对存储内容进行替换。",
+                "增加十种非中文语言的实际模拟器切换与目录文案验收；动态文案及全界面覆盖仍待进一步审查。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.47",
         updatedAt = "",

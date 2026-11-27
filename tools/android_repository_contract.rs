@@ -67,6 +67,7 @@ fn check_repository() -> Result<(), String> {
     require_core_job(WORKFLOW, "knowledge-save-emulator", true)?;
     require_core_job(WORKFLOW, "knowledge-motion-emulator", false)?;
     require_core_job(WORKFLOW, "ai-conversation-emulator", true)?;
+    require_core_job(WORKFLOW, "localization-emulator", true)?;
     require_stress_profiles(WORKFLOW)?;
     let _ = job_lines(WORKFLOW, "publish-signed-test-candidate")?;
     for old in ["publish-build37-download", "publish-signed-motion-test-candidate", "publish-knowledge-save-candidate", "publish-candidate"] {

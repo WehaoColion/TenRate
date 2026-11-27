@@ -1,3 +1,4 @@
+// v3.0.2.48 - Localize final UI emission and core navigation in every supported locale.
 // v2.22.49.10 - Localize Android interface text from bundled language catalogs.
 pub const KOTLIN_PATH: &str = "com/ofairyo/gridtimer/i18n/LocalizedText.kt";
 
@@ -253,15 +254,65 @@ const EN_UI_GAP_TRANSLATIONS: &[(&str, &str)] = &[
     ("进行中", "Running"),
 ];
 
+const CORE_ADDITIONS: &str = include_str!("ui_locales/core_navigation.tsv");
+const LANGUAGES: [&str; 10] = ["en", "hi", "es", "ar", "fr", "bn", "pt", "id", "ur", "ja"];
+
 pub fn render_resource(path: &str, contents: &str) -> Result<String, String> {
-    if path != "res/raw/ui_en.json" { return Ok(contents.to_owned()); }
+    let Some(language) = path.strip_prefix("res/raw/ui_").and_then(|p| p.strip_suffix(".json")) else {
+        return Ok(contents.to_owned());
+    };
+    let column = LANGUAGES.iter().position(|code| *code == language)
+        .ok_or_else(|| format!("Unknown UI catalog {language}"))? + 1;
     let mut dictionary: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(contents).map_err(|error| error.to_string())?;
+    for (index, line) in CORE_ADDITIONS.lines().enumerate() {
+        let fields: Vec<_> = line.split('\t').collect();
+        if fields.len() != LANGUAGES.len() + 1 || fields.iter().any(|f| f.trim().is_empty()) {
+            return Err(format!("Incomplete core translation row {}", index + 1));
+        }
+        dictionary.entry(fields[0].to_string())
+            .or_insert_with(|| serde_json::Value::String(fields[column].to_string()));
+    }
+    // Existing reviewed translations always win. English is a fallback for
+    // known interface keys that do not yet have a target-language translation,
+    // never a translation of arbitrary notes, filenames, or AI answers.
+    let english: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(include_str!("ui_locales/ui_en.json")).map_err(|e| e.to_string())?;
+    for (key, value) in english {
+        dictionary.entry(key).or_insert(value);
+    }
     for (source, english) in EN_UI_GAP_TRANSLATIONS {
         dictionary.entry((*source).to_string())
             .or_insert_with(|| serde_json::Value::String((*english).to_string()));
     }
     serde_json::to_string(&dictionary).map_err(|error| error.to_string())
+}
+
+// Final emission boundary: standalone UI files and later transforms must
+// use the same literal-only translation adapter as the original screens.
+pub fn finalize_ui(path: &str, source: &str) -> String {
+    if !path.starts_with("com/ofairyo/gridtimer/ui/") || !path.ends_with(".kt") {
+        return source.to_owned();
+    }
+    let mut output = source.to_owned();
+    let direct = "import androidx.compose.material3.Text\n";
+    let localized = "import com.ofairyo.gridtimer.i18n.Text\n";
+    if output.contains(direct) {
+        if output.contains(localized) { output = output.replace(direct, ""); }
+        else { output = output.replace(direct, localized); }
+    } else if !output.contains(localized) && output.contains("import androidx.compose.material3.*\n")
+        && output.contains("Text(") {
+        output = output.replacen("import androidx.compose.material3.*\n",
+            "import androidx.compose.material3.*\nimport com.ofairyo.gridtimer.i18n.Text\n", 1);
+    }
+    output = output.replace("androidx.compose.material3.Text(", "com.ofairyo.gridtimer.i18n.Text(");
+    // Translate only known system fragments at explicit UI boundaries.
+    // No substring replacement over user-entered or stored content.
+    if path.ends_with("/KnowledgeHierarchyUi.kt") || output.contains("private fun KnowledgeHierarchyBrowserFrame(") {
+        output = output.replace("displayedIds.size.toString() + \" 个子项\"",
+            "displayedIds.size.toString() + \" \" + com.ofairyo.gridtimer.i18n.localizedUiText(\"个子项\")");
+    }
+    output
 }
 
 pub fn render(path: &str, source: &str) -> String {
@@ -402,6 +453,25 @@ mod english_ui_regression_tests {
         assert!(generated.contains("import com.ofairyo.gridtimer.i18n.localizedUiText"));
         assert!(!generated.contains("import androidx.compose.material3.Text\n"));
         assert!(generated.contains("syncSession.email"));
+    }
+
+    #[test]
+    fn standalone_ui_cannot_bypass_literal_translation_and_catalog_coverage() {
+        let sample = "package com.ofairyo.gridtimer.ui\nimport androidx.compose.material3.*\nfun screen() { Text(\"知识目录\"); Text(note.title) }";
+        let generated = super::finalize_ui("com/ofairyo/gridtimer/ui/NewDirectory.kt", sample);
+        assert!(generated.contains("import com.ofairyo.gridtimer.i18n.Text"));
+        assert!(generated.contains("Text(note.title)"));
+        assert_eq!(super::finalize_ui("com/ofairyo/gridtimer/data/Model.kt", sample), sample);
+        assert_eq!(super::finalize_ui("com/ofairyo/gridtimer/ui/NewDirectory.kt", &generated), generated);
+        for &(path, source) in RESOURCES {
+            let map: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(&render_resource(path, source).unwrap()).unwrap();
+            for line in super::CORE_ADDITIONS.lines() {
+                let key = line.split('\t').next().unwrap();
+                let value = map.get(key).and_then(|v| v.as_str()).expect("missing core translation");
+                assert!(!value.is_empty() && value != key, "{path}: untranslated {key}");
+            }
+        }
     }
 
     #[test]
