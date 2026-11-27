@@ -1,3 +1,4 @@
+// v3.0.2.42 - Reduce archive glyph draw passes.
 // v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
 // v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
@@ -234,8 +235,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30043
-        versionName '3.0.2.41'
+        versionCode 30044
+        versionName '3.0.2.42'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

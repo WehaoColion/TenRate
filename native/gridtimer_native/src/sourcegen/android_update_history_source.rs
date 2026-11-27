@@ -1,3 +1,4 @@
+// v3.0.2.42 - Reduce archive glyph draw passes; preserve emulator gates.
 // v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
 // v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
@@ -152,6 +153,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.42",
+        updatedAt = "",
+        summary = "减少知识目录图标绘制指令，保留导航动效验收标准",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "根据3.0.2.41模拟器绘制指令过慢的证据，文件夹与纸张图标改用少量实体色路径和圆角面，保留档案式色彩与形状。",
+                "减少每个图标的梯度着色和重复描边，不修改导航弹簧、卡顿阈值、数据安全或百万条压测规模。",
+                "本版尚待实际模拟器复验，启动索引迁移、极限退出保存和API 36标题编辑问题仍需定位。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.41",
         updatedAt = "",

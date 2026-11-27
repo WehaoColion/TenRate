@@ -1,3 +1,4 @@
+// v3.0.2.42 - Reduce archive glyph draw passes after measured slow draw commands.
 // v3.0.2.41 - Reuse directory hierarchy only for the same live data snapshot.
 // v3.0.2.32 - Move exclusion reads off Main and remove redundant directory row layers.
 // v3.0.2.21 - Preserve row/header geometry during auxiliary order reads.
@@ -682,8 +683,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -743,7 +742,7 @@ internal fun knowledgeArchivePalette(): KnowledgeArchivePalette {
     )
 }
 
-/** Drawn at screen density; no raster textures or per-row bitmaps. */
+/** Opaque tonal archive glyph; no shaders, redundant outline passes or row bitmaps. */
 @Composable
 internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifier) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -751,74 +750,47 @@ internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifi
     val front = if (dark) Color(0xFFC7A57B) else Color(0xFFF4D7A1)
     val foot = if (dark) Color(0xFF987951) else Color(0xFFDEC18D)
     val sheet = if (dark) Color(0xFF626A74) else Color(0xFFFFFFFF)
-    val sheetFoot = if (dark) Color(0xFF454D58) else Color(0xFFF1EBE1)
+    val sheetFoot = if (dark) Color(0xFF454D58) else Color(0xFFE4DCD0)
     val line = if (dark) Color(0xFFACB4BE) else Color(0xFFB8AFA3)
     Box(modifier.size(32.dp).drawWithCache {
         val x = size.width / 32f
         val y = size.height / 32f
-            val tab = Path().apply {
-                moveTo(3f*x, 25f*y); lineTo(3f*x, 8f*y)
-                quadraticBezierTo(3f*x, 6f*y, 5.5f*x, 6f*y)
-                lineTo(12f*x, 6f*y); lineTo(15.5f*x, 9f*y)
-                lineTo(26f*x, 9f*y); quadraticBezierTo(29f*x, 9f*y, 29f*x, 12f*y)
-                lineTo(29f*x, 25f*y); close()
-            }
-            val page = Path().apply {
-                moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
-                lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
-                quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
-                lineTo(9f*x, 28f*y)
-                quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
-            }
-            val fold = Path().apply {
-                moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
-                lineTo(29f*x, 9f*y); close()
-            }
-        val tabBrush = Brush.verticalGradient(listOf(front, rear))
-        val frontBrush = Brush.verticalGradient(listOf(front, foot))
-        val pageBrush = Brush.verticalGradient(listOf(sheet, sheetFoot))
-        val foldBrush = Brush.verticalGradient(
-                listOf(sheetFoot, line.copy(alpha = 0.72f)))
-        onDrawBehind {
-        if (isFolder) {
-            drawRoundRect(
-                Color.Black.copy(alpha = if (dark) 0.32f else 0.15f),
-                topLeft = Offset(3f*x, 13f*y), size = Size(27f*x, 17f*y),
-                cornerRadius = CornerRadius(3f*x, 3f*y)
-            )
-            drawPath(path = tab, brush = tabBrush)
-            drawPath(path = tab, color = rear.copy(alpha = 0.70f),
-                style = Stroke(width = 0.75f*x))
-            drawRoundRect(
-                brush = frontBrush,
-                topLeft = Offset(2f*x, 12f*y), size = Size(28f*x, 16f*y),
-                cornerRadius = CornerRadius(3.2f*x, 3.2f*y)
-            )
-            drawRoundRect(color = rear.copy(alpha = 0.75f),
-                topLeft = Offset(2f*x, 12f*y), size = Size(28f*x, 16f*y),
-                cornerRadius = CornerRadius(3.2f*x, 3.2f*y),
-                style = Stroke(width = 0.75f*x))
-            drawLine(Color.White.copy(alpha = if (dark) 0.26f else 0.65f),
-                Offset(5f*x, 13.2f*y), Offset(27f*x, 13.2f*y), 0.95f*x)
-            drawLine(Color.Black.copy(alpha = if (dark) 0.18f else 0.08f),
-                Offset(5f*x, 26.3f*y), Offset(27f*x, 26.3f*y), 0.8f*x)
-        } else {
-            drawRoundRect(
-                Color.Black.copy(alpha = if (dark) 0.29f else 0.13f),
-                topLeft = Offset(7.5f*x, 4.5f*y), size = Size(22f*x, 25f*y),
-                cornerRadius = CornerRadius(2f*x, 2f*y)
-            )
-            drawPath(path = page, brush = pageBrush)
-            drawPath(path = page, color = line.copy(alpha = 0.65f),
-                style = Stroke(width = 0.7f*x))
-            drawPath(path = fold, brush = foldBrush)
-            drawLine(line, Offset(23f*x, 9f*y), Offset(29f*x, 9f*y), 0.7f*x)
+        // Cache only the geometry used by this glyph. Solid tonal surfaces
+        // preserve the archive metaphor without gradient shader/outline work.
+        val silhouette = if (isFolder) Path().apply {
+            moveTo(3f*x, 25f*y); lineTo(3f*x, 8f*y)
+            quadraticBezierTo(3f*x, 6f*y, 5.5f*x, 6f*y)
+            lineTo(12f*x, 6f*y); lineTo(15.5f*x, 9f*y)
+            lineTo(26f*x, 9f*y); quadraticBezierTo(29f*x, 9f*y, 29f*x, 12f*y)
+            lineTo(29f*x, 25f*y); close()
+        } else Path().apply {
+            moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
+            lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
+            quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
+            lineTo(9f*x, 28f*y)
+            quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
+        }
+        val detail = if (isFolder) null else Path().apply {
+            moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
+            lineTo(29f*x, 9f*y); close()
             for (i in 0..2) {
-                val lineY = (14f + i*4f)*y
-                drawLine(line.copy(alpha = 0.82f), Offset(11f*x, lineY),
-                    Offset((if (i == 2) 21f else 25f)*x, lineY), 0.92f*x)
+                val rowY = (14f + i*4f)*y
+                addRect(Rect(11f*x, rowY, (if (i == 2) 21f else 25f)*x, rowY + y))
             }
         }
+        onDrawBehind {
+            if (isFolder) {
+                drawPath(path = silhouette, color = rear)
+                drawRoundRect(color = foot, topLeft = Offset(2f*x, 13f*y),
+                    size = Size(28f*x, 16f*y), cornerRadius = CornerRadius(3f*x, 3f*y))
+                drawRoundRect(color = front, topLeft = Offset(2f*x, 12f*y),
+                    size = Size(28f*x, 14f*y), cornerRadius = CornerRadius(3f*x, 3f*y))
+            } else {
+                drawPath(path = silhouette, color = sheet)
+                drawPath(path = detail!!, color = line)
+                drawRoundRect(color = sheetFoot, topLeft = Offset(9f*x, 26f*y),
+                    size = Size(18f*x, y), cornerRadius = CornerRadius(x, y))
+            }
         }
     })
 }
