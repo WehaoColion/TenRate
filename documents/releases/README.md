@@ -1,3 +1,5 @@
+[Android 3.0.2.57 修复知识目录动效绘制与模拟器验收误判](android/release_notes_v3.0.2.57.md)。
+
 [Android 3.0.2.56 修复文档输入法自动纠错误判](android/release_notes_v3.0.2.56.md)。
 
 [Android 3.0.2.55 隔离并提前编译安卓模拟器验收探针](android/release_notes_v3.0.2.55.md)。

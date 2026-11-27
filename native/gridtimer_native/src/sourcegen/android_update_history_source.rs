@@ -1,3 +1,4 @@
+// v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
 // v3.0.2.56 - Enforce compile-time IME-safe markers in document typing acceptance.
 // v3.0.2.55 - Isolate and compile Android emulator probes before signing.
 // v3.0.2.54 - Correct nested editor exit input in the save stress probe.
@@ -167,6 +168,22 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.57",
+        updatedAt = "",
+        summary = "修复知识目录动效绘制与模拟器验收误判",
+        sections = listOf(
+            AndroidUpdateSection("知识目录渲染", listOf(
+                "导航动画由 KnowledgeDirectoryMotion 持有，离屏合成仅作用于资料卡，目录列表和触控坐标保持静止。",
+                "移除重复视口裁剪；知识场景底部导航取消阴影、环境背景与脉冲重绘，保留原有弹簧参数。"
+            )),
+            AndroidUpdateSection("验收可靠性", listOf(
+                "分享长图按连续一级标题、二级标题和正文序列识别，兼容前置段落换行，不再使用固定图像行号。",
+                "便签长文本按10位数字块节奏输入，并逐行校验实际输入；不自动补字，不放宽保存时限。",
+                "保留API35/36、50万/100万历史负载、SQLite竞争、强制退出和重启恢复验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.56",
         updatedAt = "",
