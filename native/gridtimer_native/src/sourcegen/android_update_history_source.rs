@@ -1,3 +1,4 @@
+// v3.0.2.52 - Fix locale probe regression test compilation under warnings-as-errors.
 // v3.0.2.51 - Scope simulator evidence to motion and locale-visible controls.
 // v3.0.2.50 - Bind release identity to the checked-out commit and synchronized index.
 // v3.0.2.49 - Lossless history storage and physical reclaim.
@@ -162,6 +163,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.52",
+        updatedAt = "",
+        summary = "修复中英文输入区验收回归测试编译问题",
+        sections = listOf(
+            AndroidUpdateSection("模拟器验收", listOf(
+                "保留输入框与图片入口的中英文识别规则。",
+                "将英文占位符标签纳入 Rust 历史失败回放，确保警告即错误的签名前检查通过。",
+                "本版仅修复验收契约编译问题，不改变应用正文保存和队列逻辑。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.51",
         updatedAt = "",

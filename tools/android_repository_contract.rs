@@ -191,6 +191,7 @@ mod tests {
         let fixture = r#"<node text="Enter a question"/><node text="+ Image"/>"#;
         assert!(!fixture.contains("输入问题") && !fixture.contains("继续追问"));
         assert!(android_probe_text::composer_visible(fixture));
+        assert!(android_probe_text::COMPOSER_LABELS.contains(&"Enter a question"));
         assert!(android_probe_text::image_action_visible(fixture));
     }
 

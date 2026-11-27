@@ -1,3 +1,5 @@
+[Android 3.0.2.52 修复中英文输入区验收回归测试编译问题](android/release_notes_v3.0.2.52.md)。
+
 [Android 3.0.2.51 修复知识动效与 AI 输入区模拟器验收误判](android/release_notes_v3.0.2.51.md)。
 
 [Android 3.0.2.50 发布身份来源校验](android/release_notes_v3.0.2.50.md)。
