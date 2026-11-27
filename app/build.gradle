@@ -1,3 +1,4 @@
+// v3.0.2.43 - Bound and measure SQLite migration resource hints.
 // v3.0.2.42 - Reduce archive glyph draw passes.
 // v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
 // v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
@@ -235,8 +236,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30044
-        versionName '3.0.2.42'
+        versionCode 30045
+        versionName '3.0.2.43'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

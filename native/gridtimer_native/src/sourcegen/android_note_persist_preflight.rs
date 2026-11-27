@@ -1,3 +1,4 @@
+// v3.0.2.43 - Device-bounded SQLite migration hints; retain mandatory index and integrity gates.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
 // v3.0.2.27 - Trace each schema upgrade guard index.
@@ -168,39 +169,50 @@ const HISTORY_GUARD_INDEXES: &str = r####"    // Bit 0: missing digest. Bit 1: u
     private fun createHistoryGuardIndexes(database: SQLiteDatabase) {
         val started = android.os.SystemClock.elapsedRealtime()
         android.util.Log.i("StartupLatency", "historyGuard phase=header begin")
-        // Cache sizing is a connection-local performance hint, never a proof.
-        // Bound the temporary allocation to 32 MiB and restore the prior
-        // setting even when index construction fails. A device that rejects
-        // the optional tuning still uses the identical mandatory index DDL.
-        val previous = runCatching {
-            database.rawQuery("PRAGMA main.cache_size", null).use { cursor ->
-                check(cursor.moveToFirst()); cursor.getInt(0)
+        // These are connection-local performance hints, never integrity proofs.
+        // The earlier fixed 32 MiB cache still left the million-row index build
+        // at 597 seconds. Choose a bounded device-sensitive budget and request
+        // SQLite's optional read mapping/sorter parallelism. Every setting is
+        // read back: Android builds may silently cap or ignore these PRAGMAs.
+        fun pragmaLong(name: String): Long? = runCatching {
+            database.rawQuery("PRAGMA $name", null).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getLong(0) else null
             }
         }.getOrNull()
-        val pageSize = runCatching {
-            database.rawQuery("PRAGMA main.page_size", null).use { cursor ->
-                check(cursor.moveToFirst()); cursor.getLong(0)
-            }
-        }.getOrNull()
-        val oldBytes = previous?.let { pages ->
-            if (pages < 0) -pages.toLong() * 1024L else pageSize?.let { it * pages.toLong() }
+        fun setPragma(name: String, value: Long) {
+            runCatching { database.execSQL("PRAGMA $name = $value") }
+                .onFailure { android.util.Log.w("StartupLatency", "historyGuard hint unavailable: $name", it) }
         }
-        var tuned = false
+        val previous = pragmaLong("main.cache_size")
+        val pageSize = pragmaLong("main.page_size")
+        val previousMmap = pragmaLong("main.mmap_size")
+        val previousThreads = pragmaLong("threads")
+        val heapBudget = (Runtime.getRuntime().maxMemory() / 4L).coerceIn(32L * 1024L * 1024L, 128L * 1024L * 1024L)
+        val oldBytes = previous?.let { pages ->
+            if (pages < 0) -pages * 1024L else pageSize?.let { it * pages }
+        }
+        val tuneCache = previous != null && oldBytes != null && oldBytes < heapBudget
+        val tuneMmap = previousMmap != null && previousMmap < 2L * 1024L * 1024L * 1024L &&
+            android.os.Process.is64Bit()
+        val tuneThreads = previousThreads != null && previousThreads < 2L &&
+            Runtime.getRuntime().availableProcessors() >= 4
         try {
-            if (previous != null && oldBytes != null && oldBytes < 32L * 1024L * 1024L) {
-                tuned = runCatching {
-                    database.execSQL("PRAGMA main.cache_size = -32768")
-                }.onFailure {
-                    android.util.Log.w("StartupLatency", "historyGuard cache hint unavailable", it)
-                }.isSuccess
-            }
-            android.util.Log.i("StartupLatency", "historyGuard pageSize=$pageSize previousCache=$previous tuned=$tuned")
+            if (tuneCache) setPragma("main.cache_size", -heapBudget / 1024L)
+            // A mapping reserves virtual address space, not a 2 GiB Java
+            // allocation; the OS pages it in on demand. Keep 32-bit devices
+            // unchanged. Unsupported mmap is harmless and explicitly logged.
+            if (tuneMmap) setPragma("main.mmap_size", 2L * 1024L * 1024L * 1024L)
+            if (tuneThreads) setPragma("threads", 2L)
+            android.util.Log.i("StartupLatency",
+                "historyGuard pageSize=$pageSize cacheBefore=$previous cacheActive=${pragmaLong("main.cache_size")} " +
+                "mmapBefore=$previousMmap mmapActive=${pragmaLong("main.mmap_size")} " +
+                "threadsBefore=$previousThreads threadsActive=${pragmaLong("threads")}")
+            // Mandatory, identical DDL: failure aborts the migration.
             database.execSQL(historyGuardIndexSql())
         } finally {
-            if (tuned && previous != null) {
-                runCatching { database.execSQL("PRAGMA main.cache_size = $previous") }
-                    .onFailure { android.util.Log.w("StartupLatency", "historyGuard cache restore failed", it) }
-            }
+            if (tuneThreads && previousThreads != null) setPragma("threads", previousThreads)
+            if (tuneMmap && previousMmap != null) setPragma("main.mmap_size", previousMmap)
+            if (tuneCache && previous != null) setPragma("main.cache_size", previous)
             android.util.Log.i("StartupLatency", "historyGuard phase=header elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
         }
     }

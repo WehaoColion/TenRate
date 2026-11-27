@@ -1,3 +1,4 @@
+// v3.0.2.43 - Bound and measure SQLite migration resource hints.
 // v3.0.2.42 - Reduce archive glyph draw passes; preserve emulator gates.
 // v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
 // v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
@@ -153,6 +154,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.43",
+        updatedAt = "",
+        summary = "优化百万条历史索引迁移的资源策略",
+        sections = listOf(
+            AndroidUpdateSection("启动恢复", listOf(
+                "针对百万条历史索引创建耗时接近600秒的问题，按设备内存预算调整临时缓存，并尝试系统支持的文件映射及排序线程提示。",
+                "记录SQLite实际采用的参数，迁移结束恢复原设置，不支持的提示保留原路径；强制索引创建和历史完整性校验保持不变。",
+                "原签名、50万及百万条压力测试、600秒恢复和8秒保存门槛不变。本版优化效果仍需模拟器验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.42",
         updatedAt = "",
