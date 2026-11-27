@@ -23,6 +23,11 @@ const CANDIDATE_PUBLISHER: &str = include_str!("android_candidate_publish.rs");
 mod android_probe_text;
 #[cfg(test)]
 const MOTION_PROBE: &str = include_str!("android_knowledge_motion_probe.rs");
+#[cfg(test)]
+#[path = "android_save_exit_policy.rs"]
+mod android_save_exit_policy;
+#[cfg(test)]
+const SAVE_PROBE: &str = include_str!("android_knowledge_save_probe.rs");
 
 
 fn require_release_index_head(index: &str, version: &str) -> Result<(), String> {
@@ -211,6 +216,15 @@ mod tests {
             android_probe_text::matched_navigation_label("fr-FR", "Connaissances", fixture),
             None
         );
+    }
+
+    #[test]
+    fn nested_editor_exit_sends_second_android_system_back() {
+        assert!(android_save_exit_policy::should_send_editor_exit_back(false, true, false));
+        assert!(!android_save_exit_policy::should_send_editor_exit_back(false, true, true));
+        assert!(!android_save_exit_policy::should_send_editor_exit_back(true, false, false));
+        assert!(SAVE_PROBE.contains("should_send_editor_exit_back(is_parent, editor, back_sent)"));
+        assert!(SAVE_PROBE.contains(r#"cmd(&["shell", "input", "keyevent", "4"])?;"#));
     }
 
     #[test]

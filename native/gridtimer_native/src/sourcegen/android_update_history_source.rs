@@ -1,3 +1,4 @@
+// v3.0.2.54 - Correct nested editor exit input in the save stress probe.
 // v3.0.2.53 - Accept the Japanese navigation label shown by the signed emulator.
 // v3.0.2.52 - Fix locale probe regression test compilation under warnings-as-errors.
 // v3.0.2.51 - Scope simulator evidence to motion and locale-visible controls.
@@ -164,6 +165,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.54",
+        updatedAt = "",
+        summary = "修复子页退出保存压力测试的系统返回操作",
+        sections = listOf(
+            AndroidUpdateSection("保存验收", listOf(
+                "第一次系统返回只收起输入法，探针随后发送第二次系统返回以真实退出子页编辑器。",
+                "不再依赖界面中不存在的工具栏返回按钮，退出后继续验证父目录、正文内容和持久化回执。",
+                "将系统返回状态转换固化为签名前 Rust 回归测试，防止再次把未触发退出误报为保存超时。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.53",
         updatedAt = "",

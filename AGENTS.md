@@ -49,3 +49,4 @@ APK 交付保持项目根目录、`APK/` 和 `app/build/outputs/apk/release/`；
 | --- | --- | --- |
 | APK版本从 PR 标题、分支名或合并状态推断 | app/build.gradle 是唯一版本源；android_release_identity.rs 解析同一配置；android_repository_contract.rs 验证候选发布器使用 GITHUB_SHA 和 ANDROID_RELEASE.candidate_tag，并验证更新索引首项与版本同步 | PR #112 的分支名和标题仍为 3.0.2.15，但同一提交 0cbb8089c76df2431b504f5af063a101af273bdd 的 Gradle versionName 已是 3.0.2.49，实际候选 APK 也为 3.0.2.49 |
 | 模拟器探针跨功能或语言硬编码造成假失败 | 动效探针只验证目录与帧耗时；AI 输入区和导航标签通过 android_probe_text.rs 识别中英文及经实机证实的日文等价标签；android_repository_contract.rs 在签名前回放旧失败 | 3.0.2.49 的真实 API 35 证据中，动效探针被法律设置阻断；AI 截图显示 Enter a question 与 + Image；日文截图显示知識，而旧探针只接受目录词条ナレッジ |
+| 子页退出保存验收必须发送真实系统返回键 | android_save_exit_policy.rs 明确判定第二次 KEYCODE_BACK；android_repository_contract.rs 回放历史状态并验证探针调用 | 3.0.2.49 的 API 35/36 证据显示 back_sent=false，编辑器仍在屏幕上，8984ms 超时并未触发真正的退出保存 |

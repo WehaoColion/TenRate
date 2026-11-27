@@ -30,6 +30,8 @@ use std::{
     thread::{self, sleep, JoinHandle},
     time::Duration,
 };
+mod android_save_exit_policy;
+use android_save_exit_policy::should_send_editor_exit_back;
 
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
@@ -415,6 +417,8 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     // The toolbar is hidden while the IME is visible. Back first dismisses
     // the keyboard; never reuse a coordinate captured before the long edit.
     cmd(&["shell", "input", "keyevent", "4"])?;
+    // First Back dismisses the IME. Allow the editor to settle before the second Back.
+    sleep(Duration::from_millis(250));
     let mut exited = false;
     let mut back_sent = false;
     let mut observations = String::from("elapsed_ms,parent,editor,back_sent\n");
@@ -425,26 +429,10 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
         // Require a real visible/enabled app control on the document, never
         // tap a parent-directory Back action or a hidden transition node.
         let editor = ui.contains("document_body_cursor_");
-        if !is_parent && editor && !back_sent {
-            let back = ui.split("<node ").skip(1).filter_map(|entry| entry.split('>').next())
-                .find(|node| {
-                    attr(node, "package") == PACKAGE && attr(node, "enabled") == "true" &&
-                    (["返回", "Back"].contains(&attr(node, "text").as_str()) ||
-                     ["返回", "Back"].contains(&attr(node, "content-desc").as_str())) &&
-                    {
-                        let bounds = attr(node, "bounds");
-                        let coords: Vec<i32> = bounds.split(|c: char| !c.is_ascii_digit() && c != '-')
-                            .filter(|part| !part.is_empty()).filter_map(|part| part.parse().ok()).collect();
-                        coords.len() == 4 && coords[2] > coords[0] && coords[3] > coords[1]
-                    }
-                });
-            if let Some(back) = back {
-                let wrapped = format!("<node {back}>");
-                if let Some(node) = elements(&wrapped).first() {
-                    send_tap(node)?;
-                    back_sent = true;
-                }
-            }
+        if should_send_editor_exit_back(is_parent, editor, back_sent) {
+            // The document editor has no visible toolbar Back button. Use Android system Back.
+            cmd(&["shell", "input", "keyevent", "4"])?;
+            back_sent = true;
         }
         observations.push_str(&format!("{},{is_parent},{editor},{back_sent}\n", started.elapsed().as_millis()));
         if is_parent &&

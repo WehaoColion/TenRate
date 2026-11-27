@@ -1,3 +1,5 @@
+[Android 3.0.2.54 修复子页退出保存压力测试的系统返回操作](android/release_notes_v3.0.2.54.md)。
+
 [Android 3.0.2.53 修复日文知识导航标签模拟器验收误判](android/release_notes_v3.0.2.53.md)。
 
 [Android 3.0.2.52 修复中英文输入区验收回归测试编译问题](android/release_notes_v3.0.2.52.md)。
