@@ -1,3 +1,4 @@
+// v3.0.2.46 - Separate accepted Back, durable receipt and navigation diagnostics.
 // v3.0.2.15 - Keep the queue alive after isolated cancellation and log active stalled operations.
 // v3.0.2.15 - Bound hierarchy queue admission without cancelling accepted durable writes.
 // v3.0.2.13 - Bind autosave receipts to their exact queue epoch and time durable exits.
@@ -1211,6 +1212,7 @@ const DOCUMENT_BACK_OLD: &str = r####"    fun handleBack() {
 const DOCUMENT_BACK_NEW: &str = r####"    fun handleBack() {
         val exitTicket = editorSession.exitSaveGate.begin() ?: return
         val exitStartedNanos = System.nanoTime()
+        android.util.Log.i("NoteSaveLatency", "phase=document_exit_requested")
         isSavingDraft = true
         persistLatestDraft(
             reason = "document_note_editor_back",
@@ -1232,7 +1234,9 @@ const DOCUMENT_BACK_NEW: &str = r####"    fun handleBack() {
                 hierarchyHandedOff = true
                 editorSessionViewModel.clear(note.id, editorWorkspaceKey, editorSession)
                 onBack()
+                android.util.Log.i("NoteSaveLatency", "phase=document_exit_navigation durationMs=${(System.nanoTime() - exitStartedNanos) / 1_000_000L}")
             } else {
+                android.util.Log.w("NoteSaveLatency", "phase=document_exit_failed")
                 Toast.makeText(context, "保存失败，笔记仍留在编辑页。", Toast.LENGTH_LONG).show()
             }
         }

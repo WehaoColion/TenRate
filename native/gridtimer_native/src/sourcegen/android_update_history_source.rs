@@ -1,3 +1,4 @@
+// v3.0.2.46 - Disambiguate actual document exit from observation delays.
 // v3.0.2.45 - Require fresh Android accessibility evidence.
 // v3.0.2.44 - Split local schema safety from optional historical acceleration.
 // v3.0.2.43 - Bound and measure SQLite migration resource hints.
@@ -156,6 +157,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.46",
+        updatedAt = "",
+        summary = "细分百万条连续编辑后退出保存的实际耗时",
+        sections = listOf(
+            AndroidUpdateSection("知识保存", listOf(
+                "记录退出请求、持久化回执和导航发出三个阶段，不改变原有保存队列、工作区保护和持久化条件。",
+                "极限测试识别真实可见的文本或描述返回按钮，禁止点击目录或隐藏的过渡节点，并保留独立的应用回执日志。",
+                "百万条历史恢复已在前两版实测低于600秒，退出保存8秒和动效标准仍未通过；本版尚待真实模拟器复验。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.45",
         updatedAt = "",

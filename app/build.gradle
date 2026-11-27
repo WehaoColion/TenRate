@@ -1,3 +1,4 @@
+// v3.0.2.46 - Disambiguate actual document exit from observation delays.
 // v3.0.2.45 - Require fresh Android accessibility evidence.
 // v3.0.2.44 - Split local schema safety from optional historical acceleration.
 // v3.0.2.43 - Bound and measure SQLite migration resource hints.
@@ -238,8 +239,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30047
-        versionName '3.0.2.45'
+        versionCode 30048
+        versionName '3.0.2.46'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

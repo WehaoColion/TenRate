@@ -1,3 +1,4 @@
+// v3.0.2.46 - Disambiguate toolbar exit, app receipt and rendered directory in million-row probe.
 // v3.0.2.45 - Require fresh, complete accessibility evidence.
 // v3.0.2.44 - Require v9 schema guard and legacy recovery without eager payload header index.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
@@ -404,6 +405,9 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     // Burst of real key injections without waiting for autosave between edits.
     // One adb shell command preserves the input order, but no app state is mocked.
     let burst = (0..BURST_ROUNDS).map(|i| format!("943{i:02}")).collect::<Vec<_>>();
+    // Preserve the immediate final edit/Back sequence: clear the diagnostic
+    // buffer BEFORE the burst, never between the final key and Back.
+    cmd(&["logcat", "-c"])?;
     let mut script = burst.iter().map(|marker| format!("input text {marker}")).collect::<Vec<_>>();
     script.push(format!("input text {EDIT_EXIT_MARKER}"));
     cmd(&["shell", &script.join(" && ")])?;
@@ -413,16 +417,36 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     cmd(&["shell", "input", "keyevent", "4"])?;
     let mut exited = false;
     let mut back_sent = false;
+    let mut observations = String::from("elapsed_ms,parent,editor,back_sent\n");
     while started.elapsed().as_millis() < EDIT_BUDGET_MS {
         let ui = dump()?;
-        let visible = elements(&ui);
         let is_parent = prove_directory(&ui, Some(NESTED_FOLDER));
-        if !is_parent && !back_sent {
-            if let Some(back) = visible.iter().find(|n| n.description == "返回" || n.description == "Back") {
-                send_tap(back)?;
-                back_sent = true;
+        // A text-only toolbar label is as valid as a content description.
+        // Require a real visible/enabled app control on the document, never
+        // tap a parent-directory Back action or a hidden transition node.
+        let editor = ui.contains("document_body_cursor_");
+        if !is_parent && editor && !back_sent {
+            let back = ui.split("<node ").skip(1).filter_map(|entry| entry.split('>').next())
+                .find(|node| {
+                    attr(node, "package") == PACKAGE && attr(node, "enabled") == "true" &&
+                    (["返回", "Back"].contains(&attr(node, "text").as_str()) ||
+                     ["返回", "Back"].contains(&attr(node, "content-desc").as_str())) &&
+                    {
+                        let bounds = attr(node, "bounds");
+                        let coords: Vec<i32> = bounds.split(|c: char| !c.is_ascii_digit() && c != '-')
+                            .filter(|part| !part.is_empty()).filter_map(|part| part.parse().ok()).collect();
+                        coords.len() == 4 && coords[2] > coords[0] && coords[3] > coords[1]
+                    }
+                });
+            if let Some(back) = back {
+                let wrapped = format!("<node {back}>");
+                if let Some(node) = elements(&wrapped).first() {
+                    send_tap(node)?;
+                    back_sent = true;
+                }
             }
         }
+        observations.push_str(&format!("{},{is_parent},{editor},{back_sent}\n", started.elapsed().as_millis()));
         if is_parent &&
             !has_save_state(&ui, "document_save_saving") && nested_body_has(&format!("{}{}{EDIT_EXIT_MARKER}", expected, burst.concat()))? {
             exited = true;
@@ -432,6 +456,16 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     }
     let elapsed = started.elapsed().as_millis();
     fs::write(root.join("body_exit_save_ms.txt"), format!("{elapsed}\n")).map_err(|e| e.to_string())?;
+    fs::write(root.join("body_exit_observations.csv"), observations).map_err(|e| e.to_string())?;
+    // Gather independent app-side timing AFTER the original wall-clock
+    // measurement. Neither log retrieval nor diagnostics can turn failure
+    // into success or extend the original 8-second deadline.
+    let trace = cmd(&["logcat", "-d", "-s", "NoteSaveLatency:I"]);
+    let trace = trace.unwrap_or_else(|error| format!("Exit diagnostic unavailable: {error}"));
+    fs::write(root.join("body_exit_receipt_trace.txt"), &trace).map_err(|e| e.to_string())?;
+    for line in trace.lines().filter(|line| line.contains("phase=document_exit_")) {
+        println!("Nested exit app evidence: {line}");
+    }
     if !exited || elapsed > EDIT_BUDGET_MS {
         capture(root, "body_exit_save_timeout");
         return Err(format!("Immediate nested body exit not durable within {EDIT_BUDGET_MS}ms: {elapsed}ms"));
