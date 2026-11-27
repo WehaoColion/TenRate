@@ -425,9 +425,8 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     while started.elapsed().as_millis() < EDIT_BUDGET_MS {
         let ui = dump()?;
         let is_parent = prove_directory(&ui, Some(NESTED_FOLDER));
-        // A text-only toolbar label is as valid as a content description.
-        // Require a real visible/enabled app control on the document, never
-        // tap a parent-directory Back action or a hidden transition node.
+        // The first system Back dismissed the IME; the second system Back
+        // exits the editor and starts the durable page-exit receipt.
         let editor = ui.contains("document_body_cursor_");
         if should_send_editor_exit_back(is_parent, editor, back_sent) {
             // The document editor has no visible toolbar Back button. Use Android system Back.

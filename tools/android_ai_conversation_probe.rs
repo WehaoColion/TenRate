@@ -22,8 +22,8 @@ fn cmd(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 mod android_fresh_hierarchy;
-mod android_probe_text;
-use android_probe_text::{composer_visible, image_action_visible, COMPOSER_LABELS};
+mod android_ai_probe_text;
+use android_ai_probe_text::{composer_visible, image_action_visible, COMPOSER_LABELS};
 fn dump() -> Result<String, String> {
     android_fresh_hierarchy::fresh_hierarchy(cmd, "/sdcard/ai_chat.xml", 6)
 }

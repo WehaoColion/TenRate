@@ -1,3 +1,4 @@
+// v3.0.2.55 - Isolate and compile Android emulator probes before signing.
 // v3.0.2.54 - Correct nested editor exit input in the save stress probe.
 // v3.0.2.53 - Accept the Japanese navigation label shown by the signed emulator.
 // v3.0.2.52 - Fix locale probe regression test compilation under warnings-as-errors.
@@ -165,6 +166,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.55",
+        updatedAt = "",
+        summary = "隔离并提前编译安卓模拟器验收探针",
+        sections = listOf(
+            AndroidUpdateSection("验收稳定性", listOf(
+                "AI对话探针与多语言导航探针使用各自独立的Rust文本辅助模块，避免不同二进制共享未使用函数。",
+                "签名前逐个以warnings-as-errors模式编译动效、AI、多语言、保存和正文输入探针。",
+                "正文标题输入采用带空格的自然短语，避免API 36输入法自动纠正CamelCase后造成标题仍可见却被误判丢失。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.54",
         updatedAt = "",

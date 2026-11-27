@@ -19,8 +19,17 @@ const HISTORY: &str = include_str!("../native/gridtimer_native/src/sourcegen/and
 const RELEASE_INDEX: &str = include_str!("../documents/releases/README.md");
 const CANDIDATE_PUBLISHER: &str = include_str!("android_candidate_publish.rs");
 #[cfg(test)]
-#[path = "android_probe_text.rs"]
-mod android_probe_text;
+#[path = "android_ai_probe_text.rs"]
+mod android_ai_probe_text;
+#[cfg(test)]
+#[path = "android_locale_probe_text.rs"]
+mod android_locale_probe_text;
+#[cfg(test)]
+const AI_PROBE_SOURCE: &str = include_str!("android_ai_conversation_probe.rs");
+#[cfg(test)]
+const LOCALE_PROBE_SOURCE: &str = include_str!("android_locale_probe.rs");
+#[cfg(test)]
+const DOCUMENT_TYPING_PROBE: &str = include_str!("android_document_typing_probe.rs");
 #[cfg(test)]
 const MOTION_PROBE: &str = include_str!("android_knowledge_motion_probe.rs");
 #[cfg(test)]
@@ -195,9 +204,9 @@ mod tests {
         // Exact visible strings from the 3.0.2.49 API 35 screenshot and accessibility tree.
         let fixture = r#"<node text="Enter a question"/><node text="+ Image"/>"#;
         assert!(!fixture.contains("输入问题") && !fixture.contains("继续追问"));
-        assert!(android_probe_text::composer_visible(fixture));
-        assert!(android_probe_text::COMPOSER_LABELS.contains(&"Enter a question"));
-        assert!(android_probe_text::image_action_visible(fixture));
+        assert!(android_ai_probe_text::composer_visible(fixture));
+        assert!(android_ai_probe_text::COMPOSER_LABELS.contains(&"Enter a question"));
+        assert!(android_ai_probe_text::image_action_visible(fixture));
     }
 
     #[test]
@@ -205,15 +214,15 @@ mod tests {
         // Exact visible label from the 3.0.2.49 API 35/36 screenshots and accessibility trees.
         let fixture = r#"<node text="知識"/>"#;
         assert_eq!(
-            android_probe_text::matched_navigation_label("ja-JP", "ナレッジ", fixture),
+            android_locale_probe_text::matched_navigation_label("ja-JP", "ナレッジ", fixture),
             Some("知識")
         );
         assert_eq!(
-            android_probe_text::matched_navigation_label("en-US", "Knowledge", r#"<node text="Knowledge"/>"#),
+            android_locale_probe_text::matched_navigation_label("en-US", "Knowledge", r#"<node text="Knowledge"/>"#),
             Some("Knowledge")
         );
         assert_eq!(
-            android_probe_text::matched_navigation_label("fr-FR", "Connaissances", fixture),
+            android_locale_probe_text::matched_navigation_label("fr-FR", "Connaissances", fixture),
             None
         );
     }
@@ -225,6 +234,21 @@ mod tests {
         assert!(!android_save_exit_policy::should_send_editor_exit_back(true, false, false));
         assert!(SAVE_PROBE.contains("should_send_editor_exit_back(is_parent, editor, back_sent)"));
         assert!(SAVE_PROBE.contains(r#"cmd(&["shell", "input", "keyevent", "4"])?;"#));
+    }
+
+    #[test]
+    fn standalone_probes_use_role_scoped_text_helpers() {
+        assert!(AI_PROBE_SOURCE.contains("mod android_ai_probe_text;"));
+        assert!(!AI_PROBE_SOURCE.contains("mod android_locale_probe_text;"));
+        assert!(LOCALE_PROBE_SOURCE.contains("mod android_locale_probe_text;"));
+        assert!(!LOCALE_PROBE_SOURCE.contains("mod android_ai_probe_text;"));
+    }
+
+    #[test]
+    fn document_heading_marker_survives_ime_normalization() {
+        assert!(DOCUMENT_TYPING_PROBE.contains(r#"write_text("Stable heading")"#));
+        assert!(DOCUMENT_TYPING_PROBE.contains(r#"seek(&["Stable heading"])"#));
+        assert!(!DOCUMENT_TYPING_PROBE.contains("StableHeading"));
     }
 
     #[test]

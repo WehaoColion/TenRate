@@ -1,7 +1,7 @@
 //! Signed app locale switching, with actual screen evidence for each language.
 use std::{fs, path::Path, process::Command, thread::sleep, time::Duration};
 mod android_fresh_hierarchy;
-mod android_probe_text;
+mod android_locale_probe_text;
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 const CATALOG: &str = include_str!("../native/gridtimer_native/src/sourcegen/ui_locales/core_navigation.tsv");
@@ -26,7 +26,7 @@ fn run(root: &Path) -> Result<(),String> {
             let xml = android_fresh_hierarchy::fresh_hierarchy(cmd,"/sdcard/locale_acceptance.xml",3)?;
             fs::write(root.join(format!("{locale}.xml")), &xml).map_err(|e|e.to_string())?;
             // Check a real translated navigation label, not a locale setting alone.
-            if let Some(label) = android_probe_text::matched_navigation_label(locale, expected, &xml) {
+            if let Some(label) = android_locale_probe_text::matched_navigation_label(locale, expected, &xml) {
                 matched = Some(label.to_owned());
                 break;
             }

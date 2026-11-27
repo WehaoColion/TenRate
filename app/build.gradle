@@ -1,3 +1,4 @@
+// v3.0.2.55 - Isolate and precompile Android emulator probes before signing.
 // v3.0.2.54 - Send the actual second system Back in nested editor exit acceptance.
 // v3.0.2.53 - Accept verified Japanese navigation label equivalence in emulator evidence.
 // v3.0.2.52 - Fix Rust regression contract warning in locale probe tests.
@@ -247,8 +248,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30056
-        versionName '3.0.2.54'
+        versionCode 30057
+        versionName '3.0.2.55'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

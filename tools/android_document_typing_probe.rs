@@ -216,8 +216,8 @@ fn run(out:&Path)->Result<String,String>{
 
     let field=edit_fields()?.into_iter().last().ok_or("H1 field missing")?;
     tap(&field)?;
-    write_text("StableHeading")?;
-    if seek(&["StableHeading"])?.is_none(){
+    write_text("Stable heading")?;
+    if seek(&["Stable heading"])?.is_none(){
         evidence(out,"heading_not_visible");
         return Err("New heading text is not editable".into());
     }
@@ -229,7 +229,7 @@ fn run(out:&Path)->Result<String,String>{
         evidence(out,"wrong_enter_block_count");
         return Err(format!("H1 Enter must produce exactly two blocks, got {after_enter}"));
     }
-    let first=match seek(&["StableHeading"])? {
+    let first=match seek(&["Stable heading"])? {
         Some(node) => node,
         None => { evidence(out,"heading_lost_after_enter"); return Err("Heading lost after Enter".into()); }
     };
@@ -277,7 +277,7 @@ fn run(out:&Path)->Result<String,String>{
         evidence(out,"hot_body_save_timeout");
         return Err(format!("Uncontended body edit did not reach a local receipt within 8s: {hot_ms}ms"));
     }
-    let first_after=seek(&["StableHeading"])?.ok_or("Heading lost during typing")?;
+    let first_after=seek(&["Stable heading"])?.ok_or("Heading lost during typing")?;
     let second_after=seek(&["StableParagraphNoJumpHotSave"])?.ok_or("Typed text lost")?;
     let after_y=(center(&first_after).1,center(&second_after).1);
     if (after_y.0-before_y.0).abs()>28 || (after_y.1-before_y.1).abs()>28 {
@@ -342,7 +342,7 @@ fn run(out:&Path)->Result<String,String>{
     knowledge(out)?;
     open_persisted_page(out)?;
     evidence(out,"07_reopened_saved_heading");
-    if seek(&["StableHeading"])?.is_none() || seek(&["StableParagraphNoJumpHotSaveExitSave"])?.is_none() {
+    if seek(&["Stable heading"])?.is_none() || seek(&["StableParagraphNoJumpHotSaveExitSave"])?.is_none() {
         return Err("Heading or paragraph disappeared after process restart".into());
     }
     if command(&["shell","pidof",APP])?.trim().is_empty() {

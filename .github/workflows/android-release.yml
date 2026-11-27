@@ -129,6 +129,19 @@ jobs:
         run: |
           rustc --edition=2021 -D warnings --emit=metadata tools/android_canvas_flicker_probe.rs -o "$env:RUNNER_TEMP\canvas_probe.rmeta"
           if ($LASTEXITCODE -ne 0) { throw 'Canvas emulator probe does not compile' }
+          $probes = @(
+            'tools/android_knowledge_motion_probe.rs',
+            'tools/android_ai_conversation_probe.rs',
+            'tools/android_locale_probe.rs',
+            'tools/android_knowledge_save_probe.rs',
+            'tools/android_document_typing_probe.rs'
+          )
+          foreach ($probe in $probes) {
+            $probeName = [IO.Path]::GetFileNameWithoutExtension($probe)
+            $output = Join-Path $env:RUNNER_TEMP "$probeName.rmeta"
+            & rustc --edition=2021 -D warnings --emit=metadata $probe -o $output
+            if ($LASTEXITCODE -ne 0) { throw "Android acceptance probe does not compile cleanly: $probe" }
+          }
       - name: Restore signing inputs and verify original certificate
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
