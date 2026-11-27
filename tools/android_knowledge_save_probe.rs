@@ -1,3 +1,4 @@
+// v3.0.2.45 - Require fresh, complete accessibility evidence.
 // v3.0.2.44 - Require v9 schema guard and legacy recovery without eager payload header index.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
@@ -109,17 +110,9 @@ fn elements(xml: &str) -> Vec<Node> {
         })
     }).collect()
 }
+mod android_fresh_hierarchy;
 fn dump() -> Result<String, String> {
-    for _ in 0..6 {
-        let _ = cmd(&["shell", "rm", "-f", "/sdcard/knowledge_appearance.xml"]);
-        let dumped = cmd(&["shell", "uiautomator", "dump", "/sdcard/knowledge_appearance.xml"]);
-        if dumped.is_err() { sleep(Duration::from_millis(550)); continue; }
-        if let Ok(xml) = cmd(&["exec-out", "cat", "/sdcard/knowledge_appearance.xml"]) {
-            if xml.contains("<hierarchy") { return Ok(xml); }
-        }
-        sleep(Duration::from_millis(550));
-    }
-    Err("Android accessibility hierarchy unavailable".into())
+    android_fresh_hierarchy::fresh_hierarchy(cmd, "/sdcard/knowledge_appearance.xml", 6)
 }
 fn capture(dir: &Path, title: &str) {
     if let Ok(xml) = dump() { let _ = fs::write(dir.join(format!("{title}.xml")), xml); }

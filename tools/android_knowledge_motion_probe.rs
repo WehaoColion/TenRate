@@ -1,3 +1,4 @@
+// v3.0.2.45 - Require fresh, complete accessibility evidence.
 // v3.0.2.41 - Preserve independent motion gate and emit Android frame bottleneck counters.
 // v3.0.2.33 - Share release identity and visible navigation evidence.
 //! Android API 35 smoke and visual evidence for the knowledge workspace.
@@ -54,15 +55,9 @@ fn elements(xml: &str) -> Vec<Node> {
         })
     }).collect()
 }
+mod android_fresh_hierarchy;
 fn dump() -> Result<String, String> {
-    for _ in 0..6 {
-        let _ = cmd(&["shell", "uiautomator", "dump", "/sdcard/knowledge_appearance.xml"]);
-        if let Ok(xml) = cmd(&["exec-out", "cat", "/sdcard/knowledge_appearance.xml"]) {
-            if xml.contains("<hierarchy") { return Ok(xml); }
-        }
-        sleep(Duration::from_millis(550));
-    }
-    Err("Android accessibility hierarchy unavailable".into())
+    android_fresh_hierarchy::fresh_hierarchy(cmd, "/sdcard/knowledge_appearance.xml", 6)
 }
 fn capture(dir: &Path, title: &str) {
     if let Ok(xml) = dump() { let _ = fs::write(dir.join(format!("{title}.xml")), xml); }

@@ -1,3 +1,4 @@
+// v3.0.2.45 - Require fresh, complete accessibility evidence.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 //! Real Android emulator smoke test for AI conversation entry and recovery controls.
 //! Without a configured provider, this verifies the interface, not remote inference.
@@ -20,15 +21,9 @@ fn cmd(args: &[&str]) -> Result<String, String> {
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
+mod android_fresh_hierarchy;
 fn dump() -> Result<String, String> {
-    for _ in 0..6 {
-        let _ = cmd(&["shell", "uiautomator", "dump", "/sdcard/ai_chat.xml"]);
-        if let Ok(xml) = cmd(&["exec-out", "cat", "/sdcard/ai_chat.xml"]) {
-            if xml.contains("<hierarchy") { return Ok(xml); }
-        }
-        sleep(Duration::from_millis(500));
-    }
-    Err("No Android UI hierarchy".into())
+    android_fresh_hierarchy::fresh_hierarchy(cmd, "/sdcard/ai_chat.xml", 6)
 }
 #[derive(Clone)]
 struct Item {
@@ -60,9 +55,9 @@ fn items(xml: &str) -> Vec<Item> {
 fn tap_label(labels: &[&str]) -> Result<bool, String> {
     let list = items(&dump()?);
     let item = labels.iter().find_map(|query| list.iter().find(|item| {
-        item.label == *query && item.bounds[2] > item.bounds[0]
+        item.label == *query && item.bounds[2] > item.bounds[0] && item.bounds[3] > item.bounds[1]
     })).or_else(|| labels.iter().find_map(|query| {
-        list.iter().find(|item| item.label.contains(query))
+        list.iter().find(|item| item.label.contains(query) && item.bounds[2] > item.bounds[0] && item.bounds[3] > item.bounds[1])
     }));
     if let Some(item) = item {
         let x = (item.bounds[0] + item.bounds[2]) / 2;

@@ -1,3 +1,4 @@
+// v3.0.2.45 - Require fresh Android accessibility evidence.
 // v3.0.2.44 - Split local schema safety from optional historical acceleration.
 // v3.0.2.43 - Bound and measure SQLite migration resource hints.
 // v3.0.2.42 - Reduce archive glyph draw passes; preserve emulator gates.
@@ -155,6 +156,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.45",
+        updatedAt = "",
+        summary = "统一模拟器实时界面证据，阻断旧界面误判",
+        sections = listOf(
+            AndroidUpdateSection("验收可靠性", listOf(
+                "问答、正文编辑、知识导航、保存与便签探针共用Rust实时层级读取器；先删除旧文件，只读取成功生成的完整XML。",
+                "增加历史读取失败回放，不重复发送点击或键盘事件，不降低现有验收阈值。",
+                "本轮仅修复验收证据链，不宣称标题丢失、问答入口或动效问题已解决，继承V9数据库迁移优化。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.44",
         updatedAt = "",

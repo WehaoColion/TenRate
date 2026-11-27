@@ -1,3 +1,4 @@
+// v3.0.2.45 - Require fresh, complete accessibility evidence.
 // v3.0.2.3 - Exercise real long-note home layout with Chinese and English UI.
 use std::{env,fs,path::{Path,PathBuf},process::{Command,Output},thread,time::Duration};
 
@@ -31,15 +32,9 @@ fn nodes(xml:&str)->Vec<Node>{
             class:attr(head,"class"),bounds:[values[0],values[1],values[2],values[3]]})
     }).collect()
 }
+mod android_fresh_hierarchy;
 fn hierarchy()->Result<String,String>{
-    for _ in 0..6{
-        let _=run(&["shell","uiautomator","dump","/sdcard/sticky_summary.xml"]);
-        if let Ok(xml)=run(&["exec-out","cat","/sdcard/sticky_summary.xml"]){
-            if xml.contains("<hierarchy"){return Ok(xml)}
-        }
-        thread::sleep(Duration::from_millis(550));
-    }
-    Err("Android UI hierarchy unavailable".into())
+    android_fresh_hierarchy::fresh_hierarchy(run, "/sdcard/sticky_summary.xml", 6)
 }
 fn find(labels:&[&str])->Result<Option<Node>,String>{
     let list=nodes(&hierarchy()?);

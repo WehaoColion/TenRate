@@ -1,3 +1,4 @@
+// v3.0.2.45 - Replay stale accessibility evidence failure before signing.
 // v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 //! Cheap fail-closed checks run before any signing or simulator work.
@@ -6,6 +7,8 @@
 mod android_release_identity;
 #[cfg(test)]
 mod android_directory_evidence;
+#[cfg(test)]
+mod android_fresh_hierarchy;
 use android_release_identity::ANDROID_RELEASE;
 #[allow(dead_code)]
 mod android_stress_profile;

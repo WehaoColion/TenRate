@@ -1,3 +1,4 @@
+// v3.0.2.45 - Require fresh, complete accessibility evidence.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.31 - Capture exact editor state when heading or paragraph disappears.
 //! GitHub Android emulator acceptance of stable text entry and knowledge share images.
@@ -57,15 +58,9 @@ fn nodes(xml:&str)->Vec<Node>{
         })
     }).collect()
 }
+mod android_fresh_hierarchy;
 fn tree()->Result<String,String>{
-    for _ in 0..5 {
-        let _=command(&["shell","uiautomator","dump","/sdcard/typing_stability_test.xml"]);
-        if let Ok(xml)=command(&["exec-out","cat","/sdcard/typing_stability_test.xml"]){
-            if xml.contains("<hierarchy"){return Ok(xml);}
-        }
-        sleep(Duration::from_millis(550));
-    }
-    Err("Cannot read emulator accessibility hierarchy".into())
+    android_fresh_hierarchy::fresh_hierarchy(command, "/sdcard/typing_stability_test.xml", 5)
 }
 fn evidence(path:&Path, label:&str){
     if let Ok(xml)=tree(){let _=fs::write(path.join(format!("{label}.xml")),xml);}
