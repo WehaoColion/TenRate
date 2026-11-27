@@ -41,3 +41,10 @@ APK 交付保持项目根目录、`APK/` 和 `app/build/outputs/apk/release/`；
 `Android repository contract and historical error replay` 必须通过才允许签名构建；所有签名构建必须执行 API 35、36 保存验收及真实动效验收。不要新增按历史分支名跳过核心验收的条件。候选 APK 统一由 `tools/android_candidate_publish.rs` 按版本与构建提交生成不可覆盖的预发布，不以候选发布成功代替模拟器验收。正式发布仍使用原有独立流程。
 
 目录导航验收复用 `tools/android_directory_evidence.rs` 的真实可见节点证明，不以面包屑、编辑器内联创建按钮或隐藏节点断言已返回目录。保留原压力规模、回执、重启及帧预算。
+
+
+## 代理错误防护表
+
+| 错误类别 | 强制约束 | 历史证据 |
+| --- | --- | --- |
+| APK版本从 PR 标题、分支名或合并状态推断 | app/build.gradle 是唯一版本源；android_release_identity.rs 解析同一配置；android_repository_contract.rs 验证候选发布器使用 GITHUB_SHA 和 ANDROID_RELEASE.candidate_tag，并验证更新索引首项与版本同步 | PR #112 的分支名和标题仍为 3.0.2.15，但同一提交 0cbb8089c76df2431b504f5af063a101af273bdd 的 Gradle versionName 已是 3.0.2.49，实际候选 APK 也为 3.0.2.49 |

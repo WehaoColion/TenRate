@@ -9,13 +9,53 @@ mod android_release_identity;
 mod android_directory_evidence;
 #[cfg(test)]
 mod android_fresh_hierarchy;
-use android_release_identity::ANDROID_RELEASE;
+use android_release_identity::{ANDROID_APP_VERSION, ANDROID_RELEASE};
 #[allow(dead_code)]
 mod android_stress_profile;
 use android_stress_profile::{BASELINE, EXTREME, HISTORY_PADDING_BYTES, SAVE_BUDGET_MS, RECOVERY_BUDGET_SECONDS};
 
 const WORKFLOW: &str = include_str!("../.github/workflows/android-release.yml");
 const HISTORY: &str = include_str!("../native/gridtimer_native/src/sourcegen/android_update_history_source.rs");
+const RELEASE_INDEX: &str = include_str!("../documents/releases/README.md");
+const CANDIDATE_PUBLISHER: &str = include_str!("android_candidate_publish.rs");
+
+
+fn require_release_index_head(index: &str, version: &str) -> Result<(), String> {
+    let first = index.lines().find(|line| !line.trim().is_empty())
+        .ok_or("Android release index is empty; add the current release as its first entry")?;
+    let expected = format!("[Android {version} ");
+    if !first.starts_with(&expected) {
+        return Err(format!("Android release index is stale: expected {version} as its first entry; never infer the current version from a PR title or branch name"));
+    }
+    let relative = format!("android/release_notes_v{version}.md");
+    if !first.contains(&relative) {
+        return Err(format!("Android release index head must link {relative}"));
+    }
+    let note = std::path::Path::new("documents/releases").join(&relative);
+    if !note.is_file() {
+        return Err(format!("Missing current Android release note: {}", note.display()));
+    }
+    Ok(())
+}
+
+fn require_candidate_publisher_identity(source: &str) -> Result<(), String> {
+    for required in [
+        "env::var(\"GITHUB_SHA\")",
+        "ANDROID_RELEASE.candidate_tag(&commit)?",
+        "version != ANDROID_APP_VERSION",
+        "\"--target\", &commit",
+    ] {
+        if !source.contains(required) {
+            return Err(format!("Candidate publisher must use the checked-out Gradle identity and exact build SHA; missing {required}"));
+        }
+    }
+    for forbidden in ["GITHUB_HEAD_REF", "GITHUB_REF_NAME", "pull_request.title"] {
+        if source.contains(forbidden) {
+            return Err(format!("Candidate publisher must not infer Android version from {forbidden}; use app/build.gradle at the checked-out commit"));
+        }
+    }
+    Ok(())
+}
 
 fn indentation(line: &str) -> usize { line.len() - line.trim_start().len() }
 
@@ -64,6 +104,8 @@ fn require_stress_profiles(yaml: &str) -> Result<(), String> {
 
 fn check_repository() -> Result<(), String> {
     ANDROID_RELEASE.require_history_head(HISTORY)?;
+    require_release_index_head(RELEASE_INDEX, ANDROID_APP_VERSION)?;
+    require_candidate_publisher_identity(CANDIDATE_PUBLISHER)?;
     require_core_job(WORKFLOW, "knowledge-save-emulator", true)?;
     require_core_job(WORKFLOW, "knowledge-motion-emulator", false)?;
     require_core_job(WORKFLOW, "ai-conversation-emulator", true)?;
@@ -92,6 +134,24 @@ mod tests {
     use super::*;
     use android_release_identity::parse_android_release;
     use android_directory_evidence::prove_directory;
+
+    #[test]
+    fn historical_stale_release_index_is_rejected() {
+        let stale = "[Android 3.0.2.15 知识模块连续动效修订](android/release_notes_v3.0.2.15.md)。";
+        let error = require_release_index_head(stale, ANDROID_APP_VERSION).unwrap_err();
+        assert!(error.contains("stale"));
+        assert!(require_release_index_head(RELEASE_INDEX, ANDROID_APP_VERSION).is_ok());
+    }
+
+    #[test]
+    fn stale_branch_label_cannot_choose_the_candidate_version() {
+        let historical_branch = "fix/android-knowledge-motion-v3.0.2.15";
+        let tag = ANDROID_RELEASE.candidate_tag("0cbb8089c76df2431b504f5af063a101af273bdd").unwrap();
+        assert!(historical_branch.ends_with("3.0.2.15"));
+        assert!(tag.starts_with(&format!("v{}-candidate-", ANDROID_APP_VERSION)));
+        assert!(!tag.contains("3.0.2.15"));
+        require_candidate_publisher_identity(CANDIDATE_PUBLISHER).unwrap();
+    }
 
     #[test]
     fn current_repository_contract() { check_repository().unwrap(); }

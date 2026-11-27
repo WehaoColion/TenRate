@@ -1,3 +1,4 @@
+// v3.0.2.50 - Bind release identity to the checked-out commit and synchronized index.
 // v3.0.2.49 - Lossless history storage and physical reclaim.
 // v3.0.2.48 - Expand Android multilingual coverage.
 // v3.0.2.47 - Bound navigation layer to archive card.
@@ -160,6 +161,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.50",
+        updatedAt = "",
+        summary = "统一安卓候选版本来源与发布记录校验",
+        sections = listOf(
+            AndroidUpdateSection("构建来源", listOf(
+                "Android版本号只读取当前构建提交中的app/build.gradle，分支名、PR标题和合并状态不参与版本选择。",
+                "候选APK文件名、Gradle版本身份、不可覆盖的候选标签和完整构建提交SHA必须一致。",
+                "发布索引首项必须与当前版本同步，缺少对应更新说明时在签名前拒绝构建。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.49",
         updatedAt = "",
