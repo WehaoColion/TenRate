@@ -1,3 +1,4 @@
+// v3.0.2.49 - Lossless history storage and physical reclaim.
 // v3.0.2.48 - Expand Android multilingual coverage.
 // v3.0.2.47 - Bound navigation layer to archive card.
 // v3.0.2.46 - Disambiguate actual document exit from observation delays.
@@ -159,6 +160,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.49",
+        updatedAt = "",
+        summary = "降低历史快照写入占用并提供无损存储整理",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "2 Mi字符以内的历史快照在事务内直接写入认证压缩表示或原始数据，避免先分配完整原始历史记录。",
+                "我的页面新增存储整理，回收SQLite空闲页并检查点WAL，显示实际整理前后数据库占用，不删除正文、版本、附件或隔离数据。",
+                "整理须明确操作、有足够磁盘空间且不与前序写入冲突；尚待模拟器验证，非中文新增文案暂以英语显示。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.48",
         updatedAt = "",

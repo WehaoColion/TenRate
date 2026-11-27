@@ -920,6 +920,8 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
         .replace("十倍率", "tenfold")
         .replace("grid_timer_data_", "tenfold_data_")
         .replace("grid_timer_log_", "tenfold_log_");
+    let contents = android_local_read_efficiency::finalize_storage(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let contents = android_ui_localization::finalize_ui(relative_path, &contents);
     fs::write(destination, contents.trim_start())
 }

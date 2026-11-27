@@ -1,3 +1,4 @@
+// v3.0.2.49 - Explicit physical database reclamation without deleting recovery rows.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.31 - Bound maintenance duty cycle and sample routine diagnostic logs.
 // v3.0.2.30 - Skip proofless background writer and record lock duration.
@@ -680,5 +681,104 @@ mod tests {
         assert!(INDEXED_BATCHES.contains("val batchSize = if (sizedWindow) 64 else 1"));
         assert!(MAINTENANCE_JOB.contains("delay(nextIdleDelay)"));
         assert!(MAINTENANCE_JOB.contains("stateDatabase.compactHistoryBatch(workspaceKey, afterId)"));
+    }
+}
+
+
+// Final emission: explicit physical maintenance, never in autosave or startup.
+pub fn finalize_storage(path: &str, source: &str) -> Result<String, String> {
+    let mut output = source.to_owned();
+    match path {
+        DATABASE => {
+            replace(&mut output, "    fun writeSnapshot(", &format!("{STORAGE_DATABASE}    fun writeSnapshot("))?;
+        }
+        REPOSITORY => {
+            replace(&mut output, "    private suspend fun persistToWorkspace(", &format!("{STORAGE_REPOSITORY}    private suspend fun persistToWorkspace("))?;
+        }
+        "com/ofairyo/gridtimer/ui/TimerViewModel.kt" => {
+            replace(&mut output, "    private val repository = GridTimerApplication.timerRepository(application)",
+                "    private val repository = GridTimerApplication.timerRepository(application)\n    suspend fun reclaimUnusedStorage(): Pair<Long, Long>? = repository.reclaimUnusedStorage()")?;
+        }
+        "com/ofairyo/gridtimer/ui/GridTimerScreen.kt" => {
+            replace(&mut output, "                                onLogout = viewModel::logoutSyncAccount,",
+                "                                onLogout = viewModel::logoutSyncAccount,\n                                onReclaimStorage = viewModel::reclaimUnusedStorage,")?;
+        }
+        _ => {}
+    }
+    Ok(output)
+}
+
+const STORAGE_DATABASE: &str = r####"    // Only physical allocation changes. No logical recovery row is removed.
+    fun reclaimUnusedStorage(): Pair<Long, Long> = tracedSnapshotMonitor("storageReclaim") {
+        val database = writableDatabase
+        check(!database.inTransaction())
+        fun scalar(pragma: String): Long = database.rawQuery("PRAGMA $pragma", null).use {
+            check(it.moveToFirst()); it.getLong(0)
+        }
+        fun bytesOnDisk(): Long = databaseFile.length() + java.io.File(databaseFile.path + "-wal").length()
+        fun checkpoint() {
+            database.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use {
+                check(it.moveToFirst() && it.getInt(0) == 0) { "SQLite checkpoint is busy." }
+            }
+        }
+        val before = bytesOnDisk()
+        checkpoint()
+        val freeBytes = scalar("freelist_count") * scalar("page_size")
+        if (freeBytes >= 8L * 1024L * 1024L) {
+            val available = android.os.StatFs(requireNotNull(databaseFile.parentFile).path).availableBytes
+            val dbBytes = databaseFile.length()
+            check(dbBytes <= (available - 64L * 1024L * 1024L).coerceAtLeast(0L) / 2L) {
+                "Insufficient free space for safe SQLite compaction."
+            }
+            database.execSQL("VACUUM")
+            checkpoint()
+        }
+        val after = bytesOnDisk()
+        android.util.Log.i("StorageReclaim", "beforeBytes=$before afterBytes=$after freePageBytes=$freeBytes")
+        before to after
+    }
+
+"####;
+
+const STORAGE_REPOSITORY: &str = r####"    suspend fun reclaimUnusedStorage(): Pair<Long, Long>? {
+        initializationJob.join()
+        if (!writeMutex.tryLock()) return null
+        return try {
+            if (futureSchemaVersion != null || persistenceWriteBlockedReason != null ||
+                loadedFromRecoveryCandidate) return null
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                // Never reuse a pre-rewrite verification proof.
+                verifiedWritePreflight = null
+                stateDatabase.reclaimUnusedStorage()
+            }
+        } catch (failure: Exception) {
+            Log.w("StorageReclaim", "Storage maintenance deferred", failure)
+            null
+        } finally {
+            writeMutex.unlock()
+        }
+    }
+
+"####;
+
+#[cfg(test)]
+mod physical_storage_regression {
+    use super::*;
+
+    #[test]
+    fn vacuum_reclaims_free_pages_without_changing_recovery_rows() {
+        let path = std::env::temp_dir().join(format!("tenrate-storage-{}-{}.db", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE snapshot_history(id INTEGER PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE current_snapshot(id TEXT PRIMARY KEY, payload TEXT NOT NULL); INSERT INTO current_snapshot VALUES('guest','current'); INSERT INTO snapshot_history VALUES(7,'retained'); CREATE TABLE fixture(payload BLOB); INSERT INTO fixture VALUES(zeroblob(16777216)); DROP TABLE fixture;").unwrap();
+        let before = std::fs::metadata(&path).unwrap().len();
+        db.execute_batch("VACUUM").unwrap();
+        let after = std::fs::metadata(&path).unwrap().len();
+        assert!(before > after + 8 * 1024 * 1024, "physical space was not reclaimed");
+        assert_eq!(db.query_row("SELECT payload FROM snapshot_history WHERE id=7", [], |r| r.get::<_, String>(0)).unwrap(), "retained");
+        assert_eq!(db.query_row("SELECT payload FROM current_snapshot WHERE id='guest'", [], |r| r.get::<_, String>(0)).unwrap(), "current");
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+        assert!(STORAGE_DATABASE.contains("database.execSQL(\"VACUUM\")"));
     }
 }

@@ -1,3 +1,4 @@
+// v3.0.2.49 - Explicit storage maintenance and actual before/after physical size.
 // v2.23.2.20 - Keep update history visible when versions do not match.
 // v2.23.2.5 - Explain direct AI questions and knowledge sources without coupling account sync.
 // v2.23.2.3 - Show saved connection state and direct AI feature entry points.
@@ -102,6 +103,7 @@ internal fun MyAccountScreen(
     onUploadLocalData: () -> Unit,
     onDownloadAccountData: () -> Unit,
     onLogout: () -> Unit,
+    onReclaimStorage: suspend () -> Pair<Long, Long>?,
     onThemeModeSelected: (ThemeMode) -> Unit,
     bottomContentPadding: Dp,
     initialAiExpanded: Boolean = false,
@@ -500,6 +502,48 @@ internal fun MyAccountScreen(
                         )
                     }
                 }
+            }
+        }
+
+        item {
+            CompactSettingsCard {
+                var confirming by remember { mutableStateOf(false) }
+                var running by remember { mutableStateOf(false) }
+                var completed by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+                var failed by remember { mutableStateOf(false) }
+                val storageScope = rememberCoroutineScope()
+                val chinese = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]?.language == "zh"
+                val heading = if (chinese) "存储整理" else "Storage maintenance"
+                Text(heading, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                Text(if (chinese) "回收数据库空闲空间，不删除正文、版本或附件。" else "Reclaim unused database space without deleting documents, versions or attachments.", style = MaterialTheme.typography.bodySmall)
+                TextButton(enabled = !running, onClick = { confirming = true }) {
+                    Text(if (running) (if (chinese) "正在整理存储…" else "Reclaiming space…") else (if (chinese) "回收空闲空间" else "Reclaim unused space"))
+                }
+                if (failed) Text(if (chinese) "暂时无法整理，请检查剩余空间并完成保存。" else "Maintenance unavailable. Check free space and finish saving.", color = MaterialTheme.colorScheme.error)
+                completed?.let { (before, after) ->
+                    Text((if (chinese) "整理前" else "Before") + " " + android.text.format.Formatter.formatFileSize(LocalContext.current, before))
+                    Text((if (chinese) "整理后" else "After") + " " + android.text.format.Formatter.formatFileSize(LocalContext.current, after))
+                }
+                if (confirming) AlertDialog(
+                    onDismissRequest = { confirming = false },
+                    title = { Text(heading) },
+                    text = { Text(if (chinese) "整理期间请勿编辑或退出应用。大数据库需要额外空间，可能耗时较长。" else "Do not edit or close the app during maintenance. Large databases need extra free space and may take longer.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirming = false
+                            running = true
+                            failed = false
+                            completed = null
+                            storageScope.launch {
+                                try {
+                                    completed = onReclaimStorage()
+                                    failed = completed == null
+                                } finally { running = false }
+                            }
+                        }) { Text(if (chinese) "开始整理" else "Start maintenance") }
+                    },
+                    dismissButton = { TextButton(onClick = { confirming = false }) { Text(myPageText(MyPageText.CANCEL)) } }
+                )
             }
         }
 
