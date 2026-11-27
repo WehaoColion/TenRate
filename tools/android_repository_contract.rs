@@ -289,6 +289,17 @@ mod tests {
     }
 
     #[test]
+    fn sticky_long_input_is_paced_and_verified_before_version_creation() {
+        // API 35 artifact 15234674079 observed 247/249 bytes when a 40-digit
+        // row was sent in one shell command; API 36 artifact 15235331537 passed.
+        // Pace the same exact marker in chunks and verify each authored row.
+        assert!(SAVE_PROBE.contains("ImeStableText::new(row)"));
+        assert!(SAVE_PROBE.contains("stable.chunks(10)"));
+        assert!(SAVE_PROBE.contains("verify_sticky_body_progress(&evidence, index, &expected)?;"));
+        assert!(!SAVE_PROBE.contains("cmd(&[\"shell\",\"input\",\"text\",&sticky_authored_row(index)])?;"));
+    }
+
+    #[test]
     fn current_repository_contract() { check_repository().unwrap(); }
 
     #[test]
