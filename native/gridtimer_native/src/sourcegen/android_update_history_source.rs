@@ -1,3 +1,4 @@
+// v3.0.2.51 - Scope simulator evidence to motion and locale-visible controls.
 // v3.0.2.50 - Bind release identity to the checked-out commit and synchronized index.
 // v3.0.2.49 - Lossless history storage and physical reclaim.
 // v3.0.2.48 - Expand Android multilingual coverage.
@@ -161,6 +162,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.51",
+        updatedAt = "",
+        summary = "修复知识动效与 AI 输入区模拟器验收误判",
+        sections = listOf(
+            AndroidUpdateSection("模拟器验收", listOf(
+                "知识动效探针只验证目录进入、返回、重新进入、录屏和独立帧耗时，不再把法律风险排除设置作为动效前置条件。",
+                "AI 输入区验收同时识别中文和英语提示，按模拟器实际显示的输入框与图片入口判断可见性。",
+                "将历史误判固化为签名前 Rust 回归测试，避免无关设置变化或语言差异阻断核心验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.50",
         updatedAt = "",

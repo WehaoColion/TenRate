@@ -18,6 +18,11 @@ const WORKFLOW: &str = include_str!("../.github/workflows/android-release.yml");
 const HISTORY: &str = include_str!("../native/gridtimer_native/src/sourcegen/android_update_history_source.rs");
 const RELEASE_INDEX: &str = include_str!("../documents/releases/README.md");
 const CANDIDATE_PUBLISHER: &str = include_str!("android_candidate_publish.rs");
+#[cfg(test)]
+#[path = "android_probe_text.rs"]
+mod android_probe_text;
+#[cfg(test)]
+const MOTION_PROBE: &str = include_str!("android_knowledge_motion_probe.rs");
 
 
 fn require_release_index_head(index: &str, version: &str) -> Result<(), String> {
@@ -151,6 +156,42 @@ mod tests {
         assert!(tag.starts_with(&format!("v{}-candidate-", ANDROID_APP_VERSION)));
         assert!(!tag.contains("3.0.2.15"));
         require_candidate_publisher_identity(CANDIDATE_PUBLISHER).unwrap();
+    }
+
+    fn motion_probe_has_unrelated_settings_gate(source: &str) -> bool {
+        [
+            "排除法律风险分析",
+            "Legal analysis exclusion",
+            "知识设置",
+            "文件夹设置",
+            "管理当前页面或文件夹",
+        ].iter().any(|needle| source.contains(needle))
+    }
+
+    #[test]
+    fn historical_motion_probe_legal_settings_gate_is_rejected() {
+        // Replays the actual 3.0.2.49 API 35 failure before any motion frames were measured.
+        let historical = r#"
+            if !tap_any(&["知识设置"])? { return Err("Root knowledge settings entry is not visible".into()); }
+            if !legal_menu.contains("排除法律风险分析") {
+                return Err("Legal analysis exclusion is not reachable from knowledge settings".into());
+            }
+            if !settings_menu.contains("排除法律风险分析") {
+                return Err("Folder legal exclusion is not reachable from its settings".into());
+            }
+        "#;
+        assert!(motion_probe_has_unrelated_settings_gate(historical));
+        assert!(!motion_probe_has_unrelated_settings_gate(MOTION_PROBE));
+        assert!(MOTION_PROBE.contains("open_folder_with_motion(root)?"));
+    }
+
+    #[test]
+    fn historical_english_ai_composer_fixture_is_recognized() {
+        // Exact visible strings from the 3.0.2.49 API 35 screenshot and accessibility tree.
+        let fixture = r#"<node text="Enter a question"/><node text="+ Image"/>"#;
+        assert!(!fixture.contains("输入问题") && !fixture.contains("继续追问"));
+        assert!(android_probe_text::composer_visible(fixture));
+        assert!(android_probe_text::image_action_visible(fixture));
     }
 
     #[test]

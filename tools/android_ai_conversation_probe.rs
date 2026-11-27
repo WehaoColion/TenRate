@@ -22,6 +22,8 @@ fn cmd(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 mod android_fresh_hierarchy;
+mod android_probe_text;
+use android_probe_text::{composer_visible, image_action_visible, COMPOSER_LABELS};
 fn dump() -> Result<String, String> {
     android_fresh_hierarchy::fresh_hierarchy(cmd, "/sdcard/ai_chat.xml", 6)
 }
@@ -102,11 +104,11 @@ fn run(dir: &Path) -> Result<String, String> {
         return Err("AI dialog or historical-conversation controls were not visible".into());
     }
     // Composer and attachment/send controls must be visible without scrolling.
-    if !opened.contains("输入问题") && !opened.contains("继续追问") {
-        return Err("Compact composer is not visible on initial chat viewport".into());
+    if !composer_visible(&opened) {
+        return Err("Compact composer is not visible on initial chat viewport in either supported language".into());
     }
-    if !opened.contains("＋ 图片") && !opened.contains("图片") {
-        return Err("Attachment action is not visible beside composer".into());
+    if !image_action_visible(&opened) {
+        return Err("Image attachment action is not visible beside composer in either supported language".into());
     }
     if !tap_label(&["历史", "History"])? { return Err("History action is not tappable".into()); }
     sleep(Duration::from_millis(700));
@@ -115,7 +117,7 @@ fn run(dir: &Path) -> Result<String, String> {
     if !(history.contains("历史对话") || history.contains("Chat history")) {
         return Err("History list was not displayed".into());
     }
-    if history.contains("输入问题") || history.contains("继续追问…") {
+    if composer_visible(&history) {
         return Err("History view still displays the chat composer".into());
     }
     if !tap_label(&["返回对话", "Back to chat"])? { return Err("History return action is not tappable".into()); }
@@ -125,7 +127,7 @@ fn run(dir: &Path) -> Result<String, String> {
     if !(dump()?.contains("新对话") || dump()?.contains("New chat")) {
         return Err("New-chat did not keep the AI interface open".into());
     }
-    if !tap_label(&["输入问题", "继续追问…"])? { return Err("Composer is not tappable".into()); }
+    if !tap_label(COMPOSER_LABELS)? { return Err("Composer is not tappable".into()); }
     cmd(&["shell","input","text","TenRateUIcheck"])?;
     let editing = dump()?;
     capture(dir, "05_composer_ime");

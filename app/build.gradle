@@ -1,3 +1,4 @@
+// v3.0.2.51 - Scope Android emulator probes to visible feature behavior.
 // v3.0.2.50 - Enforce current checked-out release identity and index provenance.
 // v3.0.2.49 - Lossless storage maintenance.
 // v3.0.2.48 - Expand Android multilingual coverage.
@@ -243,8 +244,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30052
-        versionName '3.0.2.50'
+        versionCode 30053
+        versionName '3.0.2.51'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

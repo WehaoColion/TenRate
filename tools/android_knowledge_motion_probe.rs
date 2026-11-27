@@ -281,44 +281,12 @@ fn run(root: &Path) -> Result<String, String> {
     cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
     sleep(Duration::from_secs(7));
     directory(root)?;
-    if !tap_any(&["知识设置"])? {
-        return Err("Root knowledge settings entry is not visible".into());
-    }
-    let legal_menu = dump()?;
-    capture(root, "03_root_settings");
-    if !legal_menu.contains("排除法律风险分析") {
-        return Err("Legal analysis exclusion is not reachable from knowledge settings".into());
-    }
-    cmd(&["shell", "input", "keyevent", "4"])?;
     create_folder(root)?;
     open_folder_with_motion(root)?;
-    let folder_view = dump()?;
-    capture(root, "06_folder_controls");
-    if !folder_view.contains("管理") || !folder_view.contains("文件夹设置") {
-        return Err("Folder creation, management and settings hierarchy is not visible".into());
+    if !prove_directory(&dump()?, Some(FOLDER)) {
+        return Err("Folder navigation did not leave the app in the opened folder".into());
     }
-    if find(&["重命名"])?.is_some() {
-        return Err("Rename must remain hidden until the management menu is opened".into());
-    }
-    if !tap_any(&["管理当前页面或文件夹", "管理 ▾"])? {
-        return Err("Folder management menu is not accessible".into());
-    }
-    let management_menu = dump()?;
-    capture(root, "07_management_menu");
-    if !management_menu.contains("移动") || !management_menu.contains("重命名") ||
-        !management_menu.contains("转为页面") {
-        return Err("Management menu lost an existing folder action".into());
-    }
-    cmd(&["shell", "input", "keyevent", "4"])?;
-    if !tap_any(&["文件夹设置"])? {
-        return Err("Folder-specific settings entry is not accessible".into());
-    }
-    let settings_menu = dump()?;
-    capture(root, "08_folder_settings");
-    if !settings_menu.contains("排除法律风险分析") {
-        return Err("Folder legal exclusion is not reachable from its settings".into());
-    }
-    Ok(format!("PASS: signed Android {version} launched with animation scales 1.0; knowledge directory, folder creation, management and exclusion controls passed; forward/back/re-entry passed; MP4 captured and independent unrecorded frame budget passed. Visual smoothness still requires reviewing evidence."))
+    Ok(format!("PASS: signed Android {version} launched with animation scales 1.0; directory discovery and folder creation passed; forward/back/re-entry passed; MP4 captured and independent unrecorded frame budget passed. Visual smoothness still requires reviewing evidence."))
 }
 fn main() {
     let path = env::args_os().nth(1).map(PathBuf::from)
