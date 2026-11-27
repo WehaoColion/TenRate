@@ -1,3 +1,4 @@
+// v3.0.2.47 - Bound navigation layer to archive card.
 // v3.0.2.46 - Disambiguate actual document exit from observation delays.
 // v3.0.2.45 - Require fresh Android accessibility evidence.
 // v3.0.2.44 - Split local schema safety from optional historical acceleration.
@@ -157,6 +158,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.47",
+        updatedAt = "",
+        summary = "缩小知识目录导航动画的渲染范围",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "导航时仅移动档案卡片，保持列表、滚动区域和拖拽坐标稳定，保留进退方向与弹簧动效。",
+                "继续使用同一实时目录、工作区和返回权限保护，不修改帧率验收标准。",
+                "百万条恢复在上版双系统低于600秒，极限退出与字符完整性问题仍未解决；本版待实际模拟器验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.46",
         updatedAt = "",

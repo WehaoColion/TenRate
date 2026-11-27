@@ -1,3 +1,4 @@
+// v3.0.2.47 - Bound directory navigation motion to the archive card, retain stationary list geometry.
 // v3.0.2.42 - Reduce archive glyph draw passes after measured slow draw commands.
 // v3.0.2.41 - Reuse directory hierarchy only for the same live data snapshot.
 // v3.0.2.32 - Move exclusion reads off Main and remove redundant directory row layers.
@@ -1122,10 +1123,10 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
     val workspace = LocalNoteMediaWorkspaceKey.current
     val active = LocalDocumentTransitionActive.current
-    // One live directory only. AnimatedContent previously kept two complete
-    // LazyColumns (including their shadows and layout callbacks) alive during
-    // each transition. Move the incoming surface in the draw layer instead:
-    // the animated fraction is never read by composition or measurement.
+    // One live directory only. Keep the scroll viewport, rows and drag
+    // coordinate system stationary. Animate only the incoming archive card
+    // in its own draw layer, not the full-screen directory render node.
+    // The animated fraction is never read by composition or measurement.
     // Navigation history is only sampled when the parent key changes. It is not
     // observable UI state; writing it after composition must not invalidate the
     // whole directory during the first animated frames.
@@ -1135,7 +1136,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
         else {
             val fromDepth = previousParent.get()?.let { index.breadcrumbs(it).size } ?: 0
             val toDepth = parentId?.let { index.breadcrumbs(it).size } ?: 0
-            if (toDepth < fromDepth) -0.16f else 0.16f
+            if (toDepth < fromDepth) -0.08f else 0.08f
         }
     }
     SideEffect { previousParent.set(parentId) }
@@ -1156,10 +1157,10 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
         }
         Box(Modifier.fillMaxSize().clipToBounds().knowledgeNavigationSurface()) {
             CompositionLocalProvider(LocalDocumentTransitionActive provides active) {
-                Box((if (active) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {})
-                    .graphicsLayer { translationX = size.width * translation.value }) {
+                Box(if (active) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {}) {
                     KnowledgeHierarchyBrowserFrame(index, parentId, busy, message, currentScope,
-                        onBack, onBrowse, onOpen, onRequest)
+                        navigationOffset = { translation.value },
+                        onBack = onBack, onBrowse = onBrowse, onOpen = onOpen, onRequest = onRequest)
                     if (!active) DocumentEditorInputBarrier()
                 }
             }
@@ -1171,6 +1172,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
 @Composable
 private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
     message: String, currentScope: () -> KnowledgeDirectoryOrderScope?,
+    navigationOffset: () -> Float,
     onBack: () -> Unit, onBrowse: (String?) -> Unit,
     onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
     val workspace = LocalNoteMediaWorkspaceKey.current
@@ -1453,6 +1455,11 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                 }
                 Spacer(Modifier.height(8.dp))
                 Surface(
+                    modifier = Modifier.graphicsLayer {
+                        // Only the archive card moves. The directory list and
+                        // its pointer/scroll coordinate space never translate.
+                        translationX = size.width * navigationOffset()
+                    },
                     shape = RoundedCornerShape(18.dp),
                     color = archive.paper,
                     border = BorderStroke(1.dp, archive.edge),

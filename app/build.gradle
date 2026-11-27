@@ -1,3 +1,4 @@
+// v3.0.2.47 - Bound navigation layer to archive card.
 // v3.0.2.46 - Disambiguate actual document exit from observation delays.
 // v3.0.2.45 - Require fresh Android accessibility evidence.
 // v3.0.2.44 - Split local schema safety from optional historical acceleration.
@@ -239,8 +240,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30048
-        versionName '3.0.2.46'
+        versionCode 30049
+        versionName '3.0.2.47'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
