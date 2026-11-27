@@ -196,6 +196,24 @@ mod tests {
     }
 
     #[test]
+    fn historical_japanese_knowledge_navigation_alias_is_recognized() {
+        // Exact visible label from the 3.0.2.49 API 35/36 screenshots and accessibility trees.
+        let fixture = r#"<node text="知識"/>"#;
+        assert_eq!(
+            android_probe_text::matched_navigation_label("ja-JP", "ナレッジ", fixture),
+            Some("知識")
+        );
+        assert_eq!(
+            android_probe_text::matched_navigation_label("en-US", "Knowledge", r#"<node text="Knowledge"/>"#),
+            Some("Knowledge")
+        );
+        assert_eq!(
+            android_probe_text::matched_navigation_label("fr-FR", "Connaissances", fixture),
+            None
+        );
+    }
+
+    #[test]
     fn current_repository_contract() { check_repository().unwrap(); }
 
     #[test]

@@ -1,3 +1,4 @@
+// v3.0.2.53 - Accept the Japanese navigation label shown by the signed emulator.
 // v3.0.2.52 - Fix locale probe regression test compilation under warnings-as-errors.
 // v3.0.2.51 - Scope simulator evidence to motion and locale-visible controls.
 // v3.0.2.50 - Bind release identity to the checked-out commit and synchronized index.
@@ -163,6 +164,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.53",
+        updatedAt = "",
+        summary = "修复日文知识导航标签模拟器验收误判",
+        sections = listOf(
+            AndroidUpdateSection("多语言验收", listOf(
+                "日文模拟器实际显示知識，与目录词条ナレッジ表达同一导航入口。",
+                "探针同时接受目录标准词条和已由真实无障碍树证明的日文等价标签，并保留实际匹配值。",
+                "通过签名前 Rust 回归测试回放 API 35 与 API 36 的历史失败，不放宽其他语言的精确匹配。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.52",
         updatedAt = "",

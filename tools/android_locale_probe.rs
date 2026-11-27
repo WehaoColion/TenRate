@@ -1,6 +1,7 @@
 //! Signed app locale switching, with actual screen evidence for each language.
 use std::{fs, path::Path, process::Command, thread::sleep, time::Duration};
 mod android_fresh_hierarchy;
+mod android_probe_text;
 const PACKAGE: &str = "com.ofairyo.gridtimer";
 const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 const CATALOG: &str = include_str!("../native/gridtimer_native/src/sourcegen/ui_locales/core_navigation.tsv");
@@ -19,14 +20,14 @@ fn run(root: &Path) -> Result<(),String> {
             let mut fields = line.split('\t');
             if fields.next()? == "知识" { fields.nth(index) } else { None }
         }).ok_or("missing expected knowledge label")?;
-        let mut found = false;
+        let mut matched: Option<String> = None;
         for _ in 0..12 {
             sleep(Duration::from_secs(2));
             let xml = android_fresh_hierarchy::fresh_hierarchy(cmd,"/sdcard/locale_acceptance.xml",3)?;
             fs::write(root.join(format!("{locale}.xml")), &xml).map_err(|e|e.to_string())?;
             // Check a real translated navigation label, not a locale setting alone.
-            if xml.contains(&format!("text=\"{expected}\"")) || xml.contains(&format!("content-desc=\"{expected}\"")) {
-                found = true;
+            if let Some(label) = android_probe_text::matched_navigation_label(locale, expected, &xml) {
+                matched = Some(label.to_owned());
                 break;
             }
         }
@@ -34,8 +35,8 @@ fn run(root: &Path) -> Result<(),String> {
         if png.status.success() && png.stdout.starts_with(b"\x89PNG") {
             fs::write(root.join(format!("{locale}.png")),png.stdout).map_err(|e|e.to_string())?;
         }
-        if !found { return Err(format!("{locale}: translated Knowledge navigation label {expected:?} not found")); }
-        println!("PASS {locale}: {expected}");
+        let matched = matched.ok_or_else(|| format!("{locale}: translated Knowledge navigation label {expected:?} not found"))?;
+        println!("PASS {locale}: {matched} (catalog: {expected})");
     }
     Ok(())
 }

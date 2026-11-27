@@ -1,3 +1,4 @@
+// v3.0.2.53 - Accept verified Japanese navigation label equivalence in emulator evidence.
 // v3.0.2.52 - Fix Rust regression contract warning in locale probe tests.
 // v3.0.2.51 - Scope Android emulator probes to visible feature behavior.
 // v3.0.2.50 - Enforce current checked-out release identity and index provenance.
@@ -245,8 +246,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30054
-        versionName '3.0.2.52'
+        versionCode 30055
+        versionName '3.0.2.53'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
