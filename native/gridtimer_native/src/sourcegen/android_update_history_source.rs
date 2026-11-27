@@ -1,3 +1,4 @@
+// v3.0.2.44 - Split local schema safety from optional historical acceleration.
 // v3.0.2.43 - Bound and measure SQLite migration resource hints.
 // v3.0.2.42 - Reduce archive glyph draw passes; preserve emulator gates.
 // v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
@@ -154,6 +155,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.44",
+        updatedAt = "",
+        summary = "重构历史索引迁移，保留完整校验与本地保存保护",
+        sections = listOf(
+            AndroidUpdateSection("启动恢复", listOf(
+                "数据库升级到v9；旧库建立只覆盖工作区和数据版本的轻量索引，不同步构建需要读取大量正文溢出页的完整头部索引。",
+                "旧库缺少完整索引时，非空历史仍走完整校验；本地写入必须检查未知和未来版本，已有完整索引不删除。",
+                "保留全部历史、原签名、50万和百万条压测、600秒恢复及8秒保存时限；旧库后续冷启动仍可能较慢，实际收益待模拟器验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.43",
         updatedAt = "",

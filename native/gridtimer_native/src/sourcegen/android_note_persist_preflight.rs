@@ -1,3 +1,4 @@
+// v3.0.2.44 - Split mandatory local schema protection from optional historical header acceleration.
 // v3.0.2.43 - Device-bounded SQLite migration hints; retain mandatory index and integrity gates.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
@@ -83,18 +84,18 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             // Full production generation has the v5 history codec already installed.
             if source.contains("const val DATABASE_VERSION = 5") {
             // Migrate existing v5 history storage in place, retaining all payloads.
-            replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 8")?;
+            replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 9")?;
             replace(&mut source, "        createHistoryEncodingSchema(database)\n    }\n\n    override fun onUpgrade",
                 "        createHistoryEncodingSchema(database)\n        createHistoryGuardIndexes(database)\n    }\n\n    override fun onUpgrade")?;
             replace(&mut source, "        if (oldVersion < 5) createHistoryEncodingSchema(database)",
-                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 8) {\n            createHistoryGuardIndexes(database)\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_schema_guard\")\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_digest_guard\")\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_envelope_guard\")\n        }")?;
+                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 9) {\n            createHistoryGuardIndexes(database)\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_schema_guard\")\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_digest_guard\")\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_envelope_guard\")\n        }")?;
             replace(&mut source, "    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {",
-                &format!("{}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{", HISTORY_GUARD_INDEXES.replace("__HISTORY_GUARD_FLAGS__", HISTORY_GUARD_FLAGS)))?;
+                &format!("{}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{", HISTORY_GUARD_INDEXES.replace("__HISTORY_GUARD_FLAGS__", HISTORY_GUARD_FLAGS).replace("__HISTORY_SCHEMA_COLUMNS__", HISTORY_SCHEMA_COLUMNS)))?;
             // The attached export and the active database use one index definition.
             // Otherwise a restored v8 database could skip onUpgrade and fail INDEXED BY.
             replace(&mut source,
                 "                database.execSQL(\"PRAGMA app_state_backup.user_version=$DATABASE_VERSION\")",
-                r####"                database.execSQL(historyGuardIndexSql("app_state_backup."))
+                r####"                database.execSQL(historySchemaGuardIndexSql("app_state_backup."))
                 database.execSQL("PRAGMA app_state_backup.user_version=$DATABASE_VERSION")"####)?;
             // Saves may bypass a legacy row's body, but must NEVER prune
             // unauthenticated history before an explicit recovery/verification.
@@ -157,6 +158,8 @@ const FLUSH_DIAGNOSTICS: &str = r####"                }
 // Keep the expression identical in index DDL and all seek predicates.
 const HISTORY_GUARD_FLAGS: &str = "(CASE WHEN sha256 IS NULL OR sha256 = '' THEN 1 ELSE 0 END + CASE WHEN envelope_sha256 IS NULL OR (envelope_sha256 = '' AND storage_encoding != 1) THEN 2 ELSE 0 END)";
 
+const HISTORY_SCHEMA_COLUMNS: &str = "workspace_key, schema_version";
+
 const HISTORY_GUARD_INDEXES: &str = r####"    // Bit 0: missing digest. Bit 1: unverified legacy envelope.
     // Each row occupies one compact index key, never stores the JSON payload.
     private val historyGuardFlags: String
@@ -166,62 +169,43 @@ const HISTORY_GUARD_INDEXES: &str = r####"    // Bit 0: missing digest. Bit 1: u
         "CREATE INDEX IF NOT EXISTS ${schemaPrefix}snapshot_history_header_guard " +
             "ON $HISTORY_TABLE(workspace_key, $historyGuardFlags, schema_version)"
 
+    // Schema lives before the large JSON field in the legacy record.
+    // Local-write protection needs only this covering index; do not read
+    // overflow payload pages just to build a second digest/envelope index.
+    private fun historySchemaGuardIndexSql(schemaPrefix: String = ""): String =
+        "CREATE INDEX IF NOT EXISTS ${schemaPrefix}snapshot_history_schema_v9 " +
+            "ON $HISTORY_TABLE(__HISTORY_SCHEMA_COLUMNS__)"
+
+    private fun hasHistoryHeaderGuard(database: SQLiteDatabase): Boolean =
+        database.rawQuery(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='snapshot_history_header_guard'",
+            null
+        ).use { it.moveToFirst() }
+
     private fun createHistoryGuardIndexes(database: SQLiteDatabase) {
         val started = android.os.SystemClock.elapsedRealtime()
         android.util.Log.i("StartupLatency", "historyGuard phase=header begin")
-        // These are connection-local performance hints, never integrity proofs.
-        // The earlier fixed 32 MiB cache still left the million-row index build
-        // at 597 seconds. Choose a bounded device-sensitive budget and request
-        // SQLite's optional read mapping/sorter parallelism. Every setting is
-        // read back: Android builds may silently cap or ignore these PRAGMAs.
-        fun pragmaLong(name: String): Long? = runCatching {
-            database.rawQuery("PRAGMA $name", null).use { cursor ->
-                if (cursor.moveToFirst()) cursor.getLong(0) else null
-            }
-        }.getOrNull()
-        fun setPragma(name: String, value: Long) {
-            runCatching { database.execSQL("PRAGMA $name = $value") }
-                .onFailure { android.util.Log.w("StartupLatency", "historyGuard hint unavailable: $name", it) }
-        }
-        val previous = pragmaLong("main.cache_size")
-        val pageSize = pragmaLong("main.page_size")
-        val previousMmap = pragmaLong("main.mmap_size")
-        val previousThreads = pragmaLong("threads")
-        val heapBudget = (Runtime.getRuntime().maxMemory() / 4L).coerceIn(32L * 1024L * 1024L, 128L * 1024L * 1024L)
-        val oldBytes = previous?.let { pages ->
-            if (pages < 0) -pages * 1024L else pageSize?.let { it * pages }
-        }
-        val tuneCache = previous != null && oldBytes != null && oldBytes < heapBudget
-        val tuneMmap = previousMmap != null && previousMmap < 2L * 1024L * 1024L * 1024L &&
-            android.os.Process.is64Bit()
-        val tuneThreads = previousThreads != null && previousThreads < 2L &&
-            Runtime.getRuntime().availableProcessors() >= 4
-        try {
-            if (tuneCache) setPragma("main.cache_size", -heapBudget / 1024L)
-            // A mapping reserves virtual address space, not a 2 GiB Java
-            // allocation; the OS pages it in on demand. Keep 32-bit devices
-            // unchanged. Unsupported mmap is harmless and explicitly logged.
-            if (tuneMmap) setPragma("main.mmap_size", 2L * 1024L * 1024L * 1024L)
-            if (tuneThreads) setPragma("threads", 2L)
-            android.util.Log.i("StartupLatency",
-                "historyGuard pageSize=$pageSize cacheBefore=$previous cacheActive=${pragmaLong("main.cache_size")} " +
-                "mmapBefore=$previousMmap mmapActive=${pragmaLong("main.mmap_size")} " +
-                "threadsBefore=$previousThreads threadsActive=${pragmaLong("threads")}")
-            // Mandatory, identical DDL: failure aborts the migration.
-            database.execSQL(historyGuardIndexSql())
-        } finally {
-            if (tuneThreads && previousThreads != null) setPragma("threads", previousThreads)
-            if (tuneMmap && previousMmap != null) setPragma("main.mmap_size", previousMmap)
-            if (tuneCache && previous != null) setPragma("main.cache_size", previous)
-            android.util.Log.i("StartupLatency", "historyGuard phase=header elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
-        }
+        // Every v9 database gets the cheap schema guard. Existing full guards
+        // remain intact; a fresh empty history can create one without a scan.
+        // Upgrading a nonempty legacy database must not build it synchronously.
+        database.execSQL(historySchemaGuardIndexSql())
+        val empty = database.rawQuery("SELECT 1 FROM $HISTORY_TABLE LIMIT 1", null)
+            .use { !it.moveToFirst() }
+        if (empty && !hasHistoryHeaderGuard(database)) database.execSQL(historyGuardIndexSql())
+        android.util.Log.i("StartupLatency",
+            "historyGuard fullIndex=${hasHistoryHeaderGuard(database)} schemaIndex=true")
+        android.util.Log.i("StartupLatency", "historyGuard phase=header elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
     }
+
 
 "####;
 
 const DATABASE_PREFLIGHT: &str = r####"    // The flag domain is exactly 0..3. IN permits an indexed seek for
     // each value, including null/future schema even when the digest is absent.
     private fun historyRequiresFullSaveVerification(workspaceKey: String): Boolean {
+        // Absence of an optional index is not evidence that history is safe.
+        // Force the established full verifier for any nonempty workspace.
+        if (!hasHistoryHeaderGuard(writableDatabase)) return hasHistoryForLocalWrite(workspaceKey)
         val unknownSchema = writableDatabase.rawQuery(
             "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
                 "WHERE workspace_key = ? AND $historyGuardFlags IN (0,1,2,3) AND schema_version IS NULL LIMIT 1",
@@ -246,14 +230,14 @@ const DATABASE_PREFLIGHT: &str = r####"    // The flag domain is exactly 0..3. I
         val database = writableDatabase
         check(database.inTransaction())
         val unknownSchema = database.rawQuery(
-            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
-                "WHERE workspace_key = ? AND $historyGuardFlags IN (0,1,2,3) AND schema_version IS NULL LIMIT 1",
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_v9 " +
+                "WHERE workspace_key = ? AND schema_version IS NULL LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
         if (unknownSchema) throw LocalSnapshotRecoveryException("A history snapshot has an unknown schema.")
         return database.rawQuery(
-            "SELECT MAX(schema_version) FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
-                "WHERE workspace_key = ? AND $historyGuardFlags IN (0,1,2,3) AND schema_version > ?",
+            "SELECT MAX(schema_version) FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_v9 " +
+                "WHERE workspace_key = ? AND schema_version > ?",
             arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
         ).use { cursor ->
             if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
@@ -261,18 +245,20 @@ const DATABASE_PREFLIGHT: &str = r####"    // The flag domain is exactly 0..3. I
     }
 
     fun hasHistoryForLocalWrite(workspaceKey: String): Boolean = writableDatabase.rawQuery(
-        "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard WHERE workspace_key = ? LIMIT 1",
+        "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_v9 WHERE workspace_key = ? LIMIT 1",
         arrayOf(workspaceKey)
     ).use { it.moveToFirst() }
 
     // Legacy rows remain recovery evidence. The codec changes the flag only
     // after authenticating, packing and reading back the original content.
-    private fun historyHasUncheckedLegacyRows(workspaceKey: String): Boolean =
-        writableDatabase.rawQuery(
+    private fun historyHasUncheckedLegacyRows(workspaceKey: String): Boolean {
+        if (!hasHistoryHeaderGuard(writableDatabase)) return hasHistoryForLocalWrite(workspaceKey)
+        return writableDatabase.rawQuery(
             "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
                 "WHERE workspace_key = ? AND $historyGuardFlags IN (2,3) LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
+    }
 
     fun <T> withVerifiedSavePreflight(
         workspaceKey: String,
@@ -714,6 +700,30 @@ mod generated_preflight_diagnostics_tests {
         assert_eq!(guarded_version, 17);
     }
 
+
+    #[test]
+    fn legacy_schema_guard_blocks_unknown_and_future_rows_without_digest_index() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE snapshot_history(workspace_key TEXT NOT NULL, schema_version INTEGER, app_data_json TEXT, sha256 TEXT, envelope_sha256 TEXT);").unwrap();
+        db.execute_batch(&format!("CREATE INDEX snapshot_history_schema_v9 ON snapshot_history({HISTORY_SCHEMA_COLUMNS});")).unwrap();
+        let highest = "SELECT MAX(schema_version) FROM snapshot_history INDEXED BY snapshot_history_schema_v9 WHERE workspace_key = ?1 AND schema_version > ?2";
+        let unknown = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_v9 WHERE workspace_key = ?1 AND schema_version IS NULL LIMIT 1";
+        db.execute_batch("INSERT INTO snapshot_history VALUES ('guest',15,'large legacy payload','',''),('other',99,'future','','');").unwrap();
+        let future = || db.query_row(highest, rusqlite::params!["guest",15], |r| r.get::<_, Option<i64>>(0)).unwrap();
+        assert_eq!(future(), None);
+        assert!(!db.prepare(unknown).unwrap().exists(["guest"]).unwrap());
+        db.execute_batch("INSERT INTO snapshot_history VALUES ('guest',17,'future','',''),('guest',NULL,'unknown','','');").unwrap();
+        assert_eq!(future(), Some(17));
+        assert!(db.prepare(unknown).unwrap().exists(["guest"]).unwrap());
+        // A future row with no digest is still a blocking schema, not an
+        // unverified record that can be ignored during the local write.
+        let plan: String = db.query_row(&format!("EXPLAIN QUERY PLAN {highest}"), rusqlite::params!["guest",15], |r| r.get(3)).unwrap();
+        assert!(plan.contains("COVERING INDEX snapshot_history_schema_v9"), "{plan}");
+        // Dropping the mandatory index must fail closed instead of scanning
+        // or granting a current-only write proof.
+        db.execute_batch("DROP INDEX snapshot_history_schema_v9").unwrap();
+        assert!(db.prepare(highest).is_err());
+    }
 
     #[test]
     fn slow_native_verification_records_only_bounded_metrics() {

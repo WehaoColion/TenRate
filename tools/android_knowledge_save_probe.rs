@@ -1,3 +1,4 @@
+// v3.0.2.44 - Require v9 schema guard and legacy recovery without eager payload header index.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
 // v3.0.2.34 - Consolidate historical safety guards without changing authentication.
@@ -494,10 +495,11 @@ fn persisted_after_restart(root: &Path, page_name: &str) -> Result<(usize, usize
         return Err(format!("History was unexpectedly removed during saving: {history}"));
     }
     let version = stopped_sqlite("PRAGMA user_version;")?;
-    let indexes = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='snapshot_history_header_guard';")?;
+    let schema_index = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='snapshot_history_schema_v9';")?;
+    let header_index = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='snapshot_history_header_guard';")?;
     let obsolete = stopped_sqlite("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('snapshot_history_schema_guard','snapshot_history_digest_guard','snapshot_history_envelope_guard');")?;
-    if version != "8" || indexes != "1" || obsolete != "0" {
-        return Err(format!("Database upgrade did not converge to the single header guard: version={version}, indexes={indexes}, obsolete={obsolete}"));
+    if version != "9" || schema_index != "1" || header_index != "0" || obsolete != "0" {
+        return Err(format!("Legacy upgrade must install the schema guard without an eager payload header index: version={version}, schema={schema_index}, header={header_index}, obsolete={obsolete}"));
     }
     let packed = packed_legacy_rows()?;
     if packed == 0 || packed >= HISTORY_ROWS {
@@ -628,7 +630,8 @@ fn seed_history(root: &Path) -> Result<(), String> {
         Ok(result.trim().to_owned())
     };
     write("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; \
-           DROP INDEX snapshot_history_header_guard; \
+           DROP INDEX IF EXISTS snapshot_history_header_guard; \
+           DROP INDEX IF EXISTS snapshot_history_schema_v9; \
            PRAGMA user_version=5;")?;
     // Identical payloads retain the original test's authenticated JSON and
     // independently computed SHA-256. Each row has its own SQLite identity.
