@@ -1,11 +1,12 @@
 //! Verify heading hierarchy from the pixels written by the Android share action.
-use super::{adb, command, evidence, key, seek, tap, tap_label, write_text};
+use super::{adb, command, evidence, key, seek, tap, tap_label, write_text, NO_JUMP_TEXT, PARAGRAPH_TEXT};
 use std::{fs, path::Path, process::Command, str, thread::sleep, time::Duration};
 
 const CACHE: &str = "/data/user/0/com.ofairyo.gridtimer/cache/note_shares";
 
 pub(super) fn export_and_check(out: &Path) -> Result<String, String> {
-    let paragraph = seek(&["StableParagraphNoJump"])?.ok_or("Reopened paragraph is missing")?;
+    let paragraph_marker = format!("{}{}", PARAGRAPH_TEXT.as_str(), NO_JUMP_TEXT.as_str());
+    let paragraph = seek(&[paragraph_marker.as_str()])?.ok_or("Reopened paragraph is missing")?;
     tap(&paragraph)?;
     key("KEYCODE_MOVE_END")?;
     // Use the same glyphs at every level so the visible ink heights are comparable.

@@ -1,3 +1,4 @@
+// v3.0.2.56 - Enforce compile-time IME-safe markers in document typing acceptance.
 // v3.0.2.55 - Isolate and compile Android emulator probes before signing.
 // v3.0.2.54 - Correct nested editor exit input in the save stress probe.
 // v3.0.2.53 - Accept the Japanese navigation label shown by the signed emulator.
@@ -166,6 +167,18 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.56",
+        updatedAt = "",
+        summary = "修复文档输入法自动纠错误判",
+        sections = listOf(
+            AndroidUpdateSection("文档输入验收", listOf(
+                "正文标题、段落、连续输入和退出保存标记统一使用编译期约束的数字文本，避免输入法自动插入空格或改写大小写。",
+                "文档输入探针与分享导出探针共用同一组正文标记，继续核验 Enter、区块位置、SQLite 保存回执及重启后的正文完整性。",
+                "新增 Rust 回归测试重放历史 CamelCase 和自然短语纠错，不放宽保存时限、历史负载或模拟器验收。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.55",
         updatedAt = "",

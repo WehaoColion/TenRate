@@ -1,3 +1,5 @@
+[Android 3.0.2.56 修复文档输入法自动纠错误判](android/release_notes_v3.0.2.56.md)。
+
 [Android 3.0.2.55 隔离并提前编译安卓模拟器验收探针](android/release_notes_v3.0.2.55.md)。
 
 [Android 3.0.2.54 修复子页退出保存压力测试的系统返回操作](android/release_notes_v3.0.2.54.md)。

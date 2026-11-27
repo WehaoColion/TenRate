@@ -51,4 +51,4 @@ APK 交付保持项目根目录、`APK/` 和 `app/build/outputs/apk/release/`；
 | 模拟器探针跨功能或语言硬编码造成假失败 | 动效探针只验证目录与帧耗时；AI 与多语言探针分别使用 android_ai_probe_text.rs 和 android_locale_probe_text.rs；android_repository_contract.rs 在签名前回放旧失败 | 3.0.2.49 的真实 API 35 证据中，动效探针被法律设置阻断；AI 截图显示 Enter a question 与 + Image；日文截图显示知識，而旧探针只接受目录词条ナレッジ |
 | 子页退出保存验收必须发送真实系统返回键 | android_save_exit_policy.rs 明确判定第二次 KEYCODE_BACK；android_repository_contract.rs 回放历史状态并验证探针调用 | 3.0.2.49 的 API 35/36 证据显示 back_sent=false，编辑器仍在屏幕上，8984ms 超时并未触发真正的退出保存 |
 | 独立 Rust 模拟器探针必须各自 warnings-as-errors 编译通过 | AI 与本地化文本辅助模块按职责拆分；签名前逐个以 rustc -D warnings 编译动效、AI、多语言、保存和正文输入探针 | 3.0.2.53 将互不相同的文本谓词放进一个私有模块，独立二进制只使用其中一部分，可能触发 dead_code 编译失败 |
-| 正文标题回归标记必须避开输入法自动纠正 | 使用带空格的自然短语并在无障碍树中验证标题仍存在；仓库契约锁定该标记 | API 36 真实截图显示标题为“# Stable heading”，旧探针却搜索“StableHeading”，把仍存在的标题误报为丢失 |
+| 正文标题与正文回归标记必须避开输入法自动纠正 | tools/android_ime_marker.rs 的 ImeStableMarker 在编译期只接受非空 ASCII 数字；文档输入与分享探针共用同一组标记；android_repository_contract.rs 重放旧 CamelCase 与自然短语误判 | API 36 真实截图显示标题“# Stable heading”仍然存在，但旧探针搜索“StableHeading”而误报丢失；API 36 基础和极限验收重复发生 |

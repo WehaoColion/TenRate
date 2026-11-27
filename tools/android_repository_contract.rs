@@ -29,7 +29,12 @@ const AI_PROBE_SOURCE: &str = include_str!("android_ai_conversation_probe.rs");
 #[cfg(test)]
 const LOCALE_PROBE_SOURCE: &str = include_str!("android_locale_probe.rs");
 #[cfg(test)]
+#[path = "android_ime_marker.rs"]
+mod android_ime_marker;
+#[cfg(test)]
 const DOCUMENT_TYPING_PROBE: &str = include_str!("android_document_typing_probe.rs");
+#[cfg(test)]
+const SHARE_PROBE: &str = include_str!("android_knowledge_share_probe.rs");
 #[cfg(test)]
 const MOTION_PROBE: &str = include_str!("android_knowledge_motion_probe.rs");
 #[cfg(test)]
@@ -245,10 +250,26 @@ mod tests {
     }
 
     #[test]
-    fn document_heading_marker_survives_ime_normalization() {
-        assert!(DOCUMENT_TYPING_PROBE.contains(r#"write_text("Stable heading")"#));
-        assert!(DOCUMENT_TYPING_PROBE.contains(r#"seek(&["Stable heading"])"#));
-        assert!(!DOCUMENT_TYPING_PROBE.contains("StableHeading"));
+    fn document_typing_uses_compile_time_ime_stable_markers() {
+        for historical in ["StableHeading", "Stable heading", "StableParagraph", "NoJump", "HotSave", "ExitSave"] {
+            assert!(!android_ime_marker::is_ime_stable_marker(historical));
+            assert!(!DOCUMENT_TYPING_PROBE.contains(historical));
+            assert!(!SHARE_PROBE.contains(historical));
+        }
+        for (name, call) in [
+            ("HEADING_TEXT", "write_marker(HEADING_TEXT)"),
+            ("PARAGRAPH_TEXT", "write_marker(PARAGRAPH_TEXT)"),
+            ("NO_JUMP_TEXT", "write_marker(NO_JUMP_TEXT)"),
+        ] {
+            assert!(DOCUMENT_TYPING_PROBE.contains(&format!(
+                "const {name}: ImeStableMarker = ImeStableMarker::new("
+            )));
+            assert!(DOCUMENT_TYPING_PROBE.contains(call));
+        }
+        assert!(DOCUMENT_TYPING_PROBE.contains("HOT_SAVE_TEXT.as_str()"));
+        assert!(DOCUMENT_TYPING_PROBE.contains("EXIT_SAVE_TEXT.as_str()"));
+        assert!(SHARE_PROBE.contains("PARAGRAPH_TEXT.as_str()"));
+        assert!(SHARE_PROBE.contains("NO_JUMP_TEXT.as_str()"));
     }
 
     #[test]
