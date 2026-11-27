@@ -1,3 +1,4 @@
+// v3.0.2.57 - Remove knowledge dock elevation from the static render profile.
 // v3.0.2.15 - Bound knowledge-screen background and dock compositing cost.
 // v2.22.30 - Remove UI-thread data work and preserve unchanged UI domains.
 // Keep the v2.22.25 Android behavior while moving only hot work
@@ -84,7 +85,7 @@ fn render_screen(base: &str) -> Result<String, String> {
     replace_once(
         &mut rendered,
         "        shadowElevation = 20.dp,\n        border = BorderStroke(1.dp, MaterialTheme.colorScheme.glassStroke)",
-        "        shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 2.dp else 20.dp,\n        border = BorderStroke(1.dp, MaterialTheme.colorScheme.glassStroke)",
+        "        shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 0.dp else 20.dp,\n        border = BorderStroke(1.dp, MaterialTheme.colorScheme.glassStroke)",
         "knowledge dock shadow footprint",
     )?;
     replace_once(

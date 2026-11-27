@@ -18,6 +18,8 @@ const WORKFLOW: &str = include_str!("../.github/workflows/android-release.yml");
 const HISTORY: &str = include_str!("../native/gridtimer_native/src/sourcegen/android_update_history_source.rs");
 const RELEASE_INDEX: &str = include_str!("../documents/releases/README.md");
 const CANDIDATE_PUBLISHER: &str = include_str!("android_candidate_publish.rs");
+const HIERARCHY_UI_SOURCE: &str = include_str!("../native/gridtimer_native/src/sourcegen/android_knowledge_hierarchy_ui.rs");
+const PERFORMANCE_OVERRIDE_SOURCE: &str = include_str!("../native/gridtimer_native/src/sourcegen/android_performance_override.rs");
 #[cfg(test)]
 #[path = "android_ai_probe_text.rs"]
 mod android_ai_probe_text;
@@ -129,6 +131,54 @@ fn require_stress_profiles(yaml: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn require_knowledge_motion_architecture(source: &str) -> Result<(), String> {
+    if source.contains("AnimatedContent(")
+        || source.contains("navigationOffset: () -> Float")
+        || source.contains("translationX = size.width * navigationOffset()")
+    {
+        return Err("Knowledge directory motion must be owned by KnowledgeDirectoryMotion and applied only to the bounded archive card; never animate the full-screen LazyColumn".into());
+    }
+    let marker = "pub const CONTENTS: &str = r####\"";
+    let start = source.find(marker).map(|index| index + marker.len())
+        .ok_or("Knowledge hierarchy source has no Rust-owned CONTENTS; keep the motion contract in the generator")?;
+    let end = source[start..].find("\"####;")
+        .map(|index| start + index)
+        .ok_or("Knowledge hierarchy CONTENTS terminator is missing")?;
+    let contents = &source[start..end];
+    for required in [
+        "private class KnowledgeDirectoryMotion(",
+        "val layer: Modifier = Modifier.graphicsLayer",
+        "compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen",
+        "translation.animateTo(0f, spring(",
+        "motionLayer: Modifier",
+        "motionLayer = motion.layer",
+        "modifier = motionLayer",
+    ] {
+        if !contents.contains(required) {
+            return Err(format!("Knowledge directory motion contract missing {required}; use the single offscreen KnowledgeDirectoryMotion layer on the archive card"));
+        }
+    }
+    let viewport_clips = contents.matches(".clipToBounds()").count();
+    if viewport_clips != 1 {
+        return Err(format!("Knowledge directory must retain exactly one outer viewport clip, found {viewport_clips}; remove the redundant inner full-screen clip"));
+    }
+    Ok(())
+}
+
+fn require_knowledge_render_profile(source: &str) -> Result<(), String> {
+    for required in [
+        "shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 0.dp else 20.dp",
+        "shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 0.dp else indicatorLift",
+        "selectedDestination != HomeNavigationDestination.NOTEBOOK",
+        "livePulse = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) null else runningPulse",
+    ] {
+        if !source.contains(required) {
+            return Err(format!("Knowledge destination render profile is expensive: missing {required}; keep the knowledge dock at zero elevation with no ambient backdrop or live pulse"));
+        }
+    }
+    Ok(())
+}
+
 fn check_repository() -> Result<(), String> {
     ANDROID_RELEASE.require_history_head(HISTORY)?;
     require_release_index_head(RELEASE_INDEX, ANDROID_APP_VERSION)?;
@@ -138,6 +188,8 @@ fn check_repository() -> Result<(), String> {
     require_core_job(WORKFLOW, "ai-conversation-emulator", true)?;
     require_core_job(WORKFLOW, "localization-emulator", true)?;
     require_stress_profiles(WORKFLOW)?;
+    require_knowledge_motion_architecture(HIERARCHY_UI_SOURCE)?;
+    require_knowledge_render_profile(PERFORMANCE_OVERRIDE_SOURCE)?;
     let _ = job_lines(WORKFLOW, "publish-signed-test-candidate")?;
     for old in ["publish-build37-download", "publish-signed-motion-test-candidate", "publish-knowledge-save-candidate", "publish-candidate"] {
         if job_lines(WORKFLOW, old).is_ok() {
@@ -286,6 +338,42 @@ mod tests {
         assert_eq!((sample.second_h1, sample.second_h2, sample.second_body), (37, 30, 24));
         assert!(SHARE_PROBE.contains("select_heading_ink_sequence(&heights)"));
         assert!(!SHARE_PROBE.contains("heights.get(4..10)"));
+    }
+
+    #[test]
+    fn historical_full_screen_directory_animation_is_rejected() {
+        // The pre-d21b5bfe source kept two complete LazyColumns inside
+        // AnimatedContent. That commit removed the duplicate live directory.
+        let historical = r#"AnimatedContent(targetState = parentId,
+            modifier = Modifier.fillMaxSize().clipToBounds())
+            navigationOffset: () -> Float
+            translationX = size.width * navigationOffset()"#;
+        let error = require_knowledge_motion_architecture(historical).unwrap_err();
+        assert!(error.contains("KnowledgeDirectoryMotion"));
+        assert!(require_knowledge_motion_architecture(HIERARCHY_UI_SOURCE).is_ok());
+    }
+
+    #[test]
+    fn visual_style_changes_do_not_break_motion_architecture() {
+        let styled = HIERARCHY_UI_SOURCE.replace("archive.paper", "archive.inline");
+        assert!(require_knowledge_motion_architecture(&styled).is_ok());
+    }
+
+    #[test]
+    fn removing_the_offscreen_layer_is_rejected_before_signing() {
+        let mutated = HIERARCHY_UI_SOURCE.replace(
+            "compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen\n", "");
+        let error = require_knowledge_motion_architecture(&mutated).unwrap_err();
+        assert!(error.contains("CompositingStrategy.Offscreen"));
+    }
+
+    #[test]
+    fn knowledge_dock_shadow_regression_is_rejected() {
+        assert!(require_knowledge_render_profile(PERFORMANCE_OVERRIDE_SOURCE).is_ok());
+        let historical = PERFORMANCE_OVERRIDE_SOURCE.replace(
+            "shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 0.dp else 20.dp",
+            "shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 2.dp else 20.dp");
+        assert!(require_knowledge_render_profile(&historical).unwrap_err().contains("zero elevation"));
     }
 
     #[test]

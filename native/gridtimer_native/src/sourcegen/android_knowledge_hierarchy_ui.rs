@@ -1,3 +1,4 @@
+// v3.0.2.57 - Cache directory motion in one bounded offscreen archive-card layer.
 // v3.0.2.47 - Bound directory navigation motion to the archive card, retain stationary list geometry.
 // v3.0.2.42 - Reduce archive glyph draw passes after measured slow draw commands.
 // v3.0.2.41 - Reuse directory hierarchy only for the same live data snapshot.
@@ -1115,6 +1116,30 @@ private data class KnowledgeDirectoryDragVisual(
     val heightPx: Int
 )
 
+private class KnowledgeDirectoryMotion(initialOffset: Float) {
+    private val translation = Animatable(initialOffset)
+
+    // The archive card is static while it travels. Cache this bounded surface
+    // once, then composite only its texture while the directory list stays still.
+    val layer: Modifier = Modifier.graphicsLayer {
+        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+        translationX = size.width * translation.value
+    }
+
+    suspend fun settle(active: Boolean) {
+        if (!active) translation.snapTo(0f)
+        else if (translation.value != 0f) {
+            // Wait for the new list to complete its first layout before moving the cached card.
+            withFrameNanos { }
+            translation.animateTo(0f, spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium,
+                visibilityThreshold = 0.001f
+            ))
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
@@ -1141,25 +1166,13 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     }
     SideEffect { previousParent.set(parentId) }
     key(workspace, parentId) {
-        val translation = remember { Animatable(initialOffset) }
-        LaunchedEffect(translation, active) {
-            if (!active) translation.snapTo(0f)
-            else if (initialOffset != 0f) {
-                // Let the new LazyColumn complete its initial composition and
-                // layout before advancing the layer animation clock.
-                withFrameNanos { }
-                translation.animateTo(0f, spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness = Spring.StiffnessMedium,
-                    visibilityThreshold = 0.001f
-                ))
-            }
-        }
+        val motion = remember(initialOffset) { KnowledgeDirectoryMotion(initialOffset) }
+        LaunchedEffect(motion, active) { motion.settle(active) }
         Box(Modifier.fillMaxSize().clipToBounds().knowledgeNavigationSurface()) {
             CompositionLocalProvider(LocalDocumentTransitionActive provides active) {
                 Box(if (active) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {}) {
                     KnowledgeHierarchyBrowserFrame(index, parentId, busy, message, currentScope,
-                        navigationOffset = { translation.value },
+                        motionLayer = motion.layer,
                         onBack = onBack, onBrowse = onBrowse, onOpen = onOpen, onRequest = onRequest)
                     if (!active) DocumentEditorInputBarrier()
                 }
@@ -1172,7 +1185,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
 @Composable
 private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
     message: String, currentScope: () -> KnowledgeDirectoryOrderScope?,
-    navigationOffset: () -> Float,
+    motionLayer: Modifier,
     onBack: () -> Unit, onBrowse: (String?) -> Unit,
     onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
     val workspace = LocalNoteMediaWorkspaceKey.current
@@ -1396,7 +1409,7 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
     val canSort = active && !busy && !saving && loaded && !loading && directoryScope.canReorder && displayedIds.size > 1
     val navigationEnabled = active && !busy && !saving && dragging == null
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp)
-        .clipToBounds().onGloballyPositioned { viewport.set(it) }
+        .onGloballyPositioned { viewport.set(it) }
         .pointerInput(workspace, parentId, callbacksAlive) {
             // The viewport owns the pointer: recycling an offscreen dragged row cannot end the gesture.
             awaitEachGesture {
@@ -1455,11 +1468,7 @@ private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: 
                 }
                 Spacer(Modifier.height(8.dp))
                 Surface(
-                    modifier = Modifier.graphicsLayer {
-                        // Only the archive card moves. The directory list and
-                        // its pointer/scroll coordinate space never translate.
-                        translationX = size.width * navigationOffset()
-                    },
+                    modifier = motionLayer,
                     shape = RoundedCornerShape(18.dp),
                     color = archive.paper,
                     border = BorderStroke(1.dp, archive.edge),
