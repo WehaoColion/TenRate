@@ -32,6 +32,9 @@ const LOCALE_PROBE_SOURCE: &str = include_str!("android_locale_probe.rs");
 #[path = "android_ime_marker.rs"]
 mod android_ime_marker;
 #[cfg(test)]
+#[path = "android_heading_ink.rs"]
+mod android_heading_ink;
+#[cfg(test)]
 const DOCUMENT_TYPING_PROBE: &str = include_str!("android_document_typing_probe.rs");
 #[cfg(test)]
 const SHARE_PROBE: &str = include_str!("android_knowledge_share_probe.rs");
@@ -270,6 +273,19 @@ mod tests {
         assert!(DOCUMENT_TYPING_PROBE.contains("EXIT_SAVE_TEXT.as_str()"));
         assert!(SHARE_PROBE.contains("PARAGRAPH_TEXT.as_str()"));
         assert!(SHARE_PROBE.contains("NO_JUMP_TEXT.as_str()"));
+    }
+
+    #[test]
+    fn historical_wrapped_share_paragraph_does_not_shift_heading_detection() {
+        // API 35/36 artifacts 15234674079 and 15235331537 contain the same
+        // 12 ink bands. The original paragraph wraps to two lines, so the old
+        // fixed get(4..10) offset selected the paragraph tail as the first H1.
+        let bands = [58, 25, 37, 24, 24, 37, 30, 24, 37, 30, 24, 22];
+        let sample = android_heading_ink::select_heading_ink_sequence(&bands).unwrap();
+        assert_eq!((sample.first_h1, sample.first_h2, sample.first_body), (37, 30, 24));
+        assert_eq!((sample.second_h1, sample.second_h2, sample.second_body), (37, 30, 24));
+        assert!(SHARE_PROBE.contains("select_heading_ink_sequence(&heights)"));
+        assert!(!SHARE_PROBE.contains("heights.get(4..10)"));
     }
 
     #[test]
