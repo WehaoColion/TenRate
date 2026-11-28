@@ -1,3 +1,4 @@
+// v3.0.2.65 - Exact body equality and explicit exit observation timing; preserve original deadline.
 // v3.0.2.59 - Measure actual storage growth with a fixed-length body and durable receipts.
 // v3.0.2.46 - Disambiguate toolbar exit, app receipt and rendered directory in million-row probe.
 // v3.0.2.45 - Require fresh, complete accessibility evidence.
@@ -299,10 +300,24 @@ fn has_save_state(xml: &str, state: &str) -> bool {
     xml.split("<node ").any(|node| attr(node.split('>').next().unwrap_or(""), "resource-id").ends_with(state))
 }
 fn nested_body_has(marker: &str) -> Result<bool, String> {
+    // Full-body equality, not a substring: an extra, duplicated or reordered
+    // character is a failure too. The authored stress body is one text block.
+    if marker.is_empty() || !marker.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("Expected a nonempty ASCII numeric body receipt".into());
+    }
     let count = live_sqlite(&format!(
-        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND EXISTS (SELECT 1 FROM json_each(n.value,'$.document.blocks') b WHERE instr(json_extract(b.value,'$.text'),'{marker}')>0);"
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND (SELECT count(*) FROM json_each(n.value,'$.document.blocks'))=1 AND EXISTS (SELECT 1 FROM json_each(n.value,'$.document.blocks') b WHERE json_extract(b.value,'$.text')='{marker}');"
     ))?;
     Ok(count.trim() == "1")
+}
+fn exact_nested_body_visible(xml: &str, expected: &str) -> bool {
+    let length = expected.encode_utf16().count();
+    xml.split("<node ").skip(1).filter_map(|entry| entry.split('>').next()).any(|node| {
+        attr(node, "class").ends_with("EditText")
+            && attr(node, "resource-id").contains("document_body_cursor_")
+            && attr(node, "resource-id").ends_with(&format!("_{length}_committed"))
+            && attr(node, "text") == expected
+    })
 }
 // A real text-field selection receipt is independent of saved-state receipts.
 // Do not start a timed append while the IME still owns a stale selection.
@@ -374,7 +389,7 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
         let mut saved = false;
         while started.elapsed().as_millis() < EDIT_BUDGET_MS {
             let ui = dump()?;
-            if ui.contains(&expected) && has_save_state(&ui, "document_save_local_saved")
+            if exact_nested_body_visible(&ui, &expected) && has_save_state(&ui, "document_save_local_saved")
                 && nested_body_has(&expected)? {
                 saved = true;
                 break;
@@ -427,9 +442,11 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
     sleep(Duration::from_millis(250));
     let mut exited = false;
     let mut back_sent = false;
-    let mut observations = String::from("elapsed_ms,parent,editor,back_sent\n");
+    let mut observations = String::from("elapsed_ms,parent,editor,back_sent,ui_read_ms,sqlite_read_ms\n");
     while started.elapsed().as_millis() < EDIT_BUDGET_MS {
+        let ui_started = std::time::Instant::now();
         let ui = dump()?;
+        let ui_read_ms = ui_started.elapsed().as_millis();
         let is_parent = prove_directory(&ui, Some(NESTED_FOLDER));
         // The first system Back dismissed the IME; the second system Back
         // exits the editor and starts the durable page-exit receipt.
@@ -439,9 +456,12 @@ fn edit_nested_page(root: &Path) -> Result<(), String> {
             cmd(&["shell", "input", "keyevent", "4"])?;
             back_sent = true;
         }
-        observations.push_str(&format!("{},{is_parent},{editor},{back_sent}\n", started.elapsed().as_millis()));
-        if is_parent &&
-            !has_save_state(&ui, "document_save_saving") && nested_body_has(&format!("{}{}{EDIT_EXIT_MARKER}", expected, burst.concat()))? {
+        let sql_started = std::time::Instant::now();
+        let verified = is_parent && !has_save_state(&ui, "document_save_saving")
+            && nested_body_has(&format!("{}{}{EDIT_EXIT_MARKER}", expected, burst.concat()))?;
+        let sql_read_ms = sql_started.elapsed().as_millis();
+        observations.push_str(&format!("{},{is_parent},{editor},{back_sent},{ui_read_ms},{sql_read_ms}\n", started.elapsed().as_millis()));
+        if verified {
             exited = true;
             break;
         }

@@ -1,3 +1,4 @@
+// v3.0.2.65 - Invalidate stale save receipts in the text input event and verify live captured content.
 // v3.0.2.38 - Compose component-local hook and production source-generation regression.
 // v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
 // v3.0.2.13 - Retain exact autosave receipts for the full-entry exit guard.
@@ -229,9 +230,15 @@ private fun Modifier.documentSaveReceipt(state: DocumentEditorSaveState): Modifi
         r#"        val cached = lastTextIndex[0]
         val index = if (blocks.getOrNull(cached)?.let { it.id == blockId && it.type == NoteBlockType.TEXT } == true) cached
             else blocks.indexOfFirst { it.id == blockId && it.type == NoteBlockType.TEXT }.also { lastTextIndex[0] = it }"#)?;
+    // An IME edit and a previous asynchronous save callback can arrive
+    // before the next composition/effect. Invalidate the old receipt in the
+    // input event itself, not only when the debounce effect starts.
     replace_between(source, "    fun updateTextBlock(", "    fun insertBlockAfterActive(",
         "        blocks = nextBlocks",
-        "        reconciledBlocks.compareAndSet(blocks, nextBlocks)\n        blocks = nextBlocks")?;
+        "        saveRequestGeneration += 1L\n        saveState = DocumentEditorSaveState.SAVING\n        reconciledBlocks.compareAndSet(blocks, nextBlocks)\n        blocks = nextBlocks")?;
+    replace_between(source, "    fun recordTitleChange(", "    fun updateBlock(",
+        "        titleText = nextTitle",
+        "        saveRequestGeneration += 1L\n        saveState = DocumentEditorSaveState.SAVING\n        titleText = nextTitle")?;
     Ok(())
 }
 
@@ -249,8 +256,14 @@ const AUTOSAVE_AND_PREVIEW: &str = r#"        val entry = editorSession.initialC
         if (hierarchyHandedOff || isSavingDraft || pendingRevisionRestore != null ||
             generation != saveRequestGeneration || viewModel.currentWorkspaceKey() != editorWorkspaceKey) return@LaunchedEffect
         val base = latestNote
-        val document = base.document.copy(markdownEnabled = markdownEnabled, blocks = blocks.ifEmpty { listOf(NoteBlock(type = NoteBlockType.TEXT)) })
+        val document = base.document.copy(markdownEnabled = markdownEnabled, blocks = materializedTextBlocks().ifEmpty { listOf(NoteBlock(type = NoteBlockType.TEXT)) })
         val draft = base.copy(title = titleText, document = document, accentSeed = accentSeed, pinned = pinned)
+        // A generation alone cannot prove the live draft still matches the
+        // captured entry (e.g. another UI mutation before its effect runs).
+        fun capturedContentStillCurrent(): Boolean =
+            titleText == draft.title && accentSeed == draft.accentSeed &&
+                pinned == draft.pinned && markdownEnabled == document.markdownEnabled &&
+                folderId == base.folderId && materializedTextBlocks() == document.blocks
         val nextNote = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             draft.copy(content = document.toStorageContent())
         }
@@ -260,6 +273,7 @@ const AUTOSAVE_AND_PREVIEW: &str = r#"        val entry = editorSession.initialC
             onDurableEpoch = { epoch ->
                 if (editorSaveCallbackActive.get() && !isSavingDraft && !hierarchyHandedOff &&
                     pendingRevisionRestore == null && generation == saveRequestGeneration &&
+                    capturedContentStillCurrent() &&
                     viewModel.currentWorkspaceKey() == editorWorkspaceKey &&
                     editorSession.exitSaveGate.recordAutosaveReceipt(epoch, viewModel.noteMutationEpoch())) {
                     editorSession.lastDurableExitDraft.value = nextNote
@@ -267,7 +281,7 @@ const AUTOSAVE_AND_PREVIEW: &str = r#"        val entry = editorSession.initialC
             }
         ) { saved ->
             if (editorSaveCallbackActive.get() && viewModel.currentWorkspaceKey() == editorWorkspaceKey &&
-                generation == saveRequestGeneration) {
+                generation == saveRequestGeneration && capturedContentStillCurrent()) {
                 saveState = if (saved) DocumentEditorSaveState.LOCAL_SAVED else DocumentEditorSaveState.FAILED
             }
         }

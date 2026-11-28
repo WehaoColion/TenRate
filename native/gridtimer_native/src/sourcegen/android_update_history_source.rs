@@ -1,3 +1,4 @@
+// v3.0.2.65 - Bind document save receipt to live captured content.
 // v3.0.2.64 - Android native chunk plan and translation-only render layer.
 // v3.0.2.63 - Require 100000-row exact history recovery.
 // v3.0.2.62 - Real storage maintenance progress and outcomes.
@@ -175,6 +176,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.65",
+        updatedAt = "",
+        summary = "防止旧保存回执覆盖新输入并加强正文验收",
+        sections = listOf(AndroidUpdateSection("知识保存", listOf(
+            "正文和标题变更在输入事件内使旧保存回执失效；自动保存回执再次比较实际编辑内容，避免旧回执显示已保存。",
+            "真实模拟器正文验收改用完整正文相等校验，记录退出时无障碍读取和SQLite读回各自耗时；仍保留8秒门槛。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.64",
         updatedAt = "",

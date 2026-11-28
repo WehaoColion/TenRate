@@ -1,3 +1,4 @@
+// v3.0.2.65 - Invalidate stale document receipts and enforce exact stress body verification.
 // v3.0.2.64 - Authenticate Android chunk plans and avoid forced archive-card offscreen rendering.
 // v3.0.2.63 - Extend physical history migration recovery acceptance to 100000 rows.
 // v3.0.2.62 - Show storage maintenance progress and fix SQLite build compatibility.
@@ -257,8 +258,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30066
-        versionName '3.0.2.64'
+        versionCode 30067
+        versionName '3.0.2.65'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'
