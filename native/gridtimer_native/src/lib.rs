@@ -34,6 +34,8 @@ pub mod android_canvas;
 mod android_legal_session;
 pub mod android_snapshot_codec;
 pub mod android_history_chunks;
+#[cfg(not(target_os = "android"))]
+pub mod android_history_sqlite;
 pub mod android_snapshot_verifier;
 pub mod app_data;
 #[cfg(not(target_os = "android"))]

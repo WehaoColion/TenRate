@@ -1,3 +1,4 @@
+// v3.0.2.61 - Transactional SQLite history migration contract.
 // v3.0.2.60 - Lossless history chunk codec foundation and expired share cache cleanup.
 // v3.0.2.59 - Resume verified history packing and measure fixed-length storage growth.
 // v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
@@ -171,6 +172,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.61",
+        updatedAt = "",
+        summary = "新增真实SQLite历史迁移与物理回收契约测试",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "按工作区隔离分块，旧行独立校验与回读成功后才在同一事务发布；失败回滚，重复迁移不重复写入。",
+            "2500条完整旧历史逐条迁移、物理回收、重启逐条验证；当前为桌面SQLite契约，尚未接入Android生产数据库。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.60",
         updatedAt = "",
