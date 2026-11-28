@@ -1,3 +1,5 @@
+[Android 3.0.2.60 新增无损历史分块编码基础及过期分享缓存清理](android/release_notes_v3.0.2.60.md)。
+
 [Android 3.0.2.59 修复历史压缩任务提前退出并加入独立存储增长验收](android/release_notes_v3.0.2.59.md)。
 
 [Android 3.0.2.58 修复签名构建前的独立模拟器探针编译阻塞](android/release_notes_v3.0.2.58.md)。

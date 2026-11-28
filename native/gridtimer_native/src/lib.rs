@@ -33,6 +33,7 @@ pub mod android_canvas;
 #[cfg(target_os = "android")]
 mod android_legal_session;
 pub mod android_snapshot_codec;
+pub mod android_history_chunks;
 pub mod android_snapshot_verifier;
 pub mod app_data;
 #[cfg(not(target_os = "android"))]

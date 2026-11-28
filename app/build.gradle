@@ -1,3 +1,4 @@
+// v3.0.2.60 - Introduce lossless history chunk codec and expire regenerable share cache.
 // v3.0.2.59 - Resume verified history packing and measure fixed-length storage growth.
 // v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
 // v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
@@ -252,8 +253,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30061
-        versionName '3.0.2.59'
+        versionCode 30062
+        versionName '3.0.2.60'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

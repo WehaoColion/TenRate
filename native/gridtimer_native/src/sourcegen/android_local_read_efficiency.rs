@@ -1,3 +1,4 @@
+// v3.0.2.60 - Reclaim expired regenerable note share cache without touching user files.
 // v3.0.2.59 - Keep verified history packing alive after workspace switches and transient failures.
 // v3.0.2.49 - Explicit physical database reclamation without deleting recovery rows.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
@@ -33,6 +34,9 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                     .find("    fun verifiedAttachmentFile(")
                     .ok_or("missing media verifier")?;
             source.replace_range(start..end, MEDIA_HYDRATION);
+            replace(&mut source,
+                "    fun shareDirectory(context: Context): File {\n        return File(context.cacheDir, NOTE_SHARE_DIR).apply { mkdirs() }\n    }",
+                SHARE_CACHE_POLICY)?;
             source.push_str(MEDIA_POLICY);
         }
         REPOSITORY => {
@@ -172,6 +176,34 @@ const MEDIA_SCAN_BUDGET: &str = r####"    fun automaticMediaScanWithinBudget(): 
 
 "####;
 
+// Restrict expiration to regenerable note share copies. Never traverse
+// subdirectories, capture/import staging, permanent exports or media roots.
+const SHARE_CACHE_POLICY: &str = r####"    fun shareDirectory(context: Context): File {
+        val root = File(context.cacheDir, NOTE_SHARE_DIR).apply { mkdirs() }
+        reclaimExpiredShareCache(context)
+        return root
+    }
+
+    fun reclaimExpiredShareCache(context: Context): Long {
+        val cache = context.cacheDir.canonicalFile
+        val root = File(cache, NOTE_SHARE_DIR)
+        if (!root.isDirectory || root.canonicalFile != root || root.parentFile != cache) return 0L
+        val cutoff = System.currentTimeMillis() - 7L * 24L * 60L * 60L * 1_000L
+        val name = Regex("note_share_[0-9]+\\.(png|html)")
+        var reclaimed = 0L
+        for (entry in root.listFiles().orEmpty()) {
+            // Unknown times, links, directories and recent outputs are retained.
+            if (!name.matches(entry.name) || !entry.isFile ||
+                entry.canonicalFile != entry || entry.parentFile != root) continue
+            val modified = entry.lastModified()
+            if (modified <= 0L || modified >= cutoff) continue
+            val bytes = entry.length()
+            if (entry.delete()) reclaimed += bytes
+        }
+        if (reclaimed > 0L) android.util.Log.i("StorageReclaim", "expiredNoteShareBytes=$reclaimed")
+        return reclaimed
+    }"####;
+
 const MEDIA_HYDRATION: &str = r####"    fun resolvedAttachmentHashes(
         context: Context,
         workspaceKey: String,
@@ -219,6 +251,11 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
         // yields, uses tryLock, and packs at most one row. Restart resumes via the
         // persisted encoding queue; no current/history row is discarded.
         delay(2_000L)
+        // Cache copies are not part of the SQLite writer transaction.
+        withContext(Dispatchers.IO) {
+            runCatching { NoteMediaStore.reclaimExpiredShareCache(appContext) }
+                .onFailure { Log.w("StorageReclaim", "Expired note share cache cleanup deferred", it) }
+        }
         var cursorWorkspace = activeWorkspaceKey
         var afterId = 0L
         var completedBatches = 0L
@@ -636,6 +673,9 @@ mod tests {
             .unwrap()
             .contents;
         let source = render(MEDIA, base).unwrap();
+        // The share-cache policy is deliberately outside media hydration.
+        let base_without_old_share = base.replace("    fun shareDirectory(context: Context): File {\n        return File(context.cacheDir, NOTE_SHARE_DIR).apply { mkdirs() }\n    }", SHARE_CACHE_POLICY);
+        let base = base_without_old_share.as_str();
         assert_eq!(
             base.split("    fun resolvedAttachmentHashes(").next(),
             source.split("    fun resolvedAttachmentHashes(").next()

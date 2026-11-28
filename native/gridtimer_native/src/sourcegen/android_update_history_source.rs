@@ -1,3 +1,4 @@
+// v3.0.2.60 - Lossless history chunk codec foundation and expired share cache cleanup.
 // v3.0.2.59 - Resume verified history packing and measure fixed-length storage growth.
 // v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
 // v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
@@ -170,6 +171,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.60",
+        updatedAt = "",
+        summary = "新增无损历史分块编码基础及过期分享缓存清理",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "只回收超过七天、可重新生成的知识页分享PNG/HTML缓存；不触及正文、附件、拍摄暂存或永久导出。",
+            "新增内容寻址分块编码、逐块与全文SHA-256校验、2500轮固定正文历史回放测试；尚未接入SQLite生产迁移，不宣称旧库已缩小。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.59",
         updatedAt = "",
