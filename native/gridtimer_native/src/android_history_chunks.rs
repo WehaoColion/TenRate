@@ -1,3 +1,4 @@
+// v3.0.2.64 - Bound and authenticate the Android native history chunk write plan.
 //! Lossless, bounded content-addressed building blocks for Android recovery history.
 //!
 //! This is a codec, not a database migration. Its caller must first verify the
@@ -126,6 +127,66 @@ pub fn decode(
     Ok(out)
 }
 
+/// Android's storage adapter receives only a bounded, ordered write plan:
+/// little-endian raw length, raw SHA-256, count, then (u16 length, SHA-256)
+/// for each chunk. Payload bytes remain in the caller's buffer. No record is
+/// authorized to migrate unless its original digest AND envelope verify.
+pub fn authenticated_chunk_plan(
+    raw: &[u8],
+    prefix: &str,
+    expected: &str,
+    envelope: &str,
+    supported: i32,
+) -> Option<Vec<u8>> {
+    if raw.is_empty() || raw.len() > MAX_RAW_BYTES || envelope.len() != 64
+        || crate::android_snapshot_verifier::snapshot_table(prefix, supported) != Some("snapshot_history")
+        || !crate::android_snapshot_verifier::verify_snapshot(raw, prefix, expected, envelope, supported)
+    {
+        return None;
+    }
+    let mut entries = Vec::new();
+    let manifest = encode(raw, |id, part| {
+        entries.extend_from_slice(&(part.len() as u16).to_le_bytes());
+        entries.extend_from_slice(&id);
+        Ok(())
+    }).ok()?;
+    let mut plan = Vec::with_capacity(40 + entries.len());
+    plan.extend_from_slice(&(manifest.raw_bytes as u32).to_le_bytes());
+    plan.extend_from_slice(&manifest.raw_digest);
+    plan.extend_from_slice(&(manifest.chunks.len() as u32).to_le_bytes());
+    plan.extend_from_slice(&entries);
+    Some(plan)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_ofairyo_gridtimer_data_NativeSnapshotVerifier_nativeHistoryChunkPlan(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    raw: jni::objects::JByteArray,
+    prefix: jni::objects::JString,
+    expected: jni::objects::JString,
+    envelope: jni::objects::JString,
+    supported: i32,
+) -> jni::sys::jbyteArray {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let length = usize::try_from(env.get_array_length(&raw).ok()?).ok()?;
+        if length == 0 || length > MAX_RAW_BYTES { return None; }
+        let prefix = env.get_string(&prefix).map(String::from).ok()?;
+        let expected = env.get_string(&expected).map(String::from).ok()?;
+        let envelope = env.get_string(&envelope).map(String::from).ok()?;
+        // Caller owns the immutable input for the duration of the JNI call.
+        // Release the VM buffer before allocating the returned plan array.
+        let plan = {
+            let bytes = unsafe { env.get_array_elements(&raw, jni::objects::ReleaseMode::NoCopyBack) }.ok()?;
+            let buffer = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) };
+            authenticated_chunk_plan(buffer, &prefix, &expected, &envelope, supported)?
+        };
+        env.byte_array_from_slice(&plan).ok().map(|array| array.into_raw())
+    })).ok().flatten().unwrap_or(std::ptr::null_mut());
+    if env.exception_check().unwrap_or(false) { let _ = env.exception_clear(); }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +274,34 @@ mod tests {
         assert_eq!(load(&oversized, &raw, &pool), Err(ChunkError::Length));
         assert_eq!(encode(b"", |_, _| Ok(())), Err(ChunkError::Length));
         assert_eq!(encode(&raw, |_, _| Err(ChunkError::Storage)), Err(ChunkError::Storage));
+    }
+
+    #[test]
+    fn android_write_plan_covers_exact_original_bytes_and_requires_row_envelope() {
+        let raw = fixture(7, &"知识".repeat(1500));
+        let prefix = "gridtimer-snapshot-envelope-v1\0snapshot_history\x001\0owner\x0015\x007\x001\x0099\0";
+        let hex = |value: ChunkId| value.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let expected = hex(sha256(&raw));
+        let envelope = hex(sha256(&[prefix.as_bytes(), &raw].concat()));
+        let plan = authenticated_chunk_plan(&raw, prefix, &expected, &envelope, 15).unwrap();
+        assert_eq!(u32::from_le_bytes(plan[..4].try_into().unwrap()) as usize, raw.len());
+        assert_eq!(&plan[4..36], sha256(&raw).as_slice());
+        let count = u32::from_le_bytes(plan[36..40].try_into().unwrap()) as usize;
+        assert_eq!(plan.len(), 40 + count * 34);
+        let mut offset = 0;
+        for entry in plan[40..].chunks_exact(34) {
+            let size = u16::from_le_bytes(entry[..2].try_into().unwrap()) as usize;
+            assert!((1..=MAX_CHUNK).contains(&size));
+            assert_eq!(&entry[2..], sha256(&raw[offset..offset + size]).as_slice());
+            offset += size;
+        }
+        assert_eq!(offset, raw.len());
+        assert!(authenticated_chunk_plan(&raw, prefix, &expected, "", 15).is_none());
+        assert!(authenticated_chunk_plan(&raw, prefix, &expected, &envelope, 14).is_none());
+        assert!(authenticated_chunk_plan(&raw, &prefix.replace("owner", "other"), &expected, &envelope, 15).is_none());
+        let mut corrupt = raw.clone();
+        corrupt[10] ^= 1;
+        assert!(authenticated_chunk_plan(&corrupt, prefix, &expected, &envelope, 15).is_none());
     }
 
     #[test]

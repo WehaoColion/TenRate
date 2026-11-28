@@ -1,3 +1,4 @@
+// v3.0.2.64 - Avoid forced offscreen target for translation-only archive card.
 // v3.0.2.57 - Cache directory motion in one bounded offscreen archive-card layer.
 // v3.0.2.47 - Bound directory navigation motion to the archive card, retain stationary list geometry.
 // v3.0.2.42 - Reduce archive glyph draw passes after measured slow draw commands.
@@ -1119,10 +1120,11 @@ private data class KnowledgeDirectoryDragVisual(
 private class KnowledgeDirectoryMotion(initialOffset: Float) {
     private val translation = Animatable(initialOffset)
 
-    // The archive card is static while it travels. Cache this bounded surface
-    // once, then composite only its texture while the directory list stays still.
+    // Translation alone does not require a separate offscreen framebuffer.
+    // Keep the bounded archive card in a retained RenderNode; let Compose
+    // allocate an intermediate target only when compositing actually requires it.
     val layer: Modifier = Modifier.graphicsLayer {
-        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Auto
         translationX = size.width * translation.value
     }
 

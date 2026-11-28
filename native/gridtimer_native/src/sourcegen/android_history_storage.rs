@@ -1,3 +1,4 @@
+// v3.0.2.64 - Expose bounded authenticated native chunk plan for the Android database adapter.
 // v3.0.2.49 - Avoid redundant raw history allocation during bounded lossless packing.
 // v3.0.2.24 - Retain single-row deferred compaction contract of downstream sourcegen.
 // v3.0.2.15 - Defer large history compression, retaining the canonical authenticated row.
@@ -220,6 +221,14 @@ const BRIDGE: &str = r####"
         nativeDecode(packed, APP_DATA_SCHEMA_VERSION, key)
     }.getOrNull()
 
+    // Native plan is inert until the production row/backup adapter is ready.
+    // It authorizes a plan only, not replacement of an existing history row.
+    fun historyChunkPlan(raw: ByteArray, prefix: String, expected: String, envelope: String): ByteArray? =
+        if (!available) null else runCatching {
+            nativeHistoryChunkPlan(raw, prefix, expected, envelope, APP_DATA_SCHEMA_VERSION)
+        }.getOrNull()
+
+    @JvmStatic private external fun nativeHistoryChunkPlan(raw: ByteArray, prefix: String, expected: String, envelope: String, supported: Int): ByteArray?
     @JvmStatic private external fun nativeSeal(raw: String, prefix: String, expected: String, envelope: String, supported: Int, key: ByteArray): String?
     @JvmStatic private external fun nativeDecode(packed: String, supported: Int, key: ByteArray): String?
     @JvmStatic private external fun nativeVerifyPacked(raw: ByteArray, length: Int, prefix: String, expected: String, envelope: String, supported: Int, key: ByteArray): Boolean

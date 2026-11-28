@@ -152,14 +152,14 @@ fn require_knowledge_motion_architecture(source: &str) -> Result<(), String> {
     for required in [
         "private class KnowledgeDirectoryMotion(",
         "val layer: Modifier = Modifier.graphicsLayer",
-        "compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen",
+        "compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Auto",
         "translation.animateTo(0f, spring(",
         "motionLayer: Modifier",
         "motionLayer = motion.layer",
         "modifier = motionLayer",
     ] {
         if !contents.contains(required) {
-            return Err(format!("Knowledge directory motion contract missing {required}; use the single offscreen KnowledgeDirectoryMotion layer on the archive card"));
+            return Err(format!("Knowledge directory motion contract missing {required}; use the single retained KnowledgeDirectoryMotion layer on the archive card without forced offscreen rendering"));
         }
     }
     let viewport_clips = contents.matches(".clipToBounds()").count();
@@ -384,11 +384,12 @@ mod tests {
     }
 
     #[test]
-    fn removing_the_offscreen_layer_is_rejected_before_signing() {
+    fn forced_offscreen_translation_regression_is_rejected_before_signing() {
         let mutated = HIERARCHY_UI_SOURCE.replace(
-            "compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen\n", "");
+            "compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Auto",
+            "compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen");
         let error = require_knowledge_motion_architecture(&mutated).unwrap_err();
-        assert!(error.contains("CompositingStrategy.Offscreen"));
+        assert!(error.contains("CompositingStrategy.Auto"));
     }
 
     #[test]

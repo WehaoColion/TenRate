@@ -1,3 +1,5 @@
+[Android 3.0.2.64 接通Android历史分块原生编码接口并降低目录绘制开销](android/release_notes_v3.0.2.64.md)。
+
 [Android 3.0.2.63 历史迁移恢复增加十万条极限验收](android/release_notes_v3.0.2.63.md)。
 
 [Android 3.0.2.62 存储整理增加真实阶段进度条并修复SQLite构建阻塞](android/release_notes_v3.0.2.62.md)。

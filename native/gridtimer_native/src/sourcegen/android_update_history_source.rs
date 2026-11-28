@@ -1,3 +1,4 @@
+// v3.0.2.64 - Android native chunk plan and translation-only render layer.
 // v3.0.2.63 - Require 100000-row exact history recovery.
 // v3.0.2.62 - Real storage maintenance progress and outcomes.
 // v3.0.2.61 - Transactional SQLite history migration contract.
@@ -174,6 +175,19 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.64",
+        updatedAt = "",
+        summary = "接通Android历史分块原生编码接口并降低目录绘制开销",
+        sections = listOf(
+            AndroidUpdateSection("存储维护", listOf(
+                "Rust原生接口校验旧历史行摘要及封签后输出有界分块计划；拒绝损坏、跨工作区封签、未来版本及未封签输入。暂未替换生产历史行。"
+            )),
+            AndroidUpdateSection("知识动效", listOf(
+                "平移资料卡采用保留绘制层，取消强制离屏渲染；保留弹簧动画、单一资料卡移动及真实帧预算，待模拟器验证。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.63",
         updatedAt = "",
