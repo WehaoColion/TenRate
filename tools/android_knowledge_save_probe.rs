@@ -1,3 +1,4 @@
+// v3.0.2.59 - Measure actual storage growth with a fixed-length body and durable receipts.
 // v3.0.2.46 - Disambiguate toolbar exit, app receipt and rendered directory in million-row probe.
 // v3.0.2.45 - Require fresh, complete accessibility evidence.
 // v3.0.2.44 - Require v9 schema guard and legacy recovery without eager payload header index.
@@ -26,6 +27,7 @@
 #[path = "android_ime_paced_text.rs"]
 mod android_ime_paced_text;
 use android_ime_paced_text::ImeStableText;
+mod android_storage_growth_evidence;
 
 use std::{
     env, fs,
@@ -1317,6 +1319,84 @@ fn run(root: &Path) -> Result<String, String> {
         "PASS: Android {version} upgraded a v5 database with {durable_history} retained SQLite snapshots. With an unchecked historical row inserted after startup, click-to-visible save took {saved_millis} ms with {scope}, and the row remained in history until startup recovery moved it to quarantine. With a competing SQLite writer and a read-only mirror directory, save took {contended_millis} ms. Both pages were durable after force-stop while the JSON mirror was still stale. Root folder, nested folder and nested page took {root_folder_ms}/{nested_folder_ms}/{nested_page_ms} ms and survived with exactly one node each and the correct parent IDs. Nested page passed {EDIT_ROUNDS} real body edits (including independent writer contention and actual background/resume), each with UI and SQLite receipt within {EDIT_BUDGET_MS} ms; {BURST_ROUNDS} additional rapid input events followed by immediate final edit/Back and all body markers survived process death. Restart repaired the mirror and reopened the first page. Background authentication resumed from {packed_before} to {packed_after} packed legacy rows, preserving all {HISTORY_ROWS} original unsealed histories. {sticky_report}"
     ))
 }
+
+const STORAGE_ROUNDS: usize = 2500;
+
+fn storage_body_exact(expected: &str) -> Result<bool, String> {
+    // The fixture has one text block. Compare the actual body, not a substring
+    // or a visible receipt alone. Both alternating values have equal length.
+    let result = live_sqlite(&format!(
+        "SELECT count(*) FROM current_snapshot s, json_each(s.app_data_json,'$.notes') n WHERE s.workspace_key='guest' AND json_extract(n.value,'$.title')='{NESTED_PAGE}' AND json_array_length(n.value,'$.document.blocks')=1 AND json_extract(n.value,'$.document.blocks[0].text')='{expected}';"
+    ))?;
+    Ok(result.trim() == "1")
+}
+
+fn storage_sample(root: &Path, stage: &str) -> Result<(), String> {
+    android_storage_growth_evidence::capture(root, stage, DATABASE,
+        |script| cmd(&["shell", script]))
+}
+
+fn wait_storage_body(expected: &str, started: std::time::Instant) -> Result<u128, String> {
+    while started.elapsed().as_millis() < EDIT_BUDGET_MS {
+        let xml = dump()?;
+        if append_caret_proven(&xml, expected) &&
+            has_save_state(&xml, "document_save_local_saved") && storage_body_exact(expected)? {
+            let elapsed = started.elapsed().as_millis();
+            if elapsed <= EDIT_BUDGET_MS { return Ok(elapsed); }
+            break;
+        }
+        sleep(Duration::from_millis(120));
+    }
+    Err(format!("Fixed-length edit did not achieve exact UI and SQLite receipt within {EDIT_BUDGET_MS}ms"))
+}
+
+fn storage_growth(root: &Path) -> Result<String, String> {
+    cmd(&["wait-for-device"])?;
+    let version = installed_version(&cmd(&["shell", "dumpsys", "package", PACKAGE])?)?;
+    cmd(&["root"])?;
+    cmd(&["wait-for-device"])?;
+    cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    directory(root)?;
+    create_folder(root, NESTED_FOLDER)?;
+    create_page(root, NESTED_PAGE, || Ok(()))?;
+    ensure_append_caret(root, "", "storage_initial")?;
+    let mut body = String::from("7391804025006010");
+    let started = std::time::Instant::now();
+    cmd(&["shell", "input", "text", &body])?;
+    wait_storage_body(&body, started)?;
+    storage_sample(root, "0000")?;
+    let mut elapsed_csv = String::from("round,elapsed_ms,authored_body_bytes\n");
+    for round in 1..=STORAGE_ROUNDS {
+        // Only the final digit changes; actual user content does not grow.
+        // The cursor was independently confirmed by the previous receipt.
+        let digit = if round % 2 == 1 { '1' } else { '0' };
+        let started = std::time::Instant::now();
+        cmd(&["shell", &format!("input keyevent KEYCODE_DEL && input text {digit}")])?;
+        body.pop();
+        body.push(digit);
+        let elapsed = wait_storage_body(&body, started)
+            .map_err(|error| format!("Storage edit round {round}: {error}"))?;
+        elapsed_csv.push_str(&format!("{round},{elapsed},{}\n", body.len()));
+        if round % 25 == 0 || [100, 500, 1000, STORAGE_ROUNDS].contains(&round) {
+            fs::write(root.join("storage_edit_receipts.csv"), &elapsed_csv).map_err(|e| e.to_string())?;
+        }
+        if [100, 500, 1000, STORAGE_ROUNDS].contains(&round) {
+            storage_sample(root, &format!("{round:04}"))?;
+        }
+    }
+    cmd(&["shell", "am", "force-stop", PACKAGE])?;
+    require_stopped_app()?;
+    if !storage_body_exact(&body)? { return Err("Fixed-length authored body lost after process death".into()); }
+    storage_sample(root, "stopped")?;
+    cmd(&["shell", "am", "start", "-W", "-n", ACTIVITY])?;
+    sleep(Duration::from_secs(7));
+    directory(root)?;
+    if !storage_body_exact(&body)? { return Err("Fixed-length authored body lost after restart".into()); }
+    storage_sample(root, "restarted")?;
+    Ok(format!("Measured Android {version}: {STORAGE_ROUNDS} real fixed-length edits, exact SQLite and UI receipts, and durable content after process death. Storage samples at 0/100/500/1000/2500 edits and restart. This is measurement evidence, not a claim that storage growth has plateaued."))
+}
+
 fn main() {
     let path = env::args_os().nth(1).map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("knowledge_save_evidence"));
@@ -1324,7 +1404,10 @@ fn main() {
     let workload = format!("profile={}\nhistory_rows={HISTORY_ROWS}\nhistory_padding_bytes={HISTORY_PADDING_BYTES}\nedit_rounds={EDIT_ROUNDS}\nburst_rounds={BURST_ROUNDS}\nsticky_rounds={STICKY_ROUNDS}\nsave_budget_ms={SAVE_BUDGET_MS}\nrecovery_budget_seconds={RECOVERY_BUDGET_SECONDS}\n", ACTIVE.name);
     fs::write(path.join("stress_profile.txt"), &workload).expect("workload evidence");
     println!("{workload}");
-    let result = if env::args().nth(2).as_deref() == Some("--sticky-newlines") {
+    let mode = env::args().nth(2);
+    let result = if mode.as_deref() == Some("--storage-growth") {
+        storage_growth(&path)
+    } else if mode.as_deref() == Some("--sticky-newlines") {
         // Standalone signed APK regression on clean state, before heavy load.
         // Still exercises real editing, four version commits (one competing
         // writer), exact SQLite bytes after process death and exported pixels.
@@ -1341,6 +1424,11 @@ fn main() {
     };
     capture(&path, "08_final");
     if result.is_err() {
+        if mode.as_deref() == Some("--storage-growth") {
+            if let Err(error) = storage_sample(&path, "failure") {
+                eprintln!("Storage failure sample unavailable: {error}");
+            }
+        }
         if let Ok(trace) = cmd(&["logcat", "-d", "-s", "StartupLatency:I", "SQLiteLog:W", "AndroidRuntime:E", "NoteSaveLatency:I"]) {
             let _ = fs::write(path.join("failure_logcat.txt"), &trace);
             println!("{trace}");

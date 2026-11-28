@@ -345,6 +345,69 @@ jobs:
           if-no-files-found: warn
           retention-days: 21
 
+  storage-growth-emulator:
+    name: Android ${{ matrix.api }} signed APK fixed-length storage growth measurement
+    needs: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: signed_apk
+      - name: Verify exact APK and compile Rust storage measurement
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd signed_apk
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
+          cd ..
+          rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
+      - name: Enable KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Measure fixed-size authored content over 2500 real saves
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 16G
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${{ matrix.api }}"
+            adb install -r signed_apk/tenfold_v*.apk
+            adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
+            ./knowledge_save_probe storage_growth_evidence --storage-growth
+      - name: Upload storage measurements and exact save receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-storage-growth-api${{ matrix.api }}-${{ github.sha }}
+          path: storage_growth_evidence/
+          if-no-files-found: warn
+          retention-days: 21
+
   publish-signed-test-candidate:
     name: Publish signed Android test APK (acceptance independently tracked)
     if: github.ref != 'refs/heads/main'

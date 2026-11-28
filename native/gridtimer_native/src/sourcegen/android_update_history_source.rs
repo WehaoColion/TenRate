@@ -1,3 +1,4 @@
+// v3.0.2.59 - Resume verified history packing and measure fixed-length storage growth.
 // v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
 // v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
 // v3.0.2.56 - Enforce compile-time IME-safe markers in document typing acceptance.
@@ -169,6 +170,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.59",
+        updatedAt = "",
+        summary = "修复后台历史压缩任务提前退出并加入独立存储增长验收",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "切换工作区后重新定位压缩队列；暂时无法取得安全校验或发生异常时延后重试，不丢弃历史。",
+            "API35/36 独立执行固定长度正文2500轮编辑保存并采集磁盘分项、SQLite页和真实保存回执。尚待实机证据，未宣称膨胀已修复。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.58",
         updatedAt = "",

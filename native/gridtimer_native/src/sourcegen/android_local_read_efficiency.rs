@@ -1,3 +1,4 @@
+// v3.0.2.59 - Keep verified history packing alive after workspace switches and transient failures.
 // v3.0.2.49 - Explicit physical database reclamation without deleting recovery rows.
 // v3.0.2.36 - Bounded index migration cache and forward history verification.
 // v3.0.2.31 - Bound maintenance duty cycle and sample routine diagnostic logs.
@@ -218,7 +219,7 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
         // yields, uses tryLock, and packs at most one row. Restart resumes via the
         // persisted encoding queue; no current/history row is discarded.
         delay(2_000L)
-        val workspaceKey = activeWorkspaceKey
+        var cursorWorkspace = activeWorkspaceKey
         var afterId = 0L
         var completedBatches = 0L
         var nextIdleDelay = 1_000L
@@ -229,11 +230,19 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
             }
             val maintenanceStarted = android.os.SystemClock.elapsedRealtime()
             var admitted = false
+            var failed = false
             val next = try {
-                if (!noteMaintenanceMayStart(5_000L)) continue
-                if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
-                    loadedFromRecoveryCandidate || persistenceWriteBlockedReason != null) break
-                withContext(Dispatchers.IO) {
+                // Read the owner while holding the repository writer lock.
+                // A workspace switch must reset the queue cursor, not permanently
+                // terminate maintenance for all subsequent accounts.
+                val workspaceKey = activeWorkspaceKey
+                if (cursorWorkspace != workspaceKey) {
+                    cursorWorkspace = workspaceKey
+                    afterId = 0L
+                }
+                if (!noteMaintenanceMayStart(5_000L) || futureSchemaVersion != null ||
+                    loadedFromRecoveryCandidate || persistenceWriteBlockedReason != null) null
+                else withContext(Dispatchers.IO) {
                     val cached = verifiedWritePreflight?.takeIf { it.first == workspaceKey }
                         ?: return@withContext null
                     // No valid workspace proof means no background writer.
@@ -256,8 +265,11 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                Log.w("StartupLatency", "Deferred history packing stopped; original rows retained", failure)
-                break
+                // A transient writer/read failure must not disable packing until process death.
+                // Retry only after a new workspace proof is available; keep the failed row.
+                failed = true
+                Log.w("StartupLatency", "Deferred history packing failed; original rows retained, retry deferred", failure)
+                null
             } finally {
                 writeMutex.unlock()
                 if (admitted) {
@@ -274,7 +286,7 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
             if (next == null) {
                 // Keep the monotonic cursor: new foreground snapshots may add
                 // authenticated raw rows later. Do not reprocess failed old rows.
-                delay(15_000L)
+                delay(if (failed) 60_000L else 15_000L)
                 continue
             }
             afterId = next
@@ -681,6 +693,12 @@ mod tests {
         assert!(INDEXED_BATCHES.contains("val batchSize = if (sizedWindow) 64 else 1"));
         assert!(MAINTENANCE_JOB.contains("delay(nextIdleDelay)"));
         assert!(MAINTENANCE_JOB.contains("stateDatabase.compactHistoryBatch(workspaceKey, afterId)"));
+        // Historical defect: switching workspace or one transient exception
+        // permanently exited the only packing worker. Never let the cursor
+        // from one account be reused for another account.
+        assert!(MAINTENANCE_JOB.contains("if (cursorWorkspace != workspaceKey) {\n                    cursorWorkspace = workspaceKey\n                    afterId = 0L"));
+        assert!(!MAINTENANCE_JOB.contains(") break"));
+        assert!(MAINTENANCE_JOB.contains("delay(if (failed) 60_000L else 15_000L)"));
     }
 }
 
