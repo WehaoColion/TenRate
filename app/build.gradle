@@ -1,3 +1,4 @@
+// v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
 // v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
 // v3.0.2.56 - Enforce compile-time IME-safe markers in document typing acceptance.
 // v3.0.2.55 - Isolate and precompile Android emulator probes before signing.
@@ -250,8 +251,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30059
-        versionName '3.0.2.57'
+        versionCode 30060
+        versionName '3.0.2.58'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

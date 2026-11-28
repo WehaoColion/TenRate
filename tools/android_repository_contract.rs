@@ -34,6 +34,9 @@ const LOCALE_PROBE_SOURCE: &str = include_str!("android_locale_probe.rs");
 #[path = "android_ime_marker.rs"]
 mod android_ime_marker;
 #[cfg(test)]
+#[path = "android_ime_paced_text.rs"]
+mod android_ime_paced_text;
+#[cfg(test)]
 #[path = "android_heading_ink.rs"]
 mod android_heading_ink;
 #[cfg(test)]
@@ -302,6 +305,11 @@ mod tests {
         assert!(!AI_PROBE_SOURCE.contains("mod android_locale_probe_text;"));
         assert!(LOCALE_PROBE_SOURCE.contains("mod android_locale_probe_text;"));
         assert!(!LOCALE_PROBE_SOURCE.contains("mod android_ai_probe_text;"));
+        // 3.0.2.57 signing failed when the save probe imported both marker roles.
+        assert!(SAVE_PROBE.contains("mod android_ime_paced_text;"));
+        assert!(!SAVE_PROBE.contains("mod android_ime_marker;"));
+        assert!(DOCUMENT_TYPING_PROBE.contains("mod android_ime_marker;"));
+        assert!(!DOCUMENT_TYPING_PROBE.contains("mod android_ime_paced_text;"));
     }
 
     #[test]

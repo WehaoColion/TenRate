@@ -1,3 +1,4 @@
+// v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
 // v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
 // v3.0.2.56 - Enforce compile-time IME-safe markers in document typing acceptance.
 // v3.0.2.55 - Isolate and compile Android emulator probes before signing.
@@ -168,6 +169,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.58",
+        updatedAt = "",
+        summary = "修复签名构建前的独立模拟器探针编译阻塞",
+        sections = listOf(AndroidUpdateSection("验收基础设施", listOf(
+            "保存探针仅引用运行时分块数字输入类型；正文与长图探针仅引用编译期固定数字标记，两者共用纯数字校验。",
+            "保留严格警告检查和历史负载、保存时限、真实模拟器门禁；本版仍需重新签名构建和完整验收。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.57",
         updatedAt = "",

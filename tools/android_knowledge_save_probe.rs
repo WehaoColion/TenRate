@@ -23,9 +23,9 @@
 // v3.0.2.4 - Verify on-disk durability, bounded save latency and optional logcat proof with 7200 history rows.
 //! Android API 35 signed-APK acceptance: new knowledge page must persist after restart.
 //! The driver runs only against an installed signed APK, never a mocked UI.
-#[path = "android_ime_marker.rs"]
-mod android_ime_marker;
-use android_ime_marker::ImeStableText;
+#[path = "android_ime_paced_text.rs"]
+mod android_ime_paced_text;
+use android_ime_paced_text::ImeStableText;
 
 use std::{
     env, fs,
