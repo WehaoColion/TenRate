@@ -1,3 +1,4 @@
+// v3.0.2.62 - Repository-owned storage maintenance stages and outcomes.
 // v3.0.2.60 - Reclaim expired regenerable note share cache without touching user files.
 // v3.0.2.59 - Keep verified history packing alive after workspace switches and transient failures.
 // v3.0.2.49 - Explicit physical database reclamation without deleting recovery rows.
@@ -752,14 +753,15 @@ pub fn finalize_storage(path: &str, source: &str) -> Result<String, String> {
         }
         REPOSITORY => {
             replace(&mut output, "    private suspend fun persistToWorkspace(", &format!("{STORAGE_REPOSITORY}    private suspend fun persistToWorkspace("))?;
+            output.push_str(STORAGE_STATE);
         }
         "com/ofairyo/gridtimer/ui/TimerViewModel.kt" => {
             replace(&mut output, "    private val repository = GridTimerApplication.timerRepository(application)",
-                "    private val repository = GridTimerApplication.timerRepository(application)\n    suspend fun reclaimUnusedStorage(): Pair<Long, Long>? = repository.reclaimUnusedStorage()")?;
+                "    private val repository = GridTimerApplication.timerRepository(application)\n    internal val storageMaintenanceState = repository.storageMaintenanceState\n    internal fun startStorageMaintenance() = repository.startStorageMaintenance()")?;
         }
         "com/ofairyo/gridtimer/ui/GridTimerScreen.kt" => {
             replace(&mut output, "                                onLogout = viewModel::logoutSyncAccount,",
-                "                                onLogout = viewModel::logoutSyncAccount,\n                                onReclaimStorage = viewModel::reclaimUnusedStorage,")?;
+                "                                onLogout = viewModel::logoutSyncAccount,\n                                storageMaintenance = viewModel.storageMaintenanceState.collectAsState().value,\n                                onReclaimStorage = viewModel::startStorageMaintenance,")?;
         }
         _ => {}
     }
@@ -767,7 +769,7 @@ pub fn finalize_storage(path: &str, source: &str) -> Result<String, String> {
 }
 
 const STORAGE_DATABASE: &str = r####"    // Only physical allocation changes. No logical recovery row is removed.
-    fun reclaimUnusedStorage(): Pair<Long, Long> = tracedSnapshotMonitor("storageReclaim") {
+    internal fun reclaimUnusedStorage(onStage: (StorageMaintenancePhase) -> Unit): StorageMaintenanceResult = tracedSnapshotMonitor("storageReclaim") {
         val database = writableDatabase
         check(!database.inTransaction())
         fun scalar(pragma: String): Long = database.rawQuery("PRAGMA $pragma", null).use {
@@ -780,43 +782,94 @@ const STORAGE_DATABASE: &str = r####"    // Only physical allocation changes. No
             }
         }
         val before = bytesOnDisk()
+        onStage(StorageMaintenancePhase.CHECKPOINT)
         checkpoint()
+        onStage(StorageMaintenancePhase.MEASURING)
         val freeBytes = scalar("freelist_count") * scalar("page_size")
         if (freeBytes >= 8L * 1024L * 1024L) {
             val available = android.os.StatFs(requireNotNull(databaseFile.parentFile).path).availableBytes
             val dbBytes = databaseFile.length()
-            check(dbBytes <= (available - 64L * 1024L * 1024L).coerceAtLeast(0L) / 2L) {
-                "Insufficient free space for safe SQLite compaction."
+            if (dbBytes > (available - 64L * 1024L * 1024L).coerceAtLeast(0L) / 2L) {
+                throw StorageMaintenanceInsufficientSpace()
             }
+            onStage(StorageMaintenancePhase.VACUUM)
             database.execSQL("VACUUM")
+            onStage(StorageMaintenancePhase.FINAL_CHECKPOINT)
             checkpoint()
         }
+        onStage(StorageMaintenancePhase.FINAL_MEASURE)
         val after = bytesOnDisk()
         android.util.Log.i("StorageReclaim", "beforeBytes=$before afterBytes=$after freePageBytes=$freeBytes")
-        before to after
+        StorageMaintenanceResult(before, after, freeBytes)
     }
 
 "####;
 
-const STORAGE_REPOSITORY: &str = r####"    suspend fun reclaimUnusedStorage(): Pair<Long, Long>? {
-        initializationJob.join()
-        if (!writeMutex.tryLock()) return null
-        return try {
-            if (futureSchemaVersion != null || persistenceWriteBlockedReason != null ||
-                loadedFromRecoveryCandidate) return null
-            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
-                // Never reuse a pre-rewrite verification proof.
-                verifiedWritePreflight = null
-                stateDatabase.reclaimUnusedStorage()
+const STORAGE_REPOSITORY: &str = r####"    private val mutableStorageMaintenance = MutableStateFlow(StorageMaintenanceState())
+    internal val storageMaintenanceState = mutableStorageMaintenance.asStateFlow()
+
+    @Synchronized
+    internal fun startStorageMaintenance() {
+        if (mutableStorageMaintenance.value.phase.running) return
+        mutableStorageMaintenance.value = StorageMaintenanceState(StorageMaintenancePhase.WAITING)
+        scope.launch {
+            var acquired = false
+            var terminal = StorageMaintenanceState(StorageMaintenancePhase.FAILED)
+            try {
+                initializationJob.join()
+                acquired = writeMutex.tryLock()
+                if (!acquired) {
+                    terminal = StorageMaintenanceState(StorageMaintenancePhase.BUSY)
+                } else if (futureSchemaVersion != null || persistenceWriteBlockedReason != null ||
+                    loadedFromRecoveryCandidate) {
+                    terminal = StorageMaintenanceState(StorageMaintenancePhase.BLOCKED)
+                } else {
+                    val result = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                        verifiedWritePreflight = null
+                        stateDatabase.reclaimUnusedStorage { phase ->
+                            mutableStorageMaintenance.value = StorageMaintenanceState(phase)
+                        }
+                    }
+                    terminal = StorageMaintenanceState(
+                        if (result.afterBytes < result.beforeBytes) StorageMaintenancePhase.DONE
+                        else StorageMaintenancePhase.NO_GAIN, result)
+                }
+            } catch (failure: StorageMaintenanceInsufficientSpace) {
+                terminal = StorageMaintenanceState(StorageMaintenancePhase.INSUFFICIENT_SPACE)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.w("StorageReclaim", "Storage maintenance deferred", failure)
+            } finally {
+                if (acquired) writeMutex.unlock()
+                mutableStorageMaintenance.value = terminal
             }
-        } catch (failure: Exception) {
-            Log.w("StorageReclaim", "Storage maintenance deferred", failure)
-            null
-        } finally {
-            writeMutex.unlock()
         }
     }
 
+"####;
+
+const STORAGE_STATE: &str = r####"
+
+internal enum class StorageMaintenancePhase(val running: Boolean) {
+    IDLE(false), WAITING(true), CHECKPOINT(true), MEASURING(true),
+    VACUUM(true), FINAL_CHECKPOINT(true), FINAL_MEASURE(true),
+    DONE(false), NO_GAIN(false), BUSY(false), BLOCKED(false),
+    INSUFFICIENT_SPACE(false), FAILED(false)
+}
+
+internal data class StorageMaintenanceResult(
+    val beforeBytes: Long,
+    val afterBytes: Long,
+    val freePageBytes: Long
+)
+
+internal data class StorageMaintenanceState(
+    val phase: StorageMaintenancePhase = StorageMaintenancePhase.IDLE,
+    val result: StorageMaintenanceResult? = null
+)
+
+internal class StorageMaintenanceInsufficientSpace : IllegalStateException("Insufficient free space for safe SQLite compaction.")
 "####;
 
 #[cfg(test)]

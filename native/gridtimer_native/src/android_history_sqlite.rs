@@ -74,10 +74,11 @@ fn row(db: &Connection, owner: &str, id: i64) -> Result<Row, MigrationError> {
 }
 
 fn read_chunks(db: &Connection, row: &Row, supported: i32) -> Result<Vec<u8>, MigrationError> {
-    let (raw_bytes, digest, ids): (usize, Vec<u8>, Vec<u8>) = db.query_row(
+    let (raw_bytes, digest, ids): (i64, Vec<u8>, Vec<u8>) = db.query_row(
         "SELECT raw_bytes,raw_digest,ordered_ids FROM history_chunk_manifest
          WHERE workspace_key=?1 AND history_id=?2 AND length(ordered_ids) <= 16777216",
         params![row.owner,row.id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+    let raw_bytes = usize::try_from(raw_bytes).map_err(|_| MigrationError::Integrity)?;
     if ids.is_empty() || ids.len()%32 != 0 || raw_bytes == 0 || raw_bytes > chunks::MAX_RAW_BYTES ||
         ids.len()/32 > raw_bytes.div_ceil(256) {
         return Err(MigrationError::Integrity);
@@ -93,7 +94,7 @@ fn read_chunks(db: &Connection, row: &Row, supported: i32) -> Result<Vec<u8>, Mi
         let hex=std::str::from_utf8(pair).map_err(|_| MigrationError::Integrity)?;
         expected[i]=u8::from_str_radix(hex,16).map_err(|_| MigrationError::Integrity)?;
     }
-    let mut select = db.prepare_cached("SELECT payload FROM history_chunk_payload WHERE workspace_key=?1 AND digest=?2")?;
+    let mut select = db.prepare("SELECT payload FROM history_chunk_payload WHERE workspace_key=?1 AND digest=?2")?;
     let raw = chunks::decode(&manifest, expected, |id| {
         select.query_row(params![row.owner,id.as_slice()], |r| r.get(0))
             .optional().map_err(|_| ChunkError::Storage)
@@ -122,8 +123,8 @@ fn migrate_inside(tx: &Transaction<'_>, owner: &str, id: i64, supported: i32,
     let r = row(tx,owner,id)?;
     let raw = read_history(tx,owner,id,supported)?;
     if r.stored == MARKER { return Ok(()); }
-    let mut insert = tx.prepare_cached("INSERT OR IGNORE INTO history_chunk_payload(workspace_key,digest,payload) VALUES(?1,?2,?3)")?;
-    let mut check = tx.prepare_cached("SELECT payload FROM history_chunk_payload WHERE workspace_key=?1 AND digest=?2")?;
+    let mut insert = tx.prepare("INSERT OR IGNORE INTO history_chunk_payload(workspace_key,digest,payload) VALUES(?1,?2,?3)")?;
+    let mut check = tx.prepare("SELECT payload FROM history_chunk_payload WHERE workspace_key=?1 AND digest=?2")?;
     let manifest = chunks::encode(&raw, |digest, bytes| {
         insert.execute(params![owner,digest.as_slice(),bytes]).map_err(|_| ChunkError::Storage)?;
         let existing: Vec<u8> = check.query_row(params![owner,digest.as_slice()],|r|r.get(0)).map_err(|_|ChunkError::Storage)?;
@@ -131,8 +132,9 @@ fn migrate_inside(tx: &Transaction<'_>, owner: &str, id: i64, supported: i32,
         Ok(())
     })?;
     let ids: Vec<u8> = manifest.chunks.iter().flat_map(|id|id.iter().copied()).collect();
+    let raw_bytes = i64::try_from(manifest.raw_bytes).map_err(|_| MigrationError::Integrity)?;
     tx.execute("INSERT INTO history_chunk_manifest(workspace_key,history_id,raw_bytes,raw_digest,ordered_ids) VALUES(?1,?2,?3,?4,?5)",
-        params![owner,id,manifest.raw_bytes,manifest.raw_digest.as_slice(),ids])?;
+        params![owner,id,raw_bytes,manifest.raw_digest.as_slice(),ids])?;
     if read_chunks(tx,&r,supported)? != raw { return Err(MigrationError::Integrity); }
     before_publish()?;
     if tx.execute("UPDATE snapshot_history SET app_data_json=?1 WHERE workspace_key=?2 AND id=?3 AND app_data_json=?4",

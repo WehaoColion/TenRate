@@ -1,3 +1,4 @@
+// v3.0.2.62 - Real storage maintenance progress and outcomes.
 // v3.0.2.61 - Transactional SQLite history migration contract.
 // v3.0.2.60 - Lossless history chunk codec foundation and expired share cache cleanup.
 // v3.0.2.59 - Resume verified history packing and measure fixed-length storage growth.
@@ -172,6 +173,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.62",
+        updatedAt = "",
+        summary = "存储整理增加真实阶段进度条并修复SQLite构建阻塞",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "显示准备、日志检查点、测量空闲页、数据库重写、最终检查点及复测；切换页面不丢状态，不伪造百分比，区分零回收与失败。",
+            "迁移契约使用当前SQLite依赖支持的整数与语句接口；旧库去重仍未接入生产数据库。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.61",
         updatedAt = "",

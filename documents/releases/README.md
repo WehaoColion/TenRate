@@ -1,3 +1,5 @@
+[Android 3.0.2.62 存储整理增加真实阶段进度条并修复SQLite构建阻塞](android/release_notes_v3.0.2.62.md)。
+
 [Android 3.0.2.61 新增真实SQLite历史迁移与物理回收契约测试](android/release_notes_v3.0.2.61.md)。
 
 [Android 3.0.2.60 新增无损历史分块编码基础及过期分享缓存清理](android/release_notes_v3.0.2.60.md)。
