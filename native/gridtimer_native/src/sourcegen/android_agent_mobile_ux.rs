@@ -1,3 +1,5 @@
+// v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
+// v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 // Android Agent mobile UX: task-first flow and honest foreground-only execution.
 // This layer runs after android_agent_workspace_ui and keeps Rust authorization,
 // cancellation and save boundaries unchanged.
@@ -171,7 +173,138 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         "onClick = { agentPreviewAcknowledged = false; showSendingContent = selectedAgentDocuments.isNotEmpty(); agentWorkspaceStep = if (selectedAgentDocuments.isNotEmpty()) 2 else 1 })",
     )?;
 
+    compact_chat_surface(&mut source)?;
     Ok(source)
+}
+
+// Ordinary chat only. Run after the task workspace has separated its own UI.
+// Keep the same request, history, save and consent callbacks.
+fn compact_chat_surface(source: &mut String) -> Result<(), String> {
+    // The compact composer introduces this extension. Own its import here,
+    // instead of relying on a different source generator or another screen.
+    const FOCUS_IMPORT: &str = "import androidx.compose.ui.focus.onFocusChanged";
+    if !source.lines().any(|line| line.trim() == FOCUS_IMPORT) {
+        replace_once(source, "package com.ofairyo.gridtimer.ui\n",
+            "package com.ofairyo.gridtimer.ui\n\nimport androidx.compose.ui.focus.onFocusChanged\n")?;
+    }
+    replace_once(source, "    val messageListState = rememberLazyListState()",
+        "    val messageListState = rememberLazyListState()\n    val chatHistoryListState = rememberLazyListState()\n    var showChatOptions by remember(activeChatId) { mutableStateOf(false) }")?;
+    replace_once(source, "LaunchedEffect(conversation.size, busy) {",
+        "LaunchedEffect(activeChatId, conversation.size, busy, showChatHistory) {")?;
+    replace_once(source, "if (!agentMode && last >= 0) messageListState.animateScrollToItem(last)",
+        "if (!agentMode && !showChatHistory && last >= 0) messageListState.scrollToItem(last)")?;
+    replace_once(source, "Box(modifier = Modifier.fillMaxSize().padding(8.dp).imePadding().navigationBarsPadding()",
+        "Box(modifier = Modifier.fillMaxSize().imePadding().navigationBarsPadding()")?;
+    replace_once(source, "shape = RoundedCornerShape(24.dp), color = flowusPanelBackground(), border = BorderStroke(1.dp, flowusBorderColor()))",
+        "shape = RoundedCornerShape(if (agentMode) 24.dp else 0.dp), color = flowusPanelBackground(), border = BorderStroke(if (agentMode) 1.dp else 0.dp, flowusBorderColor()))")?;
+    replace_once(source, "Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp))",
+        "Column(modifier = Modifier.fillMaxSize().padding(horizontal = if (agentMode) 16.dp else 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp))")?;
+    replace_once(source, r####"Text(if (agentMode) "任务助手" else "AI 问答", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)"####,
+        r####"Text(if (agentMode) "任务助手" else "AI 问答", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)"####)?;
+    replace_once(source, r####"onClick = { showChatHistory = !showChatHistory }) { Text("历史") }"####,
+        r####"onClick = { showChatHistory = !showChatHistory; showChatOptions = false }) { Text(if (showChatHistory) "返回对话" else "历史") }"####)?;
+    replace_once(source, r####"CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { requestAgentExit() })"####,
+        r####"if (agentMode) CapsuleAction(text = "关闭", icon = Icons.Rounded.Close, onClick = { requestAgentExit() })
+                            else androidx.compose.material3.IconButton(onClick = { requestAgentExit() }) {
+                                androidx.compose.material3.Icon(Icons.Rounded.Close, contentDescription = "关闭")
+                            }"####)?;
+    replace_once(source, "            LazyColumn(state = messageListState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {",
+        r####"            if (!showChatHistory && conversation.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = {
+                        showChatOptions = !showChatOptions
+                        if (showChatOptions) scope.launch { messageListState.scrollToItem(0) }
+                    }) { Text(if (showChatOptions) "收起设置" else if (queryMode == KnowledgeAiMode.DIRECT) "直接问 AI · 设置" else "问知识库 · 设置") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(enabled = historyReady && historyError.isBlank() && pendingTurn == null &&
+                        !savingConversation && !busy && !agentBusy, onClick = ::saveWholeConversation) {
+                        Text(if (savingConversation) "正在保存…" else "保存 ${conversation.size} 轮")
+                    }
+                }
+            }
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            LazyColumn(state = if (showChatHistory) chatHistoryListState else messageListState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)) {"####)?;
+    replace_once(source, r####"                    if (chatSessions.isEmpty()) item { Text("暂无历史对话。") }
+                }
+                item {"####,
+        r####"                    if (chatSessions.isEmpty()) item { Text("暂无历史对话。") }
+                } else {
+                if (conversation.isEmpty() || showChatOptions || showSendingContent || !configuration.testable) {
+                item {"####)?;
+    // Close the options region immediately before the actual busy/status items.
+    replace_once(source, "                if (busy) item {",
+        "                }\n                if (busy) item {")?;
+    let from = source.find("                if (!agentMode && conversation.isNotEmpty()) item {")
+        .ok_or("chat duplicate save block missing")?;
+    let to = source[from..].find("                if (!agentMode) {\n                    items(conversation")
+        .map(|i| from + i).ok_or("chat turn boundary missing")?;
+    source.replace_range(from..to, r####"                if (showChatOptions && currentChat?.pageId != null) item {
+                    TextButton(onClick = { currentChat?.pageId?.let(onOpenConversationPage) },
+                        enabled = !savingConversation && pendingTurn == null && !busy) { Text("查看关联知识页") }
+                }
+"####);
+    replace_once(source, "            }\n            }\n            if (!agentMode) {\n                if (busy)",
+        "                }\n            }\n            }\n            if (!agentMode && !showChatHistory) {\n                androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)\n                if (busy)")?;
+    // A bounded input and compact attachment/send row replace the tall stack.
+    let from = source.find("                    KnowledgeQuestionField(question = question,\n                        hint = if (conversation.isEmpty())")
+        .ok_or("chat composer missing")?;
+    let to = source[from..].find("                    if (imageModelUnsupported)")
+        .map(|i| from + i).ok_or("chat composer image warning missing")?;
+    source.replace_range(from..to, r####"                    KnowledgeQuestionField(question = question,
+                        hint = if (conversation.isEmpty()) "输入问题" else "继续追问…",
+                        onQuestionChange = { if (!busy) { question = it; statusText = "" } }, compact = true)
+                    KnowledgeAiImagePicker(
+                        selected = selectedImageUris,
+                        enabled = !busy && !agentBusy,
+                        onChange = { images ->
+                            if (!busy && !agentBusy) {
+                                invalidateAnswer()
+                                selectedImageUris = images
+                                if (question.isBlank() && images.isNotEmpty()) question = "请分析这些图片"
+                            }
+                        },
+                        compact = true,
+                        trailingAction = {
+                            androidx.compose.material3.Button(
+                                enabled = historyReady && historyError.isBlank() && pendingTurn == null &&
+                                    !savingConversation && !busy && !agentBusy && configuration.testable && !imageModelUnsupported && question.isNotBlank() &&
+                                    (queryMode == KnowledgeAiMode.DIRECT || sourceCandidates.isNotEmpty()),
+                                onClick = ::requestAnswer
+                            ) { Text(if (conversation.isEmpty()) "发送" else "继续提问") }
+                        }
+                    )
+"####);
+    let from = source.find("                PhysicalButton(label = if (busy) \"正在回答\" else if (conversation.isEmpty())")
+        .ok_or("duplicate chat send missing")?;
+    let to = source[from..].find("\n            }\n          }")
+        .map(|i| from + i).ok_or("chat footer boundary missing")?;
+    source.replace_range(from..to, r####"                if (showChatOptions || conversation.isEmpty()) {
+                    Text("模型最多参考最近 8 轮、24,000 字符；本机保留全部文字问答。图片原件不自动归档，须手动再次引用。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f))
+                }"####);
+    replace_once(source, "fieldLabel: String = \"消息\") {",
+        "fieldLabel: String = \"消息\", compact: Boolean = false) {")?;
+    replace_once(source, "    SmartisanTextField(value = question, onValueChange = onQuestionChange, label = fieldLabel,",
+        r####"    if (compact) {
+        OutlinedTextField(value = question,
+            onValueChange = { if (it.length <= 1000) onQuestionChange(it) },
+            placeholder = { Text(hint) },
+            minLines = 1, maxLines = 3,
+            shape = RoundedCornerShape(20.dp),
+            interactionSource = interactions,
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                .bringIntoViewRequester(bringIntoView)
+                .onFocusChanged { focused ->
+                    fieldFocused = focused.isFocused
+                    if (fieldFocused) ticket = request.request() else request.cancel()
+                })
+        if (question.length >= 900) Text("${question.length}/1000", style = MaterialTheme.typography.labelSmall)
+    } else SmartisanTextField(value = question, onValueChange = onQuestionChange, label = fieldLabel,"####)?;
+    Ok(())
 }
 
 #[cfg(test)]

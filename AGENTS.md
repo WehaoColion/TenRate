@@ -33,3 +33,22 @@ APK 交付保持项目根目录、`APK/` 和 `app/build/outputs/apk/release/`；
 每次完成 Android 更新，必须将已构建、通过检查的最新正式签名 APK 及 SHA256 校验文件上传到 GitHub Releases，并向用户提供版本页或 APK 下载链接；不能只交付聊天附件或短期 Actions 产物。沿用原签名证书与同步发现身份，不得上传密钥库、密码或签名配置。
 
 主分支的成功 Android 构建由 `Publish Android APK` 工作流自动发布；已有构建使用该工作流的 `run_id` 手动发布，复用经过验证的原始产物。未合并版本标为预发布，合并后发布为正式版本。已存在的同名资产须字节一致，不得静默覆盖不同 APK。用户仅确认 APK 可用时，不推断所有设备与同步场景已验收；合并按用户明确指令执行。
+
+## Android 仓库硬性契约
+
+版本只修改 `app/build.gradle` 中的 versionName 与 versionCode，并在 Android 更新记录首项新增对应修订；Rust 运行身份、模拟器及候选发布统一读取该配置。不要重新声明另一份版本常量。源码生成器会拒绝缺失、错序或滞后的更新记录。
+
+`Android repository contract and historical error replay` 必须通过才允许签名构建；所有签名构建必须执行 API 35、36 保存验收及真实动效验收。不要新增按历史分支名跳过核心验收的条件。候选 APK 统一由 `tools/android_candidate_publish.rs` 按版本与构建提交生成不可覆盖的预发布，不以候选发布成功代替模拟器验收。正式发布仍使用原有独立流程。
+
+目录导航验收复用 `tools/android_directory_evidence.rs` 的真实可见节点证明，不以面包屑、编辑器内联创建按钮或隐藏节点断言已返回目录。保留原压力规模、回执、重启及帧预算。
+
+
+## 代理错误防护表
+
+| 错误类别 | 强制约束 | 历史证据 |
+| --- | --- | --- |
+| APK版本从 PR 标题、分支名或合并状态推断 | app/build.gradle 是唯一版本源；android_release_identity.rs 解析同一配置；android_repository_contract.rs 验证候选发布器使用 GITHUB_SHA 和 ANDROID_RELEASE.candidate_tag，并验证更新索引首项与版本同步 | PR #112 的分支名和标题仍为 3.0.2.15，但同一提交 0cbb8089c76df2431b504f5af063a101af273bdd 的 Gradle versionName 已是 3.0.2.49，实际候选 APK 也为 3.0.2.49 |
+| 模拟器探针跨功能或语言硬编码造成假失败 | 动效探针只验证目录与帧耗时；AI 与多语言探针分别使用 android_ai_probe_text.rs 和 android_locale_probe_text.rs；android_repository_contract.rs 在签名前回放旧失败 | 3.0.2.49 的真实 API 35 证据中，动效探针被法律设置阻断；AI 截图显示 Enter a question 与 + Image；日文截图显示知識，而旧探针只接受目录词条ナレッジ |
+| 子页退出保存验收必须发送真实系统返回键 | android_save_exit_policy.rs 明确判定第二次 KEYCODE_BACK；android_repository_contract.rs 回放历史状态并验证探针调用 | 3.0.2.49 的 API 35/36 证据显示 back_sent=false，编辑器仍在屏幕上，8984ms 超时并未触发真正的退出保存 |
+| 独立 Rust 模拟器探针必须各自 warnings-as-errors 编译通过 | AI 与本地化文本辅助模块按职责拆分；签名前逐个以 rustc -D warnings 编译动效、AI、多语言、保存和正文输入探针 | 3.0.2.53 将互不相同的文本谓词放进一个私有模块，独立二进制只使用其中一部分，可能触发 dead_code 编译失败 |
+| 正文标题与正文回归标记必须避开输入法自动纠正 | tools/android_ime_marker.rs 的 ImeStableMarker 在编译期只接受非空 ASCII 数字；文档输入与分享探针共用同一组标记；android_repository_contract.rs 重放旧 CamelCase 与自然短语误判 | API 36 真实截图显示标题“# Stable heading”仍然存在，但旧探针搜索“StableHeading”而误报丢失；API 36 基础和极限验收重复发生 |

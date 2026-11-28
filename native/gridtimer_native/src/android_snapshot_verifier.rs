@@ -1,3 +1,4 @@
+// v3.0.2.15 - Reuse validated JSON schema headers by independently computed payload digest.
 // v3.0.2.10 - Parse plain and packed snapshot row metadata with the same rules.
 use jni::objects::{JByteArray, JClass, JString, ReleaseMode};
 use jni::sys::{jboolean, JNI_FALSE, JNI_TRUE};
@@ -54,7 +55,8 @@ pub fn verify_snapshot(
     let Some(table) = snapshot_table(prefix, supported) else {
         return false;
     };
-    if !hex_matches(ring::digest::digest(&SHA256, raw).as_ref(), expected) {
+    let payload_digest = ring::digest::digest(&SHA256, raw);
+    if !hex_matches(payload_digest.as_ref(), expected) {
         return false;
     }
     // Old history rows predate envelope seals. They are never selected as current
@@ -70,10 +72,28 @@ pub fn verify_snapshot(
             return false;
         }
     }
-    let Ok(header) = serde_json::from_slice::<SchemaHeader>(raw) else {
-        return false;
-    };
-    header.version.unwrap_or(i64::from(supported)) <= i64::from(supported)
+    // Every row still hashes its actual payload and verifies its own envelope
+    // and declared schema. Only the already-proved JSON header may be reused
+    // when the computed digest (not the untrusted SQL digest) is identical.
+    // A one-entry per-worker cache is constant-space and cannot retain content.
+    let key: [u8; 32] = payload_digest.as_ref().try_into().expect("SHA256 length");
+    VERIFIED_JSON_HEADER.with(|cached| {
+        if let Some((previous, version)) = cached.get() {
+            if previous == key {
+                return version.unwrap_or(i64::from(supported)) <= i64::from(supported);
+            }
+        }
+        let Ok(header) = serde_json::from_slice::<SchemaHeader>(raw) else {
+            return false;
+        };
+        cached.set(Some((key, header.version)));
+        header.version.unwrap_or(i64::from(supported)) <= i64::from(supported)
+    })
+}
+
+thread_local! {
+    static VERIFIED_JSON_HEADER: std::cell::Cell<Option<([u8; 32], Option<i64>)>> =
+        const { std::cell::Cell::new(None) };
 }
 
 #[no_mangle]
@@ -256,6 +276,22 @@ mod tests {
                 "{raw}"
             );
         }
+    }
+
+    #[test]
+    fn repeated_payload_cache_never_bypasses_digest_envelope_or_schema() {
+        let raw = br#"{"schemaVersion":15,"notes":[]}"#;
+        let (prefix, digest, envelope) = seal(raw, 15);
+        assert!(verify_snapshot(raw, &prefix, &digest, &envelope, 15));
+        assert!(verify_snapshot(raw, &prefix, &digest, &envelope, 15));
+        assert!(!verify_snapshot(raw, &prefix, &digest, "invalid", 15));
+        assert!(!verify_snapshot(raw, &prefix, "invalid", &envelope, 15));
+        assert!(!verify_snapshot(raw, &prefix, &digest, &envelope, 14));
+        let changed = br#"{"schemaVersion":16,"notes":[]}"#;
+        assert!(!verify_snapshot(changed, &prefix, &digest, &envelope, 15));
+        let (other_prefix, other_digest, other_envelope) = seal(changed, 15);
+        assert!(!verify_snapshot(changed, &other_prefix, &other_digest, &other_envelope, 15));
+        assert!(verify_snapshot(raw, &prefix, &digest, &envelope, 15));
     }
 
     #[test]

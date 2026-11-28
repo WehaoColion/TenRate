@@ -1,15 +1,86 @@
+# v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
+# v3.0.2.35 - Execute baseline and million-row workloads on both emulator APIs.
+# v3.0.2.33 - One candidate publisher and mandatory branch-independent emulator acceptance.
+# v3.0.2.27 - Run unchanged acceptance on API 35 and 36.
 name: Android signed APK
 
 on:
   push:
-    branches: [main, fix/android-slot-sheet-header-20261018, feat/android-ai-conversation-20261019, feat/android-agent-workspace-20261019, feat/android-finance-navigation-20261019, fix/android-cold-start-20261020, fix/android-fast-local-start-20261021, perf/android-snapshot-stream-20261021, perf/android-startup-pass3-20261021, perf/android-rust-knowledge-counts-startup-decode, fix/android-save-queue-stale-drafts-v2.23.2.51, perf/android-image-import-batched-v2.23.2.52, fix/android-insert-block-after-image-v2.23.2.53, perf/android-save-preflight-index-v2.23.2.54, perf/android-verified-current-startup-v2.23.2.55, fix/android-sticky-edit-first-2.23.2.56, perf/android-early-shell-v2.23.2.57, fix/android-empty-document-exit-v2.23.2.59, feat/android-inline-children-v2.23.3, perf/android-rust-hierarchy-create-save-2.23.4, feat/android-knowledge-sibling-duplicate, feat/android-trash-auto-purge-100-days, fix/android-knowledge-page-reentry-20261102, feat/android-ai-vision-multimodal-20261103, release/android-2.23.4.6-integrated-20261103, feat/android-move-frequent-destinations-20261104, feat/android-canvas-usability-safety-20261104, fix/android-header-archive-single-row-v2.23.4.9, feat/android-home-header-refine-v2.23.4.10, fix/android-canvas-gesture-flicker-v2.23.4.11, feat/android-legal-knowledge-exclusions-20261108, feat/android-startup-shell-refresh-v2.23.4.14, feat/android-customer-network-canvas-ux-20261111, feat/android-universal-canvas-entry-20261111, feat/android-canvas-zoom-1percent-20261111, feat/android-document-block-drag-v2.23.4.18, feat/android-referral-forest-layout-v2.13.5.1, feat/android-knowledge-skeuomorphic-ui-v2.13.5.2, fix/android-home-today-badge-v2.13.5.3, feat/android-customer-payment-v2.13.5.5, feat/android-client-payment-ledger-v2.13.5.6, feat/android-knowledge-workspace-design-v2.13.5.8, feat/android-ai-durable-conversation-v2.13.5.9, feat/android-knowledge-actions-v2.13.5.10, feat/android-knowledge-motion-v2.13.5.11, feat/android-knowledge-atelier-v2.13.5.12, feat/android-canvas-ai-question-v2.13.5.13, feat/android-canvas-qa-redesign-v3.0, feat/android-canvas-answer-ux-v3.0.2, perf/android-knowledge-create-delta-v3.0.2.1, fix/android-sticky-summary-v3.0.2.3, perf/android-save-preflight-current-v3.0.2.4, fix/android-document-typing-stability-v3.0.2.7, perf/android-knowledge-commit-*]
+    paths:
+      - 'app/**'
+      - 'native/gridtimer_native/**'
+      - 'tools/android*'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - 'build.gradle*'
+      - 'settings.gradle*'
+      - '.github/workflows/android-release.yml'
+      - '.github/workflows/publish-apk.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  repository-contract:
+    name: Android repository contract and historical error replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and execute the Rust contract before signing
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustc +stable --edition=2021 -D warnings --test tools/android_repository_contract.rs -o android_repository_contract_tests
+          ./android_repository_contract_tests --nocapture
+          rustc +stable --edition=2021 -D warnings tools/android_repository_contract.rs -o android_repository_contract
+          ./android_repository_contract
+
+  history-reclaim-extreme:
+    name: Rust SQLite physical reclaim and exact 100000-row history recovery
+    needs: repository-contract
+    runs-on: windows-2022
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+          cargo fetch --locked --manifest-path native/gridtimer_native/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile extreme migration test
+        shell: pwsh
+        run: |
+          cargo test --locked --offline --release --manifest-path native/gridtimer_native/Cargo.toml --lib android_history_sqlite::tests::physical_sqlite_reclaim_retains_all_100000_verified_history_rows --no-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Migrate and independently restore all 100000 histories
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP 'tenrate-history-reclaim'
+          New-Item -ItemType Directory -Force $fixtureRoot | Out-Null
+          $env:TEMP = $fixtureRoot
+          $env:TMP = $fixtureRoot
+          $free = (Get-Item $fixtureRoot).PSDrive.Free
+          if ($free -lt 12GB) { throw "Insufficient disk for the full 100000-row SQLite fixture and VACUUM; refusing to shrink workload." }
+          cargo test --locked --offline --release --manifest-path native/gridtimer_native/Cargo.toml --lib android_history_sqlite::tests::physical_sqlite_reclaim_retains_all_100000_verified_history_rows -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath history_reclaim_extreme.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Select-String -Path history_reclaim_extreme.txt -SimpleMatch 'verified_history_rows=100000')) { throw 'Missing complete recovery receipt' }
+          if (!(Select-String -Path history_reclaim_extreme.txt -SimpleMatch 'test result: ok. 1 passed')) { throw 'Extreme test did not execute successfully' }
+      - name: Upload extreme migration receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-reclaim-100000-${{ github.sha }}
+          path: history_reclaim_extreme.txt
+          if-no-files-found: warn
+          retention-days: 21
+
   release:
+    needs: repository-contract
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -89,6 +160,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Multimodal conversation tests failed' }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib ai_client::tests::deepseek_pro_connection_tests_text_without_sending_images
           if ($LASTEXITCODE -ne 0) { throw 'DeepSeek Pro capability regression failed' }
+          cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_history_sqlite::tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_history_chunks::tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_snapshot_codec::tests
           if ($LASTEXITCODE -ne 0) { throw 'Snapshot codec regression tests failed' }
           cargo test --locked --offline --manifest-path native/gridtimer_native/Cargo.toml --lib android_snapshot_verifier::tests
@@ -101,6 +176,19 @@ jobs:
         run: |
           rustc --edition=2021 -D warnings --emit=metadata tools/android_canvas_flicker_probe.rs -o "$env:RUNNER_TEMP\canvas_probe.rmeta"
           if ($LASTEXITCODE -ne 0) { throw 'Canvas emulator probe does not compile' }
+          $probes = @(
+            'tools/android_knowledge_motion_probe.rs',
+            'tools/android_ai_conversation_probe.rs',
+            'tools/android_locale_probe.rs',
+            'tools/android_knowledge_save_probe.rs',
+            'tools/android_document_typing_probe.rs'
+          )
+          foreach ($probe in $probes) {
+            $probeName = [IO.Path]::GetFileNameWithoutExtension($probe)
+            $output = Join-Path $env:RUNNER_TEMP "$probeName.rmeta"
+            & rustc --edition=2021 -D warnings --emit=metadata $probe -o $output
+            if ($LASTEXITCODE -ne 0) { throw "Android acceptance probe does not compile cleanly: $probe" }
+          }
       - name: Restore signing inputs and verify original certificate
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -190,11 +278,15 @@ jobs:
           Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'tenrate-release.der')
 
   knowledge-save-emulator:
-    name: Android 35 signed APK knowledge save and editor acceptance
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
+    name: Android ${{ matrix.api }} ${{ matrix.history }} signed APK knowledge save and editor acceptance
     needs: release
     runs-on: ubuntu-22.04
-    timeout-minutes: 100
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
+        history: [baseline, extreme]
     permissions:
       contents: read
       actions: read
@@ -215,8 +307,27 @@ jobs:
           test "${#packages[@]}" -eq 1
           tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
           cd ..
-          rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
+          case "${{ matrix.history }}" in
+            baseline) stress_flags=() ;;
+            extreme) stress_flags=(--cfg tenrate_extreme_history) ;;
+            *) echo "Unknown stress profile"; exit 1 ;;
+          esac
+          rustc --edition=2021 -D warnings -O "${stress_flags[@]}" tools/android_knowledge_save_probe.rs -o knowledge_save_probe
           rustc --edition=2021 -D warnings -O tools/android_document_typing_probe.rs -o document_typing_probe
+      - name: Reserve host storage for the selected real history workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Remove unused preinstalled SDKs, not Android tools or the signed APK.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h .
+          available_kib="$(df -Pk . | awk 'NR==2 {print $4}')"
+          minimum_gib=40
+          if [ "${{ matrix.history }}" = extreme ]; then minimum_gib=72; fi
+          if [ "$available_kib" -lt "$((minimum_gib * 1024 * 1024))" ]; then
+            echo "Insufficient host disk for selected workload: ${{ matrix.history }}. Need ${minimum_gib} GiB before emulator setup. Refusing to shrink fixture."
+            exit 1
+          fi
       - name: Prepare SQLite for the Rust history-load fixture
         shell: bash
         run: |
@@ -233,26 +344,35 @@ jobs:
       - name: Install, launch, create a page, force-stop and verify on device
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          disk-size: ${{ matrix.history == 'extreme' && '64G' || '32G' }}
           disable-animations: true
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${{ matrix.api }}"
             adb install -r signed_apk/tenfold_v*.apk
             ./document_typing_probe document_typing_evidence || touch document_typing_failed
             adb shell pm clear com.ofairyo.gridtimer
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
-            ./knowledge_save_probe knowledge_save_evidence
+            ./knowledge_save_probe sticky_newline_evidence --sticky-newlines || touch sticky_newlines_failed
+            adb shell pm clear com.ofairyo.gridtimer
+            adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
+            ./knowledge_save_probe knowledge_save_evidence || touch knowledge_save_failed
+            grep -Fx 'profile=${{ matrix.history }}' knowledge_save_evidence/stress_profile.txt
             test ! -f document_typing_failed
+            test ! -f sticky_newlines_failed
+            test ! -f knowledge_save_failed
       - name: Summarize actual simulator acceptance
         if: always()
         shell: bash
         run: |
           if test -f document_typing_evidence/report.md; then cat document_typing_evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if test -f sticky_newline_evidence/report.md; then cat sticky_newline_evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
           if test -f knowledge_save_evidence/report.md; then
             cat knowledge_save_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
           else
@@ -262,100 +382,99 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-knowledge-save-and-typing-${{ github.sha }}
+          name: android-knowledge-save-and-typing-api${{ matrix.api }}-${{ matrix.history }}-${{ github.sha }}
           path: |
             document_typing_evidence/
+            sticky_newline_evidence/
             knowledge_save_evidence/
             !knowledge_save_evidence/*.db*
             !knowledge_save_evidence/legacy_history_payload_sample.json
           if-no-files-found: warn
           retention-days: 21
 
-  publish-knowledge-save-candidate:
-    name: Publish emulator-verified knowledge save APK
-    if: startsWith(github.ref, 'refs/heads/perf/android-knowledge-commit-') || github.ref == 'refs/heads/perf/android-save-preflight-current-v3.0.2.4'
-    needs: [release, knowledge-save-emulator]
-    runs-on: ubuntu-latest
+  storage-growth-emulator:
+    name: Android ${{ matrix.api }} signed APK fixed-length storage growth measurement
+    needs: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
     permissions:
-      contents: write
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: tenrate-signed-apk
-          path: package
-      - name: Publish immutable commit-scoped candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
+          path: signed_apk
+      - name: Verify exact APK and compile Rust storage measurement
+        shell: bash
         run: |
-          rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
-          ./android_candidate_publish
+          set -euo pipefail
+          cd signed_apk
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
+          cd ..
+          rustc --edition=2021 -D warnings -O tools/android_knowledge_save_probe.rs -o knowledge_save_probe
+      - name: Enable KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Measure fixed-size authored content over 2500 real saves
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 16G
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${{ matrix.api }}"
+            adb install -r signed_apk/tenfold_v*.apk
+            adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
+            ./knowledge_save_probe storage_growth_evidence --storage-growth
+      - name: Upload storage measurements and exact save receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-storage-growth-api${{ matrix.api }}-${{ github.sha }}
+          path: storage_growth_evidence/
+          if-no-files-found: warn
+          retention-days: 21
 
-  publish-candidate:
-    name: Publish signed prerelease
+  publish-signed-test-candidate:
+    name: Publish signed Android test APK (acceptance independently tracked)
+    if: github.ref != 'refs/heads/main'
     needs: release
-    if: github.ref == 'refs/heads/perf/android-snapshot-stream-20261021' || github.ref == 'refs/heads/perf/android-startup-pass3-20261021' || github.ref == 'refs/heads/perf/android-save-preflight-index-v2.23.2.54' || github.ref == 'refs/heads/perf/android-verified-current-startup-v2.23.2.55' || github.ref == 'refs/heads/perf/android-early-shell-v2.23.2.57' || github.ref == 'refs/heads/fix/android-empty-document-exit-v2.23.2.59' || github.ref == 'refs/heads/feat/android-inline-children-v2.23.3' || github.ref == 'refs/heads/perf/android-rust-hierarchy-create-save-2.23.4' || github.ref == 'refs/heads/release/android-2.23.4.6-integrated-20261103' || github.ref == 'refs/heads/feat/android-move-frequent-destinations-20261104' || github.ref == 'refs/heads/feat/android-canvas-usability-safety-20261104' || github.ref == 'refs/heads/fix/android-header-archive-single-row-v2.23.4.9' || github.ref == 'refs/heads/feat/android-home-header-refine-v2.23.4.10' || github.ref == 'refs/heads/fix/android-canvas-gesture-flicker-v2.23.4.11' || github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' || github.ref == 'refs/heads/fix/android-sticky-summary-v3.0.2.3' || github.ref == 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: write
     steps:
       - uses: actions/checkout@v4
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' || github.ref == 'refs/heads/fix/android-sticky-summary-v3.0.2.3' || github.ref == 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
       - uses: actions/download-artifact@v4
         with:
           name: tenrate-signed-apk
           path: package
-      - name: Verify checksum and push immutable GitHub Release assets
-        if: github.ref != 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' && github.ref != 'refs/heads/fix/android-home-today-badge-v2.13.5.3' && github.ref != 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' && github.ref != 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' && github.ref != 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' && github.ref != 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' && github.ref != 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' && github.ref != 'refs/heads/feat/android-canvas-qa-redesign-v3.0' && github.ref != 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' && github.ref != 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' && github.ref != 'refs/heads/fix/android-sticky-summary-v3.0.2.3' && github.ref != 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
-        shell: bash
+      - name: Publish immutable commit-scoped test prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import hashlib, pathlib, subprocess, os, re, json
-          def gh(*args, check=True):
-              result = subprocess.run(['gh', *args, '--repo', os.environ['GITHUB_REPOSITORY']], text=True, capture_output=True)
-              if check and result.returncode:
-                  raise SystemExit(result.stderr or result.stdout)
-              return result
-          assets = list(pathlib.Path('package').glob('*.apk'))
-          if len(assets) != 1:
-              raise SystemExit('Exactly one signed APK is required')
-          apk = assets[0]
-          match = re.fullmatch(r'tenfold_v(\d+(?:\.\d+){2,3})\.apk', apk.name)
-          if not match:
-              raise SystemExit('Unexpected APK filename')
-          checksum = apk.with_name(apk.name + '.sha256')
-          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
-          if checksum.read_text().split() != [digest, apk.name]:
-              raise SystemExit('APK SHA256 mismatch')
-          version = match.group(1)
-          tag = 'v' + version
-          found = gh('release', 'view', tag, '--json', 'assets', check=False)
-          if found.returncode:
-              if 'not found' not in (found.stderr + found.stdout).lower():
-                  raise SystemExit(found.stderr or found.stdout)
-              gh('release', 'create', tag, str(apk), str(checksum), '--target', os.environ['GITHUB_SHA'], '--prerelease', '--title', f'Android {version}', '--notes', f'Signed candidate APK from {os.environ["GITHUB_SHA"]}. SHA256: {digest}. Not device-verified.')
-          else:
-              names = {item['name'] for item in json.loads(found.stdout)['assets']}
-              for item in [apk, checksum]:
-                  if item.name in names:
-                      folder = pathlib.Path('previous'); folder.mkdir(exist_ok=True)
-                      gh('release', 'download', tag, '--pattern', item.name, '--dir', str(folder))
-                      if (folder / item.name).read_bytes() != item.read_bytes():
-                          raise SystemExit('Existing release asset differs; refusing overwrite')
-                  else:
-                      gh('release', 'upload', tag, str(item))
-          gh('release', 'edit', tag, '--prerelease')
-          print(f'Published {apk.name} SHA256 {digest}')
-          PY
-      - name: Publish immutable commit-scoped candidate with Rust
-        if: github.ref == 'refs/heads/feat/android-referral-forest-layout-v2.13.5.1' || github.ref == 'refs/heads/fix/android-home-today-badge-v2.13.5.3' || github.ref == 'refs/heads/feat/android-client-payment-ledger-v2.13.5.6' || github.ref == 'refs/heads/feat/android-knowledge-workspace-design-v2.13.5.8' || github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9' || github.ref == 'refs/heads/feat/android-knowledge-actions-v2.13.5.10' || github.ref == 'refs/heads/feat/android-knowledge-motion-v2.13.5.11' || github.ref == 'refs/heads/feat/android-canvas-qa-redesign-v3.0' || github.ref == 'refs/heads/feat/android-canvas-answer-ux-v3.0.2' || github.ref == 'refs/heads/perf/android-knowledge-create-delta-v3.0.2.1' || github.ref == 'refs/heads/fix/android-sticky-summary-v3.0.2.3' || github.ref == 'refs/heads/fix/android-document-typing-stability-v3.0.2.7'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
+          set -euo pipefail
           rustc --edition=2021 -D warnings -O tools/android_candidate_publish.rs -o android_candidate_publish
           ./android_candidate_publish
 
@@ -869,11 +988,14 @@ jobs:
 
 
   ai-conversation-emulator:
-    name: Android 2.13.5.9 AI conversation on API 35 emulator
-    if: github.ref == 'refs/heads/feat/android-ai-durable-conversation-v2.13.5.9'
+    name: Android ${{ matrix.api }} signed AI conversation layout acceptance
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
     permissions:
       contents: read
       actions: read
@@ -889,7 +1011,10 @@ jobs:
         run: |
           set -euo pipefail
           cd ai_chat_apk
-          tr -d '\r' < tenfold_v2.13.5.9.apk.sha256 | sha256sum -c -
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_ai_conversation_probe.rs -o android_ai_conversation_probe
       - name: Enable KVM acceleration
@@ -899,10 +1024,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
           test -e /dev/kvm
-      - name: Boot API 35 Android emulator, install signed APK and inspect AI history
+      - name: Boot Android emulator, install signed APK and inspect AI chat
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -911,7 +1036,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r ai_chat_apk/tenfold_v2.13.5.9.apk
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${{ matrix.api }}"
+            adb install -r ai_chat_apk/tenfold_v*.apk
             adb shell cmd locale set-app-locales com.ofairyo.gridtimer --locales zh-CN || true
             ./android_ai_conversation_probe ai_chat_evidence
       - name: Report real emulator result
@@ -927,8 +1053,78 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ai-conversation-v2.13.5.9-emulator-evidence
+          name: ai-conversation-api${{ matrix.api }}-${{ github.sha }}
           path: ai_chat_evidence/
+          if-no-files-found: warn
+          retention-days: 21
+
+  localization-emulator:
+    name: Android ${{ matrix.api }} signed multilingual navigation acceptance
+    needs: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download matching signed APK
+        uses: actions/download-artifact@v4
+        with:
+          name: tenrate-signed-apk
+          path: locale_apk
+      - name: Check APK checksum and build Rust UI probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd locale_apk
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
+          cd ..
+          rustc --edition=2021 -D warnings -O tools/android_locale_probe.rs -o android_locale_probe
+      - name: Enable KVM acceleration
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          test -e /dev/kvm
+      - name: Boot Android emulator, install signed APK and verify ten non-Chinese locales
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: |
+            set -eu
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${{ matrix.api }}"
+            adb install -r locale_apk/tenfold_v*.apk
+            ./android_locale_probe
+      - name: Report real emulator result
+        if: always()
+        shell: bash
+        run: |
+          if test -f locale_evidence/report.md; then
+            cat locale_evidence/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No emulator evidence: do not claim device acceptance." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Archive actual emulator screen and UI hierarchy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: localization-api${{ matrix.api }}-${{ github.sha }}
+          path: locale_evidence/
           if-no-files-found: warn
           retention-days: 21
 
@@ -997,8 +1193,7 @@ jobs:
           retention-days: 21
 
   knowledge-motion-emulator:
-    name: Android 2.13.5.12 knowledge atelier on API 35
-    if: github.ref == 'refs/heads/feat/android-knowledge-atelier-v2.13.5.12'
+    name: Android signed APK continuous knowledge motion on API 35
     needs: release
     runs-on: ubuntu-22.04
     timeout-minutes: 95
@@ -1017,7 +1212,10 @@ jobs:
         run: |
           set -euo pipefail
           cd motion_apk
-          tr -d '\r' < tenfold_v2.13.5.12.apk.sha256 | sha256sum -c -
+          shopt -s nullglob
+          packages=(tenfold_v*.apk)
+          test "${#packages[@]}" -eq 1
+          tr -d '\r' < "${packages[0]}.sha256" | sha256sum -c -
           cd ..
           rustc --edition=2021 -D warnings -O tools/android_knowledge_motion_probe.rs -o knowledge_motion_probe
       - name: Allow KVM
@@ -1039,7 +1237,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
             set -eu
-            adb install -r motion_apk/tenfold_v2.13.5.12.apk
+            adb install -r motion_apk/tenfold_v*.apk
             adb shell settings put global window_animation_scale 1.0
             adb shell settings put global transition_animation_scale 1.0
             adb shell settings put global animator_duration_scale 1.0
@@ -1058,7 +1256,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: knowledge-atelier-v2.13.5.12-api35-evidence
+          name: knowledge-motion-api35-evidence-${{ github.sha }}
           path: knowledge_motion_evidence/
           if-no-files-found: warn
           retention-days: 21

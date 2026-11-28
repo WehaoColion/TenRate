@@ -1,3 +1,4 @@
+// v3.0.2.30 - Record Activity interaction without dispatching IO.
 // v2.23.2.46 - Start restore before composition and move verifier setup off Main.
 const REPOSITORY: &str = "com/ofairyo/gridtimer/data/TimerRepository.kt";
 const ACTIVITY: &str = "com/ofairyo/gridtimer/MainActivity.kt";
@@ -22,6 +23,19 @@ pub fn render(path: &str, source: &str) -> Result<String, String> {
         ),
         _ => return Ok(source.to_owned()),
     };
+    let mut source = source.to_owned();
+    if path == ACTIVITY {
+        let anchor = "    override fun onCreate(savedInstanceState: Bundle?)";
+        if source.matches(anchor).count() != 1 || source.contains("override fun onUserInteraction(") {
+            return Err("activity maintenance interaction anchor changed".into());
+        }
+        source = source.replacen(anchor, &format!(r#"    override fun onUserInteraction() {{
+        super.onUserInteraction()
+        GridTimerApplication.timerRepository(this).recordNoteMaintenanceInteraction()
+    }}
+
+{anchor}"#), 1);
+    }
     if source.matches(old).count() != 1 {
         return Err(format!("cold startup anchor is not unique: {path}"));
     }

@@ -1,3 +1,5 @@
+// v3.0.2.38 - Compose component-local hook and production source-generation regression.
+// v3.0.2.33 - Canonical Android release identity and checked update history.
 // v3.0.2.3 - Bound the sticky home preview through the Rust-generated UI.
 // v2.23.2.56 - Open existing sticky notes in editable source by default.
 // v2.23.2.6 - Generate offline Markdown and formula reading with safe render boundaries.
@@ -187,6 +189,8 @@ fn main() {
 }
 
 fn run() -> io::Result<()> {
+    let checked_update_history = android_update_history_source::checked_contents()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let output_root = env::args_os()
         .nth(1)
         .map(PathBuf::from)
@@ -454,103 +458,7 @@ fn run() -> io::Result<()> {
         android_knowledge_compat::EDIT_CONTENTS,
     )?;
 
-    for source in kotlin_sources::SOURCES {
-        let rendered = render_source(
-            source.contents,
-            &rendezvous_identity,
-            &bootstrap_public_sync_server_url,
-        )?;
-        let rendered = android_performance_override::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_responsiveness::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = diagnostics_export_backend::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = diagnostics_collection_backend::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = diagnostics_export_ui::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_snapshot_memory::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_backup_availability::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_timer_latency::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_latency::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_test_fixes::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_startup_loading::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_privacy_generation::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_timer_action::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_timer_layout::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_background::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_local_startup::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_save_performance::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_save_queue::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_device_timer_sync::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_knowledge_compat::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_canvas_ui::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_rest_bell::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_startup_stream::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        // Consume the verified hydration guard before later screen rewrites
-        // change the exact textual anchors of the startup loader.
-        let rendered = android_startup_shell::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_history_storage::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_startup_decode::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_list_performance::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_ui_localization::render(source.path, &rendered);
-        let rendered = android_legal_integration::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_collection_recovery::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_sticky_home_summary::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_knowledge_filters::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_ai_workflow::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_sync_failure::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = legal_report_sync_source::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_persist_debounce::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_note_persist_preflight::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_cold_start::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_local_read_efficiency::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_image_import_performance::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_trash_retention::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_english_home::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_header_single_row::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let rendered = android_knowledge_save_v2::render(source.path, &rendered)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        write_source(&output_root, source.path, &rendered)?;
-    }
+    write_base_sources(&output_root, &rendezvous_identity, &bootstrap_public_sync_server_url)?;
 
     write_source(
         &output_root,
@@ -628,7 +536,7 @@ fn run() -> io::Result<()> {
     write_source(
         &output_root,
         android_update_history_source::PATH,
-        android_update_history_source::CONTENTS,
+        checked_update_history,
     )?;
 
     write_source(
@@ -752,6 +660,113 @@ fn read_android_discovery_identity() -> io::Result<AndroidDiscoveryIdentity> {
             "CI requires the existing Android discovery public key",
         )),
     }
+}
+
+// The release build and its pre-signing regression use the same full source
+// generation pipeline, including every transform before write_source.
+fn write_base_sources(
+    output_root: &Path,
+    rendezvous_identity: &AndroidDiscoveryIdentity,
+    bootstrap_public_sync_server_url: &str,
+) -> io::Result<()> {
+    for source in kotlin_sources::SOURCES {
+        let rendered = render_source(
+            source.contents,
+            &rendezvous_identity,
+            &bootstrap_public_sync_server_url,
+        )?;
+        let rendered = android_performance_override::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_responsiveness::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = diagnostics_export_backend::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = diagnostics_collection_backend::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = diagnostics_export_ui::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_snapshot_memory::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_backup_availability::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_timer_latency::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_latency::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_test_fixes::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_startup_loading::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_privacy_generation::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_timer_action::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_timer_layout::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_background::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_local_startup::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_save_performance::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_save_queue::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_device_timer_sync::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_knowledge_compat::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_canvas_ui::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_rest_bell::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_startup_stream::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        // Consume the verified hydration guard before later screen rewrites
+        // change the exact textual anchors of the startup loader.
+        let rendered = android_startup_shell::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_history_storage::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_startup_decode::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_list_performance::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_ui_localization::render(source.path, &rendered);
+        let rendered = android_legal_integration::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_collection_recovery::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_sticky_home_summary::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_knowledge_filters::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_ai_workflow::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_sync_failure::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = legal_report_sync_source::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_persist_debounce::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_note_persist_preflight::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_cold_start::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_local_read_efficiency::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_image_import_performance::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_trash_retention::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_english_home::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_header_single_row::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let rendered = android_knowledge_save_v2::render(source.path, &rendered)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        write_source(&output_root, source.path, &rendered)?;
+    }
+    Ok(())
 }
 
 fn render_source(
@@ -905,6 +920,9 @@ fn write_source(output_root: &Path, relative_path: &str, contents: &str) -> io::
         .replace("十倍率", "tenfold")
         .replace("grid_timer_data_", "tenfold_data_")
         .replace("grid_timer_log_", "tenfold_log_");
+    let contents = android_local_read_efficiency::finalize_storage(relative_path, &contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let contents = android_ui_localization::finalize_ui(relative_path, &contents);
     fs::write(destination, contents.trim_start())
 }
 
@@ -967,6 +985,41 @@ mod tests {
             .and_then(|value| value.split('"').next())
             .expect("first Android history entry version");
         assert_eq!(first_version, release_version);
+    }
+
+    #[test]
+    fn production_base_source_pipeline_generates_release_editor_and_database() {
+        use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+        let root = std::env::temp_dir().join(format!(
+            "tenrate-sourcegen-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let identity = super::public_discovery_identity(
+            "B_bNXMMqkLjbwJeFouOFQyODcdzRtjL-ApRdtVEFx14".to_owned()
+        ).unwrap();
+        let generated = (|| -> std::io::Result<()> {
+            // This is the exact release path, not a hand-selected subset of
+            // transforms. 3.0.2.37 passed unit tests yet failed this path.
+            super::write_base_sources(&root, &identity, "")?;
+            let editor = fs::read_to_string(super::source_destination(
+                &root, super::android_document_typing_stability::SCREEN
+            ))?;
+            assert_eq!(editor.matches("onCompositionCommit: () -> Unit,").count(), 1);
+            assert_eq!(editor.matches("onCompositionCommit = {").count(), 1);
+            assert!(editor.contains("onCompositionCommit()"));
+            assert!(!editor.contains("onTextChanged(textFieldState.copy(composition = null))"));
+            assert!(editor.contains("document_body_cursor_"));
+            assert!(editor.contains("KeyboardOptions(autoCorrect = false)"));
+            let db = fs::read_to_string(root.join("com/ofairyo/gridtimer/data/AppStateDatabase.kt"))?;
+            assert!(db.contains("snapshot_history_header_guard"));
+            assert!(db.contains("storage_encoding ASC, id ASC"));
+            assert!(db.contains("verifyNativeSnapshotRows(workspaceKey)"));
+            let sticky = fs::read_to_string(root.join("com/ofairyo/gridtimer/ui/SmartisanNoteUi.kt"))?;
+            assert!(sticky.contains("fun authoredBody(document: NoteDocument)"));
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&root);
+        generated.expect("all production base sources must generate before signing");
     }
 
     #[test]

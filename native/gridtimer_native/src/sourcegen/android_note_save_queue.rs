@@ -1,3 +1,6 @@
+// v3.0.2.46 - Separate accepted Back, durable receipt and navigation diagnostics.
+// v3.0.2.15 - Keep the queue alive after isolated cancellation and log active stalled operations.
+// v3.0.2.15 - Bound hierarchy queue admission without cancelling accepted durable writes.
 // v3.0.2.13 - Bind autosave receipts to their exact queue epoch and time durable exits.
 // v2.23.2.51 - Drop interleaved stale draft writes before they reach full-snapshot IO.
 // v2.23.2.35 - Hand off a committed exit before disposal can enqueue it again.
@@ -338,6 +341,8 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
     fun mutationEpoch(): Long = synchronized(lifecycleLock) { acceptedMutationEpoch }
     private val shutdownRequested = AtomicBoolean(false)
     private val shutdownCompletion = CompletableDeferred<NoteSaveResult>()
+    private data class RunningMutation(val kind: String, val startedNanos: Long)
+    @Volatile private var runningMutation: RunningMutation? = null
     private val worker = scope.launch { runWorker() }
 
     private fun reportSlow(phase: String, startedNanos: Long) {
@@ -361,9 +366,24 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 val kind = if (mutation.autosaveKey == null) "explicit" else "autosave"
                 reportSlow("$kind.queue_wait", mutation.queuedAtNanos)
                 val started = System.nanoTime()
-                val result = execute(mutation, operation)
-                reportSlow("$kind.operation", started)
-                settle(mutation, result)
+                runningMutation = RunningMutation(kind, started)
+                // A live stall must leave evidence even if the operation never returns.
+                // Run on another dispatcher, never inside the writer or its mutex.
+                val watchdog = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                    while (true) {
+                        kotlinx.coroutines.delay(5_000L)
+                        if (runningMutation?.startedNanos != started) break
+                        reportSlow("$kind.operation_pending", started)
+                    }
+                }
+                try {
+                    val result = execute(mutation, operation)
+                    reportSlow("$kind.operation", started)
+                    settle(mutation, result)
+                } finally {
+                    runningMutation = null
+                    watchdog.cancel()
+                }
             }
         } finally {
             queue.close()
@@ -386,8 +406,15 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
                 NoteSaveFailure.QUEUE_UNAVAILABLE,
                 "The note mutation worker was cancelled."
             )
-            settle(mutation, failed)
-            throw cancellation
+            // A child operation may time out while the queue itself remains active.
+            // Do not strand all later drafts by terminating a healthy worker.
+            if (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive == true) {
+                reportFailure(cancellation)
+                failed
+            } else {
+                settle(mutation, failed)
+                throw cancellation
+            }
         } catch (throwable: Throwable) {
             reportFailure(throwable)
             NoteSaveResult.failed(
@@ -450,6 +477,45 @@ pub const CONTROLLER: &str = r####"internal class NoteMutationDrainController(
         }
         if (!queued) completion.complete(queueUnavailableResult())
         return completion
+    }
+
+    // A new hierarchy request has no unsaved document payload. It may expire
+    // BEFORE it starts, but an admitted transaction must complete normally.
+    // Keep FIFO order and leave all earlier edits untouched.
+    fun enqueueHierarchy(
+        maxQueueWaitMillis: Long = 10_000L,
+        operation: suspend () -> NoteSaveResult
+    ): CompletableDeferred<NoteSaveResult> {
+        val phase = java.util.concurrent.atomic.AtomicInteger(0) // queued / running / expired
+        val result = CompletableDeferred<NoteSaveResult>()
+        val expired = NoteSaveResult.failed(NoteSaveFailure.QUEUE_UNAVAILABLE,
+            "Hierarchy request expired before its transaction started.")
+        val queuedAt = System.nanoTime()
+        val queued = enqueue {
+            if (!phase.compareAndSet(0, 1)) expired else operation()
+        }
+        val watchdog = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.delay(maxQueueWaitMillis)
+            if (phase.compareAndSet(0, 2)) {
+                reportSlow("hierarchy.queue_deadline", queuedAt)
+                runningMutation?.let { running ->
+                    reportSlow("hierarchy.blocked_by.${running.kind}", running.startedNanos)
+                }
+                result.complete(expired)
+            }
+        }
+        scope.launch {
+            try {
+                result.complete(queued.await())
+            } finally {
+                watchdog.cancel()
+                if (!result.isCompleted) result.complete(queueUnavailableResult())
+            }
+        }.invokeOnCompletion {
+            watchdog.cancel()
+            if (!result.isCompleted) result.complete(queueUnavailableResult())
+        }
+        return result
     }
 
     fun enqueueAutosave(
@@ -599,6 +665,76 @@ class NoteSaveQueueTest {
             fail("repository closed twice")
         }) { fail("second shutdown flushed"); NoteSaveResult.committed() })
         assertEquals(1, closes)
+    }
+
+    @Test fun cancelledChildOperationDoesNotStrandLaterDurableSave() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val errors = java.util.concurrent.atomic.AtomicInteger(0)
+        val controller = NoteMutationDrainController(scope) { errors.incrementAndGet() }
+        try {
+            val child = controller.enqueue {
+                throw kotlinx.coroutines.CancellationException("operation cancelled")
+            }
+            val later = controller.enqueue { NoteSaveResult.committed() }
+            assertFalse(withTimeout(5_000L) { child.await() }.savedLocally)
+            assertTrue(withTimeout(5_000L) { later.await() }.savedLocally)
+            assertEquals(1, errors.get())
+        } finally { scope.cancel() }
+    }
+
+    @Test fun expiredHierarchyNeverCreatesAfterRetryAndPredecessorStillCommits() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val controller = NoteMutationDrainController(scope) { throw it }
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val writes = java.util.concurrent.atomic.AtomicInteger(0)
+        try {
+            val predecessor = controller.enqueue {
+                started.complete(Unit)
+                release.await()
+                NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            val expired = controller.enqueueHierarchy(maxQueueWaitMillis = 25L) {
+                writes.incrementAndGet()
+                NoteSaveResult.committed()
+            }
+            assertFalse(withTimeout(5_000L) { expired.await() }.savedLocally)
+            assertFalse(predecessor.isCompleted)
+            val retry = controller.enqueueHierarchy(maxQueueWaitMillis = 5_000L) {
+                writes.incrementAndGet()
+                NoteSaveResult.committed()
+            }
+            release.complete(Unit)
+            assertTrue(withTimeout(5_000L) { predecessor.await() }.savedLocally)
+            assertTrue(withTimeout(5_000L) { retry.await() }.savedLocally)
+            assertEquals(1, writes.get())
+        } finally {
+            release.complete(Unit)
+            scope.cancel()
+        }
+    }
+
+    @Test fun startedHierarchyIsNotCancelledByQueueDeadline() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val controller = NoteMutationDrainController(scope) { throw it }
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        try {
+            val request = controller.enqueueHierarchy(maxQueueWaitMillis = 500L) {
+                started.complete(Unit)
+                release.await()
+                NoteSaveResult.committed()
+            }
+            withTimeout(5_000L) { started.await() }
+            kotlinx.coroutines.delay(650L)
+            assertFalse(request.isCompleted)
+            release.complete(Unit)
+            assertTrue(withTimeout(5_000L) { request.await() }.savedLocally)
+        } finally {
+            release.complete(Unit)
+            scope.cancel()
+        }
     }
 
     @Test fun saturatedBoundedQueuePreservesFinalSaveOrderAndShutdownBarrier() = runBlocking {
@@ -1076,6 +1212,7 @@ const DOCUMENT_BACK_OLD: &str = r####"    fun handleBack() {
 const DOCUMENT_BACK_NEW: &str = r####"    fun handleBack() {
         val exitTicket = editorSession.exitSaveGate.begin() ?: return
         val exitStartedNanos = System.nanoTime()
+        android.util.Log.i("NoteSaveLatency", "phase=document_exit_requested")
         isSavingDraft = true
         persistLatestDraft(
             reason = "document_note_editor_back",
@@ -1097,7 +1234,9 @@ const DOCUMENT_BACK_NEW: &str = r####"    fun handleBack() {
                 hierarchyHandedOff = true
                 editorSessionViewModel.clear(note.id, editorWorkspaceKey, editorSession)
                 onBack()
+                android.util.Log.i("NoteSaveLatency", "phase=document_exit_navigation durationMs=${(System.nanoTime() - exitStartedNanos) / 1_000_000L}")
             } else {
+                android.util.Log.w("NoteSaveLatency", "phase=document_exit_failed")
                 Toast.makeText(context, "保存失败，笔记仍留在编辑页。", Toast.LENGTH_LONG).show()
             }
         }

@@ -1,3 +1,4 @@
+// Record the native PNG export terminal receipt before navigating to another scene.
 // v2.22.48 - Inspect timer records, archive navigation and Android risk labels.
 // v2.22.47 - Inspect Android parity pages and render PNG exports in a real native window.
 // Opt-in visual inspection only; this is not a pixel snapshot assertion.
@@ -75,6 +76,7 @@ fn native_window_visual_review() {
         scene: usize,
         frames: usize,
         started: Instant,
+        export_outcome: Option<String>,
     }
     const SCENES: &[(&str, AppTab, u8, f32, f32)] = &[
         ("board_light", AppTab::Board, 1, 1240.0, 800.0),
@@ -112,15 +114,35 @@ fn native_window_visual_review() {
         ("finance_snapshot", AppTab::Finance, 1, 1240.0, 800.0),
         ("finance_trend", AppTab::Finance, 1, 760.0, 560.0),
     ];
+    impl ReviewApp {
+        fn poll_export_evidence(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+            let was_busy = self.client.desktop_ui.parity.image_export.busy();
+            self.client.poll_note_image_export(ctx, frame);
+            if was_busy && !self.client.desktop_ui.parity.image_export.busy() {
+                // Capture the terminal state before other screens overwrite
+                // the shared status. Keep the real export and PNG assertions.
+                let status = self.client.status.clone();
+                eprintln!("Native note PNG export terminal status: {status}");
+                fs::write(self.output.join("export_status.json"), json!({
+                    "status": status,
+                    "path": self.client.transfers.last_note_export,
+                    "png_exists": self.output.join("note_export.png").is_file(),
+                }).to_string()).unwrap();
+                self.export_outcome = Some(status);
+            }
+        }
+    }
     impl eframe::App for ReviewApp {
         fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
             if self.scene >= SCENES.len() {
-                self.client.poll_note_image_export(ctx, frame);
+                self.poll_export_evidence(ctx, frame);
                 if self.client.desktop_ui.parity.image_export.busy() {
                     ctx.request_repaint_after(Duration::from_millis(100));
                     return;
                 }
-                fs::write(self.output.join("export_status.json"),json!({"status":self.client.status,"path":self.client.transfers.last_note_export}).to_string()).unwrap();
+                if self.export_outcome.is_none() {
+                    fs::write(self.output.join("export_status.json"), json!({"status":self.client.status,"terminal_receipt_missing":true}).to_string()).unwrap();
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
@@ -254,7 +276,7 @@ fn native_window_visual_review() {
                     self.client.finance_workbench.overview.year = "2026".into();
                 }
             }
-            self.client.poll_note_image_export(ctx, frame);
+            self.poll_export_evidence(ctx, frame);
             self.client.refresh_timer_projection(now_millis());
             ctx.input_mut(|i| i.pointer = Default::default());
             self.client.ui_workspace(ctx);
@@ -287,6 +309,7 @@ fn native_window_visual_review() {
                 scene: 0,
                 frames: 0,
                 started: Instant::now(),
+                export_outcome: None,
             })
         }),
     )
@@ -295,7 +318,8 @@ fn native_window_visual_review() {
         .iter()
         .all(|s| expected_output.join(format!("{}.png", s.0)).is_file()));
     let exported = image::open(expected_output.join("note_export.png"))
-        .expect("native WebView PNG export must decode");
+        .unwrap_or_else(|error| panic!("native WebView PNG export must decode: {error}; terminal receipt: {}",
+            fs::read_to_string(expected_output.join("export_status.json")).unwrap_or_else(|e|e.to_string())));
     assert_eq!(1080, exported.width());
     assert!(exported.height() > 128);
 }

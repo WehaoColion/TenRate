@@ -1,3 +1,5 @@
+// v3.0.2.57 - Remove knowledge dock elevation from the static render profile.
+// v3.0.2.15 - Bound knowledge-screen background and dock compositing cost.
 // v2.22.30 - Remove UI-thread data work and preserve unchanged UI domains.
 // Keep the v2.22.25 Android behavior while moving only hot work
 // out of composition and bounding pathological micro-break catch-up.
@@ -67,6 +69,39 @@ fn replace_section(
 
 fn render_screen(base: &str) -> Result<String, String> {
     let mut rendered = base.to_string();
+
+    // Knowledge has its own opaque archive surface. The dashboard's three
+    // screen-sized gradients and continuous timer glow are not visible behind
+    // it; don't make the renderer blend them on every navigation frame.
+    replace_once(
+        &mut rendered,
+        "            if (!oledTheme) {\n                AmbientBackdrop(hasRunningSlots = hasRunningSlots)\n            }",
+        "            if (!oledTheme && selectedDestination != HomeNavigationDestination.NOTEBOOK) {\n                AmbientBackdrop(hasRunningSlots = hasRunningSlots)\n            }",
+        "knowledge backdrop overdraw",
+    )?;
+
+    // Preserve the dock's rounded silhouette, outline and highlights, but
+    // bound the dynamic shadow footprint while navigating knowledge pages.
+    replace_once(
+        &mut rendered,
+        "        shadowElevation = 20.dp,\n        border = BorderStroke(1.dp, MaterialTheme.colorScheme.glassStroke)",
+        "        shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 0.dp else 20.dp,\n        border = BorderStroke(1.dp, MaterialTheme.colorScheme.glassStroke)",
+        "knowledge dock shadow footprint",
+    )?;
+    replace_once(
+        &mut rendered,
+        "                            shadowElevation = indicatorLift,\n                            border = BorderStroke(1.dp, selectedAccent.copy(alpha = 0.20f))",
+        "                            shadowElevation = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) 0.dp else indicatorLift,\n                            border = BorderStroke(1.dp, selectedAccent.copy(alpha = 0.20f))",
+        "knowledge dock indicator shadow footprint",
+    )?;
+    // A running timer remains visibly identified by its icon and count, but
+    // should not continuously invalidate the knowledge screen's render tree.
+    replace_once(
+        &mut rendered,
+        "                                livePulse = runningPulse,\n                                testTag = \"home_nav_board\",",
+        "                                livePulse = if (selectedDestination == HomeNavigationDestination.NOTEBOOK) null else runningPulse,\n                                testTag = \"home_nav_board\",",
+        "knowledge dock pulse isolation",
+    )?;
 
     replace_once(
         &mut rendered,

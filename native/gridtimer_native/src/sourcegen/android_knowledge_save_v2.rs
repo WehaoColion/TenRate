@@ -1,3 +1,7 @@
+// v3.0.2.30 - Track interaction and commit completion before admitting recovery work.
+// v3.0.2.25 - Move ordinary sync preparation outside writer; defer optional maintenance during note edits.
+// v3.0.2.15 - Give safe sticky version creation the authoritative SQLite receipt.
+// v3.0.2.15 - Avoid synchronous full recovery mirrors for strictly scoped empty folder inserts.
 // v3.0.2.14 - Use bounded preflight for ordinary local writes and mirror refreshes.
 // v3.0.2.12 - Give foreground document writes priority over deferred recovery mirrors.
 // v3.0.2.9 - Exclude hierarchy containers from scoped normalization.
@@ -88,14 +92,125 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
         &format!("{SCOPED_HELPER}    // Sanitization remains authoritative."),
     )?;
     install_commit_receipts(&mut source)?;
+    // Explicit sticky version creation bypasses updateDataDetailed, so it
+    // previously waited for synchronous JSON mirrors even after SQLite commit.
+    let start = source.find("    suspend fun createNextNoteVersionDurably(")
+        .ok_or("missing version creation")?;
+    let end = source[start..].find("    private suspend fun redactEncryptedNoteRecoveryCopies(")
+        .map(|offset| start + offset).ok_or("missing version creation end")?;
+    let mut version = source[start..end].to_owned();
+    replace_one(&mut version, "                val timestamp = now()\n                val transformed",
+        "                val timestamp = now()\n                val transformStarted = System.nanoTime()\n                val transformed")?;
+    replace_one(&mut version, "                val updated = runCatching {",
+        "                recordNoteSaveStage(\"version_transform\", transformStarted)\n                val normalizeStarted = System.nanoTime()\n                val updated = runCatching {")?;
+    replace_one(&mut version, "                val createdNote = updated.notes.firstOrNull",
+        "                recordNoteSaveStage(\"version_normalize\", normalizeStarted)\n                val createdNote = updated.notes.firstOrNull")?;
+    replace_one(&mut version, "                if (!persistSafely(updated)) {", r#"                val deferVersionMirrors = existing.isSafeStickyVersionReceipt() &&
+                    note.isSafeStickyVersionReceipt() && createdNote.isSafeStickyVersionReceipt() &&
+                    existing.effectiveProtectionStateRevision() == note.effectiveProtectionStateRevision() &&
+                    existing.effectiveProtectionStateRevision() == createdNote.effectiveProtectionStateRevision() &&
+                    createdNote.latestVersionId == newVersionId
+                val persistStarted = System.nanoTime()
+                val saved = if (deferVersionMirrors) {
+                    persistSafelyDetailed(updated, deferRecoveryMirrors = true).succeeded
+                } else {
+                    persistSafely(updated)
+                }
+                recordNoteSaveStage("version_persist", persistStarted)
+                if (!saved) {"#)?;
+    source.replace_range(start..end, &version);
+    install_foreground_write_priority(&mut source)?;
     Ok(source)
+}
+
+fn install_foreground_write_priority(source: &mut String) -> Result<(), String> {
+    replace_one(source, "    private val writeMutex = Mutex()",
+        "    private val writeMutex = Mutex()\n    private val lastForegroundNoteWriteAt = java.util.concurrent.atomic.AtomicLong(0L)\n    private val lastNoteMaintenanceInteractionAt = java.util.concurrent.atomic.AtomicLong(0L)")?;
+    replace_one(source,
+        r####"        val writeWaitStarted = System.nanoTime()
+        writeMutex.withLock {
+            if (noteMutationId != null) recordNoteSaveStage("draft_write_lock", writeWaitStarted)"####,
+        r####"        if (noteMutationId != null || hierarchyCreateNoteId != null)
+            lastForegroundNoteWriteAt.set(android.os.SystemClock.elapsedRealtime())
+        val writeWaitStarted = System.nanoTime()
+        writeMutex.withLock {
+            if (noteMutationId != null) recordNoteSaveStage("draft_write_lock", writeWaitStarted)"####)?;
+    replace_one(source,
+        r####"        val writeWaitStarted = System.nanoTime()
+        withContext(NonCancellable + Dispatchers.Default) {
+            writeMutex.withLock {
+                recordNoteSaveStage("version_write_lock", writeWaitStarted)"####,
+        r####"        lastForegroundNoteWriteAt.set(android.os.SystemClock.elapsedRealtime())
+        val writeWaitStarted = System.nanoTime()
+        withContext(NonCancellable + Dispatchers.Default) {
+            writeMutex.withLock {
+                recordNoteSaveStage("version_write_lock", writeWaitStarted)"####)?;
+    let start = source.find("    private suspend fun applyAccountSnapshotIfVisible(")
+        .ok_or("missing account apply")?;
+    let end = start + source[start..].find("    private fun historyDeletionSummaryText(")
+        .ok_or("missing account apply boundary")?;
+    let mut apply = source[start..end].to_owned();
+    replace_one(&mut apply,
+        r####"        val persisted = writeMutex.withLock {
+            val recoveryBlockedReason"####,
+        r####"        // The canonical merge can serialize and compare the whole workspace.
+        // Compute outside the writer and accept only against the exact immutable
+        // state and workspace captured for this attempt. Exact restore retains
+        // its original flush barrier and fail-closed recovery branch.
+        val applyWorkspace = activeWorkspaceKey
+        var persistedResult: Boolean? = null
+        var mergeAttempts = 0
+        while (persistedResult == null) {
+            val mergeBase = _appData.value
+            val preparedMerge = if (forceReplace) null else withContext(Dispatchers.Default) {
+                mergeAccountSnapshotWithCanonicalEngine(mergeBase, received).sanitized()
+            }
+            persistedResult = writeMutex.withLock {
+            if (activeWorkspaceKey != applyWorkspace) {
+                supersededByLocalChange = true
+                return@withLock false
+            }
+            val recoveryBlockedReason"####)?;
+    replace_one(&mut apply,
+        r####"            if (effectiveForceReplace) {
+                pendingPersistJob?.cancel()"####,
+        r####"            if (!effectiveForceReplace && mergeBase !== _appData.value) {
+                // No mutation, receipt, acknowledgement or dirty state on a
+                // stale preparation. Release the writer before recomputing.
+                return@withLock null
+            }
+            if (effectiveForceReplace) {
+                pendingPersistJob?.cancel()"####)?;
+    replace_one(&mut apply,
+        r####"                mergeAccountSnapshotWithCanonicalEngine(
+                    _appData.value,
+                    received
+                ).sanitized()"####,
+        r####"                checkNotNull(preparedMerge)"####)?;
+    replace_one(&mut apply,
+        r####"            flushPersistLocked(applied)
+        }
+        if (supersededByLocalChange)"####,
+        r####"            flushPersistLocked(applied)
+            }
+            if (persistedResult == null && ++mergeAttempts >= 3) {
+                // Continuous editing takes priority over background sync.
+                // Existing callers reject superseded responses and retry sync.
+                supersededByLocalChange = true
+                persistedResult = false
+            }
+        }
+        val persisted = checkNotNull(persistedResult)
+        if (supersededByLocalChange)"####)?;
+    source.replace_range(start..end, &apply);
+    Ok(())
 }
 
 fn install_commit_receipts(source: &mut String) -> Result<(), String> {
     replace_one(source, "            var transformFailure: DataUpdateAttempt? = null",
         "            var deferRecoveryMirrors = false\n            var transformFailure: DataUpdateAttempt? = null")?;
     replace_one(source, "                        val normalized = scopedCreated ?:",
-        "                        deferRecoveryMirrors = scopedCreated?.notes?.firstOrNull { it.id == hierarchyCreateNoteId }?.isPlainRecoveryDocument() == true\n                        val normalized = scopedCreated ?:")?;
+        "                        deferRecoveryMirrors = scopedCreated?.notes?.firstOrNull { it.id == hierarchyCreateNoteId }?.isSafeNewRecoveryNode() == true\n                        val normalized = scopedCreated ?:")?;
     replace_one(source, "                            noteMutationId != null -> current.acceptNoteMutation(normalized, noteMutationId)",
         r#"                            noteMutationId != null -> current.acceptNoteMutation(normalized, noteMutationId).also {
                                 deferRecoveryMirrors = mutationBase.notes.singleOrNull()?.isPlainRecoveryDocument() == true &&
@@ -115,6 +230,8 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
         ("            // Only publish the cache after commit AND successful recovery mirrors.\n            // Any failure leaves it invalid, so the next attempt checks every surface.\n            runCatching {",
          "            fun refresh(committedStamp: AppStateDatabase.SnapshotWriteStamp): Boolean = runCatching {"),
         ("            }\n            stageFinished(\"recovery_mirror\")", r#"            }.isSuccess
+            // A slow foreground transaction is not idle time.
+            lastForegroundNoteWriteAt.set(android.os.SystemClock.elapsedRealtime())
             pendingRecoveryMirrorJob?.cancel()
             pendingRecoveryMirrorJob = null
             if (deferRecoveryMirrors && receipt.primary.size >= 0L && receipt.backup.size >= 0L) {
@@ -144,10 +261,45 @@ fn install_commit_receipts(source: &mut String) -> Result<(), String> {
 const RECOVERY_WORKER: &str = r#"
     private var pendingRecoveryMirrorJob: Job? = null
 
+    // Optional maintenance must not start in the background or in the middle
+    // of a series of accepted note writes. Do not cancel admitted transactions.
+    // Activity interaction does not perform database work on the UI thread.
+    internal fun recordNoteMaintenanceInteraction() {
+        lastNoteMaintenanceInteractionAt.set(android.os.SystemClock.elapsedRealtime())
+    }
+
+    private fun noteMaintenanceMayStart(quietMillis: Long): Boolean {
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val lastActivity = maxOf(lastForegroundNoteWriteAt.get(), lastNoteMaintenanceInteractionAt.get())
+        if (lastActivity != 0L && nowElapsed - lastActivity < quietMillis) return false
+        val info = android.app.ActivityManager.RunningAppProcessInfo()
+        return runCatching {
+            android.app.ActivityManager.getMyMemoryState(info)
+            info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+        }.getOrDefault(false)
+    }
+
     private fun NoteEntry.isPlainRecoveryDocument(): Boolean =
         kind == NoteEntryKind.DOCUMENT && encryption == null && !isDeleted() && attachments.isEmpty() &&
             !document.richTextEnabled && !isKnowledgeFolder() && !requiresStructuredKnowledgeReader() &&
             document.blocks.all { it.type == NoteBlockType.TEXT }
+
+    // Version creation only appends a snapshot. Defer mirrors exclusively
+    // for unprotected live sticky notes without attachment-bearing history.
+    // Protected, deleted or attachment-containing versions use the full path.
+    private fun NoteEntry.isSafeStickyVersionReceipt(): Boolean =
+        kind == NoteEntryKind.STICKY && encryption == null && !isDeleted() &&
+            attachments.isEmpty() && versions.all {
+                it.kind == NoteEntryKind.STICKY && it.attachments.isEmpty() && it.attachmentIds.isEmpty()
+            }
+
+    // A strictly scoped insertion never modifies an existing note or privacy
+    // metadata. A new empty folder can therefore use the same authoritative
+    // SQLite receipt as a new plain page instead of blocking the queue on mirrors.
+    private fun NoteEntry.isSafeNewRecoveryNode(): Boolean =
+        isPlainRecoveryDocument() || (kind == NoteEntryKind.DOCUMENT &&
+            isKnowledgeFolder() && encryption == null && !isDeleted() && attachments.isEmpty() &&
+            document.blocks.all { it.type == NoteBlockType.TEXT && it.text.isBlank() })
 
     // Called under the repository writer. A new commit or privacy redaction cancels
     // the preceding ticket. On process death, verified SQLite startup repairs mirrors.
@@ -161,10 +313,15 @@ const RECOVERY_WORKER: &str = r#"
             var retryMillis = 1_800L
             while (true) {
                 delay(retryMillis)
-                if (!writeMutex.tryLock()) continue
+                if (!noteMaintenanceMayStart(10_000L) || !writeMutex.tryLock()) continue
+                val maintenanceStarted = android.os.SystemClock.elapsedRealtime()
+                var admitted = false
                 val finished = try {
+                    if (!noteMaintenanceMayStart(10_000L)) continue
                     if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
                         persistenceWriteBlockedReason != null || loadedFromRecoveryCandidate) return@launch
+                    admitted = true
+                    Log.i("NoteSaveLatency", "maintenance=recovery_mirror begin")
                     runCatching {
                         stateDatabase.withSnapshotWriteTransaction {
                             val files = workspaceFiles(workspaceKey)
@@ -185,6 +342,7 @@ const RECOVERY_WORKER: &str = r#"
                     }
                 } finally {
                     writeMutex.unlock()
+                    if (admitted) Log.i("NoteSaveLatency", "maintenance=recovery_mirror heldMs=${android.os.SystemClock.elapsedRealtime() - maintenanceStarted}")
                 }
                 if (finished) return@launch
                 retryMillis = (retryMillis * 2L).coerceAtMost(30_000L)

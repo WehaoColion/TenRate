@@ -1,3 +1,54 @@
+// v3.0.2.65 - Invalidate stale document receipts and enforce exact stress body verification.
+// v3.0.2.64 - Authenticate Android chunk plans and avoid forced archive-card offscreen rendering.
+// v3.0.2.63 - Extend physical history migration recovery acceptance to 100000 rows.
+// v3.0.2.62 - Show storage maintenance progress and fix SQLite build compatibility.
+// v3.0.2.61 - Prove transactional history migration and physical SQLite reclamation.
+// v3.0.2.60 - Introduce lossless history chunk codec and expire regenerable share cache.
+// v3.0.2.59 - Resume verified history packing and measure fixed-length storage growth.
+// v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
+// v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
+// v3.0.2.56 - Enforce compile-time IME-safe markers in document typing acceptance.
+// v3.0.2.55 - Isolate and precompile Android emulator probes before signing.
+// v3.0.2.54 - Send the actual second system Back in nested editor exit acceptance.
+// v3.0.2.53 - Accept verified Japanese navigation label equivalence in emulator evidence.
+// v3.0.2.52 - Fix Rust regression contract warning in locale probe tests.
+// v3.0.2.51 - Scope Android emulator probes to visible feature behavior.
+// v3.0.2.50 - Enforce current checked-out release identity and index provenance.
+// v3.0.2.49 - Lossless storage maintenance.
+// v3.0.2.48 - Expand Android multilingual coverage.
+// v3.0.2.47 - Bound navigation layer to archive card.
+// v3.0.2.46 - Disambiguate actual document exit from observation delays.
+// v3.0.2.45 - Require fresh Android accessibility evidence.
+// v3.0.2.44 - Split local schema safety from optional historical acceleration.
+// v3.0.2.43 - Bound and measure SQLite migration resource hints.
+// v3.0.2.42 - Reduce archive glyph draw passes.
+// v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
+// v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
+// v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
+// v3.0.2.38 - Compose component-local hook and production source-generation regression.
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
+// v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
+// v3.0.2.34 - Consolidate historical safety guards without changing authentication.
+// v3.0.2.33 - Canonical Android release identity and checked update history.
+// v3.0.2.32 - Reduce directory composition and render-layer work.
+// v3.0.2.31 - Pace optional history compaction and harden acceptance capture.
+// v3.0.2.30 - Prioritize active interaction over optional snapshot maintenance.
+// v3.0.2.29 - Correct resumed-editor acceptance input position.
+// v3.0.2.28 - Cover all known snapshot monitor entry points.
+// v3.0.2.27 - Extend Android 16 validation.
+// v3.0.2.26 - Bound automatic media maintenance candidate.
+// v3.0.2.25 - Real-device lock contention candidate.
+// v3.0.2.24 - Restore sourcegen compatibility and instrument actual startup scan.
+// v3.0.2.23 - Batch history migration cursor reads without weakening verification.
+// v3.0.2.22 - Separate sticky input integrity from version latency acceptance.
+// v3.0.2.21 - Stabilize directory layout during order loading.
+// v3.0.2.20 - Reduce directory loading animation and capture exact Windows export receipt.
+// v3.0.2.19 - Synchronize in-app update history and Android version identity.
+// v3.0.2.18 - Raise Android history stress to 500000 records.
+// v3.0.2.17 - Synchronize Rust identity and reduce directory layout-driven recomposition.
+// v3.0.2.16 - Verify visible sticky version receipts without clipping the version header.
+// v3.0.2.15 - 知识模块连续空间转场与弹簧动效。
 // v3.0.2.14 - 修复本地保存重复扫描历史快照。
 // v3.0.2.13 - 知识页退出保存回执优化。
 // v3.0.2.11 - 修复知识页分享长图的一级和二级标题。
@@ -207,8 +258,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30016
-        versionName '3.0.2.14'
+        versionCode 30067
+        versionName '3.0.2.65'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

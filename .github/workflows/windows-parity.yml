@@ -72,7 +72,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TenRate-Windows-native-visual
-          path: ${{ runner.temp }}\\tenrate-visual\\*.png
+          path: |
+            ${{ runner.temp }}\\tenrate-visual\\*.png
+            ${{ runner.temp }}\\tenrate-visual\\export_status.json
           if-no-files-found: warn
           retention-days: 30
       - name: Test Windows client

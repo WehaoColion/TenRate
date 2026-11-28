@@ -1,3 +1,7 @@
+// v3.0.2.56 - Use compile-time IME-safe markers for document body assertions.
+// v3.0.2.45 - Require fresh, complete accessibility evidence.
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
+// v3.0.2.31 - Capture exact editor state when heading or paragraph disappears.
 //! GitHub Android emulator acceptance of stable text entry and knowledge share images.
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Output}, thread::sleep, time::Duration};
 
@@ -6,9 +10,17 @@ const ACTIVITY: &str = "com.ofairyo.gridtimer/.MainActivity";
 mod android_save_probe_fixture;
 use android_save_probe_fixture::{installed_version, SqliteWriter};
 mod android_knowledge_share_probe;
+#[path = "android_ime_marker.rs"]
+mod android_ime_marker;
+use android_ime_marker::ImeStableMarker;
 
 const GRIP: &str = "拖动调整块顺序，点击打开操作菜单";
 const TITLE: &str = "TypingStabilityCheck";
+const HEADING_TEXT: ImeStableMarker = ImeStableMarker::new("7391804025006017");
+const PARAGRAPH_TEXT: ImeStableMarker = ImeStableMarker::new("7391804025006018");
+const NO_JUMP_TEXT: ImeStableMarker = ImeStableMarker::new("7391804025006019");
+const HOT_SAVE_TEXT: ImeStableMarker = ImeStableMarker::new("7391804025006020");
+const EXIT_SAVE_TEXT: ImeStableMarker = ImeStableMarker::new("7391804025006021");
 
 #[derive(Clone, Debug)]
 struct Node {
@@ -21,11 +33,19 @@ fn adb(args: &[&str]) -> Result<Output,String> {
     Command::new("adb").args(args).output().map_err(|e| e.to_string())
 }
 fn command(args: &[&str]) -> Result<String,String> {
-    let out=adb(args)?;
-    if !out.status.success() {
-        return Err(format!("adb {args:?}: {}",String::from_utf8_lossy(&out.stderr)));
+    // The 3.0.2.35 and .36 jobs both lost the read-only IME dump. Retry only
+    // this diagnostic, never a mutating action or an input event.
+    let attempts = if args == ["shell", "dumpsys", "input_method"] { 3 } else { 1 };
+    for attempt in 0..attempts {
+        let out = adb(args)?;
+        if out.status.success() { return Ok(String::from_utf8_lossy(&out.stdout).into_owned()); }
+        let error = format!("adb {args:?}: status={} stderr={} stdout_bytes={}",
+            out.status, String::from_utf8_lossy(&out.stderr), out.stdout.len());
+        if attempt + 1 == attempts { return Err(error); }
+        eprintln!("Read-only IME diagnostic retry: {error}");
+        sleep(Duration::from_millis(350 * (attempt as u64 + 1)));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    unreachable!("at least one ADB attempt")
 }
 fn attr(node: &str,key:&str)->String{
     let pat=format!("{key}=\"");
@@ -47,15 +67,9 @@ fn nodes(xml:&str)->Vec<Node>{
         })
     }).collect()
 }
+mod android_fresh_hierarchy;
 fn tree()->Result<String,String>{
-    for _ in 0..5 {
-        let _=command(&["shell","uiautomator","dump","/sdcard/typing_stability_test.xml"]);
-        if let Ok(xml)=command(&["exec-out","cat","/sdcard/typing_stability_test.xml"]){
-            if xml.contains("<hierarchy"){return Ok(xml);}
-        }
-        sleep(Duration::from_millis(550));
-    }
-    Err("Cannot read emulator accessibility hierarchy".into())
+    android_fresh_hierarchy::fresh_hierarchy(command, "/sdcard/typing_stability_test.xml", 5)
 }
 fn evidence(path:&Path, label:&str){
     if let Ok(xml)=tree(){let _=fs::write(path.join(format!("{label}.xml")),xml);}
@@ -162,6 +176,12 @@ fn write_text(s:&str)->Result<(),String>{
     sleep(Duration::from_millis(800));
     Ok(())
 }
+fn write_marker(marker: ImeStableMarker) -> Result<(), String> {
+    write_text(marker.as_str())
+}
+fn seek_marker(marker: ImeStableMarker) -> Result<Option<Node>, String> {
+    seek(&[marker.as_str()])
+}
 fn key(code:&str)->Result<(),String>{
     command(&["shell","input","keyevent",code])?;
     sleep(Duration::from_millis(750));
@@ -211,27 +231,33 @@ fn run(out:&Path)->Result<String,String>{
 
     let field=edit_fields()?.into_iter().last().ok_or("H1 field missing")?;
     tap(&field)?;
-    write_text("StableHeading")?;
-    if seek(&["StableHeading"])?.is_none(){
+    write_marker(HEADING_TEXT)?;
+    if seek_marker(HEADING_TEXT)?.is_none(){
         evidence(out,"heading_not_visible");
         return Err("New heading text is not editable".into());
     }
     key("66")?; // ENTER: one new paragraph, never two.
-    write_text("StableParagraph")?;
+    write_marker(PARAGRAPH_TEXT)?;
     sleep(Duration::from_millis(1000));
     let after_enter=grips()?.len();
     if after_enter!=2 {
         evidence(out,"wrong_enter_block_count");
         return Err(format!("H1 Enter must produce exactly two blocks, got {after_enter}"));
     }
-    let first=seek(&["StableHeading"])?.ok_or("Heading lost after Enter")?;
-    let second=seek(&["StableParagraph"])?.ok_or("Paragraph not accessible")?;
+    let first=match seek_marker(HEADING_TEXT)? {
+        Some(node) => node,
+        None => { evidence(out,"heading_lost_after_enter"); return Err("Heading lost after Enter".into()); }
+    };
+    let second=match seek_marker(PARAGRAPH_TEXT)? {
+        Some(node) => node,
+        None => { evidence(out,"paragraph_missing_after_enter"); return Err("Paragraph not accessible".into()); }
+    };
     let before_y=(center(&first).1,center(&second).1);
     evidence(out,"05_editor_before_regular_typing");
 
     // Same-line typing must not move the surrounding paragraph stack.
     let writer = SqliteWriter::acquire()?;
-    write_text("NoJump")?;
+    write_marker(NO_JUMP_TEXT)?;
     let pending = tree()?;
     writer.release()?;
     fs::write(out.join("receipt_while_locked.xml"), &pending).map_err(|e| e.to_string())?;
@@ -249,11 +275,12 @@ fn run(out:&Path)->Result<String,String>{
     // Measure an actual unblocked body edit, not only a new page or a locked writer.
     // UIAutomator dumps have their own latency; the wall-clock budget includes that.
     let hot_start = std::time::Instant::now();
-    command(&["shell","input","text","HotSave"])?;
+    command(&["shell","input","text",HOT_SAVE_TEXT.as_str()])?;
+    let expected_body = format!("{}{}{}", PARAGRAPH_TEXT.as_str(), NO_JUMP_TEXT.as_str(), HOT_SAVE_TEXT.as_str());
     let mut hot_saved = false;
     while hot_start.elapsed() < Duration::from_secs(8) {
         let ui = tree()?;
-        if ui.contains("StableParagraphNoJumpHotSave") &&
+        if ui.contains(&expected_body) &&
             has_state(&ui, "document_save_local_saved") {
             hot_saved = true;
             break;
@@ -266,8 +293,8 @@ fn run(out:&Path)->Result<String,String>{
         evidence(out,"hot_body_save_timeout");
         return Err(format!("Uncontended body edit did not reach a local receipt within 8s: {hot_ms}ms"));
     }
-    let first_after=seek(&["StableHeading"])?.ok_or("Heading lost during typing")?;
-    let second_after=seek(&["StableParagraphNoJumpHotSave"])?.ok_or("Typed text lost")?;
+    let first_after=seek_marker(HEADING_TEXT)?.ok_or("Heading lost during typing")?;
+    let second_after=seek(&[expected_body.as_str()])?.ok_or("Typed text lost")?;
     let after_y=(center(&first_after).1,center(&second_after).1);
     if (after_y.0-before_y.0).abs()>28 || (after_y.1-before_y.1).abs()>28 {
         evidence(out,"unexpected_scroll_movement");
@@ -280,7 +307,8 @@ fn run(out:&Path)->Result<String,String>{
     let back = seek(&["返回","Back"])?.ok_or("Document back action missing")?;
     let (back_x, back_y) = center(&back);
     command(&["logcat","-c"])?;
-    command(&["shell","input","text","ExitSave"])?;
+    command(&["shell","input","text",EXIT_SAVE_TEXT.as_str()])?;
+    let expected_body_after_exit = format!("{}{}", expected_body, EXIT_SAVE_TEXT.as_str());
     let exit_start = std::time::Instant::now();
     command(&["shell","input","tap",&back_x.to_string(),&back_y.to_string()])?;
     let mut exited = false;
@@ -331,7 +359,7 @@ fn run(out:&Path)->Result<String,String>{
     knowledge(out)?;
     open_persisted_page(out)?;
     evidence(out,"07_reopened_saved_heading");
-    if seek(&["StableHeading"])?.is_none() || seek(&["StableParagraphNoJumpHotSaveExitSave"])?.is_none() {
+    if seek_marker(HEADING_TEXT)?.is_none() || seek(&[expected_body_after_exit.as_str()])?.is_none() {
         return Err("Heading or paragraph disappeared after process restart".into());
     }
     if command(&["shell","pidof",APP])?.trim().is_empty() {

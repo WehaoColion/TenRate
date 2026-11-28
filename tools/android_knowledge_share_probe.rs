@@ -1,11 +1,15 @@
 //! Verify heading hierarchy from the pixels written by the Android share action.
-use super::{adb, command, evidence, key, seek, tap, tap_label, write_text};
+#[path = "android_heading_ink.rs"]
+mod android_heading_ink;
+use android_heading_ink::select_heading_ink_sequence;
+use super::{adb, command, evidence, key, seek, tap, tap_label, write_text, NO_JUMP_TEXT, PARAGRAPH_TEXT};
 use std::{fs, path::Path, process::Command, str, thread::sleep, time::Duration};
 
 const CACHE: &str = "/data/user/0/com.ofairyo.gridtimer/cache/note_shares";
 
 pub(super) fn export_and_check(out: &Path) -> Result<String, String> {
-    let paragraph = seek(&["StableParagraphNoJump"])?.ok_or("Reopened paragraph is missing")?;
+    let paragraph_marker = format!("{}{}", PARAGRAPH_TEXT.as_str(), NO_JUMP_TEXT.as_str());
+    let paragraph = seek(&[paragraph_marker.as_str()])?.ok_or("Reopened paragraph is missing")?;
     tap(&paragraph)?;
     key("KEYCODE_MOVE_END")?;
     // Use the same glyphs at every level so the visible ink heights are comparable.
@@ -103,18 +107,15 @@ fn check_heading_hierarchy(png: &Path) -> Result<String, String> {
             _ => bands.push((y, y)),
         }
     }
-    // The page title, timestamp and two original editor rows precede the six
-    // sample rows. Each sample must have ink in the exported bitmap.
+    // Locate the six authored sample rows by their contiguous H1/H2/body pattern.
+    // The original paragraph may wrap, so a fixed band offset is not evidence.
     let heights: Vec<_> = bands.iter().map(|(top, bottom)| bottom - top + 1).collect();
-    let Some([first_h1, first_h2, first_body, later_h1, later_h2, later_body]) = heights.get(4..10)
-    else {
-        return Err(format!("Missing text rows in the share PNG: {bands:?}"));
-    };
-    let h1 = [*first_h1, *later_h1];
-    let h2 = [*first_h2, *later_h2];
-    let body = [*first_body, *later_body];
-    if h1.iter().min() <= h2.iter().max() || h2.iter().min() <= body.iter().max() {
-        return Err(format!("Expected both H1s above both H2s, and H2s above body: {heights:?}"));
-    }
-    Ok(format!("PASS: the Android share action generated a PNG with both H1 rows at {h1:?} px, H2 at {h2:?} px and body at {body:?} px of visible ink."))
+    let sample = select_heading_ink_sequence(&heights)
+        .map_err(|error| format!("{error}; bands={bands:?}; heights={heights:?}"))?;
+    Ok(format!(
+        "PASS: the Android share action generated a PNG with H1 ink heights [{}, {}] px, H2 [{}, {}] px and body [{}, {}] px.",
+        sample.first_h1, sample.second_h1,
+        sample.first_h2, sample.second_h2,
+        sample.first_body, sample.second_body
+    ))
 }

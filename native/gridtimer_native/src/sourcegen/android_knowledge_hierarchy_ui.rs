@@ -1,3 +1,15 @@
+// v3.0.2.64 - Avoid forced offscreen target for translation-only archive card.
+// v3.0.2.57 - Cache directory motion in one bounded offscreen archive-card layer.
+// v3.0.2.47 - Bound directory navigation motion to the archive card, retain stationary list geometry.
+// v3.0.2.42 - Reduce archive glyph draw passes after measured slow draw commands.
+// v3.0.2.41 - Reuse directory hierarchy only for the same live data snapshot.
+// v3.0.2.32 - Move exclusion reads off Main and remove redundant directory row layers.
+// v3.0.2.21 - Preserve row/header geometry during auxiliary order reads.
+// v3.0.2.20 - Avoid competing order-load animation during directory navigation.
+// v3.0.2.17 - Avoid snapshot invalidation from navigation bookkeeping and layout coordinates.
+// v3.0.2.15 - Render one directory surface with layer-only motion and indexed row actions.
+// v3.0.2.15 - Keep hierarchy inputs on bounded pre-admission failure; do not cancel a running transaction.
+// v3.0.2.15 - Real directional directory navigation, spring disclosure and tactile feedback.
 // v3.0.2.9 - Preserve full hierarchy creation and report the failed save stage.
 // v2.13.5.12 - Unified paper and archival surface design on Android knowledge screens.
 // v2.13.5.11 - Consistent tactile rows, hierarchy disclosure and contextual entry motion.
@@ -403,12 +415,25 @@ const REPOSITORY: &str = r####"    internal suspend fun knowledgeContainerAction
 const VIEW_MODEL: &str = r####"    internal fun knowledgeContainerAction(action: String, id: String, parentId: String,
         title: String, expectedWorkspaceKey: String = currentWorkspaceKey(),
         onStage: (String) -> Unit = {}, onComplete: (Boolean, String) -> Unit) {
-        var detail = "保存任务未完成，请保留当前输入并导出诊断日志。"
-        enqueueNoteMutation(onComplete = { ok -> onComplete(ok, if (ok) "本地已保存" else detail) }) {
+        var detail = "前序保存尚未完成，本次操作没有写入。已保留输入，可稍后重试。"
+        val completion = noteMutationController.enqueueHierarchy {
+            if (currentWorkspaceKey() != expectedWorkspaceKey) {
+                detail = "工作区已变化，本次操作没有写入。"
+                return@enqueueHierarchy com.ofairyo.gridtimer.data.NoteSaveResult.failed(
+                    com.ofairyo.gridtimer.data.NoteSaveFailure.WORKSPACE_CHANGED)
+            }
             withContext(kotlinx.coroutines.Dispatchers.Main.immediate) { onStage("writing") }
+            detail = "本地写入未完成，请保留输入并导出诊断日志。"
             val result = repository.knowledgeContainerAction(action, id, parentId, title, expectedWorkspaceKey)
             detail = result.second
-            result.first
+            if (result.first) com.ofairyo.gridtimer.data.NoteSaveResult.committed()
+            else com.ofairyo.gridtimer.data.NoteSaveResult.failed(com.ofairyo.gridtimer.data.NoteSaveFailure.QUEUE_UNAVAILABLE)
+        }
+        viewModelScope.launch {
+            val result = completion.await()
+            val sameWorkspace = currentWorkspaceKey() == expectedWorkspaceKey
+            val ok = sameWorkspace && result.committed
+            onComplete(ok, if (!sameWorkspace) "工作区已变化。" else if (ok) "本地已保存" else detail)
         }
     }
 "####;
@@ -466,11 +491,18 @@ const STUDIO_NAVIGATION: &str = r####"    fun pushKnowledgeReturn() {
 const HIERARCHY_BROWSER: &str = r####"                    KnowledgeHierarchyBrowser(index = hierarchyIndex, parentId = hierarchyParentId,
                         currentScope = {
                             if (!hierarchyCallbacksAlive.get() || !isCurrentFrame() || !hierarchyVisible) null
-                            else com.ofairyo.gridtimer.data.knowledgeDirectoryOrderScope(
-                                viewModel.appData.value.knowledgeHierarchy(), viewModel.currentWorkspaceKey(), hierarchyParentId,
-                                canInteract = com.ofairyo.gridtimer.data.knowledgeDirectoryCollectionMayInteract(
-                                    currentFrame = isCurrentFrame(), collectionFrame = frame == null,
-                                    visible = hierarchyVisible, busy = hierarchyBusy || hierarchyRequest != null))
+                            else {
+                                // Navigation and drag validation both run on Main. Reuse the
+                                // already rendered index only when it describes the exact live
+                                // immutable snapshot; a newer snapshot must still be validated.
+                                val liveData = viewModel.appData.value
+                                val liveIndex = if (liveData === appData) hierarchyIndex else liveData.knowledgeHierarchy()
+                                com.ofairyo.gridtimer.data.knowledgeDirectoryOrderScope(
+                                    liveIndex, viewModel.currentWorkspaceKey(), hierarchyParentId,
+                                    canInteract = com.ofairyo.gridtimer.data.knowledgeDirectoryCollectionMayInteract(
+                                        currentFrame = isCurrentFrame(), collectionFrame = frame == null,
+                                        visible = hierarchyVisible, busy = hierarchyBusy || hierarchyRequest != null))
+                            }
                         },
                         busy = hierarchyBusy, message = hierarchyMessage, onBack = {
                             if (isCurrentFrame() && !hierarchyBusy) {
@@ -624,6 +656,8 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeIn
@@ -635,6 +669,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
@@ -642,6 +677,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -650,8 +686,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -711,7 +745,7 @@ internal fun knowledgeArchivePalette(): KnowledgeArchivePalette {
     )
 }
 
-/** Drawn at screen density; no raster textures or per-row bitmaps. */
+/** Opaque tonal archive glyph; no shaders, redundant outline passes or row bitmaps. */
 @Composable
 internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifier) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -719,70 +753,49 @@ internal fun KnowledgeObjectGlyph(isFolder: Boolean, modifier: Modifier = Modifi
     val front = if (dark) Color(0xFFC7A57B) else Color(0xFFF4D7A1)
     val foot = if (dark) Color(0xFF987951) else Color(0xFFDEC18D)
     val sheet = if (dark) Color(0xFF626A74) else Color(0xFFFFFFFF)
-    val sheetFoot = if (dark) Color(0xFF454D58) else Color(0xFFF1EBE1)
+    val sheetFoot = if (dark) Color(0xFF454D58) else Color(0xFFE4DCD0)
     val line = if (dark) Color(0xFFACB4BE) else Color(0xFFB8AFA3)
-    Canvas(modifier.size(32.dp)) {
+    Box(modifier.size(32.dp).drawWithCache {
         val x = size.width / 32f
         val y = size.height / 32f
-        if (isFolder) {
-            drawRoundRect(
-                Color.Black.copy(alpha = if (dark) 0.32f else 0.15f),
-                topLeft = Offset(3f*x, 13f*y), size = Size(27f*x, 17f*y),
-                cornerRadius = CornerRadius(3f*x, 3f*y)
-            )
-            val tab = Path().apply {
-                moveTo(3f*x, 25f*y); lineTo(3f*x, 8f*y)
-                quadraticBezierTo(3f*x, 6f*y, 5.5f*x, 6f*y)
-                lineTo(12f*x, 6f*y); lineTo(15.5f*x, 9f*y)
-                lineTo(26f*x, 9f*y); quadraticBezierTo(29f*x, 9f*y, 29f*x, 12f*y)
-                lineTo(29f*x, 25f*y); close()
-            }
-            drawPath(path = tab, brush = Brush.verticalGradient(listOf(front, rear)))
-            drawPath(path = tab, color = rear.copy(alpha = 0.70f),
-                style = Stroke(width = 0.75f*x))
-            drawRoundRect(
-                brush = Brush.verticalGradient(listOf(front, foot)),
-                topLeft = Offset(2f*x, 12f*y), size = Size(28f*x, 16f*y),
-                cornerRadius = CornerRadius(3.2f*x, 3.2f*y)
-            )
-            drawRoundRect(color = rear.copy(alpha = 0.75f),
-                topLeft = Offset(2f*x, 12f*y), size = Size(28f*x, 16f*y),
-                cornerRadius = CornerRadius(3.2f*x, 3.2f*y),
-                style = Stroke(width = 0.75f*x))
-            drawLine(Color.White.copy(alpha = if (dark) 0.26f else 0.65f),
-                Offset(5f*x, 13.2f*y), Offset(27f*x, 13.2f*y), 0.95f*x)
-            drawLine(Color.Black.copy(alpha = if (dark) 0.18f else 0.08f),
-                Offset(5f*x, 26.3f*y), Offset(27f*x, 26.3f*y), 0.8f*x)
-        } else {
-            drawRoundRect(
-                Color.Black.copy(alpha = if (dark) 0.29f else 0.13f),
-                topLeft = Offset(7.5f*x, 4.5f*y), size = Size(22f*x, 25f*y),
-                cornerRadius = CornerRadius(2f*x, 2f*y)
-            )
-            val page = Path().apply {
-                moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
-                lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
-                quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
-                lineTo(9f*x, 28f*y)
-                quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
-            }
-            drawPath(path = page, brush = Brush.verticalGradient(listOf(sheet, sheetFoot)))
-            drawPath(path = page, color = line.copy(alpha = 0.65f),
-                style = Stroke(width = 0.7f*x))
-            val fold = Path().apply {
-                moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
-                lineTo(29f*x, 9f*y); close()
-            }
-            drawPath(path = fold, brush = Brush.verticalGradient(
-                listOf(sheetFoot, line.copy(alpha = 0.72f))))
-            drawLine(line, Offset(23f*x, 9f*y), Offset(29f*x, 9f*y), 0.7f*x)
+        // Cache only the geometry used by this glyph. Solid tonal surfaces
+        // preserve the archive metaphor without gradient shader/outline work.
+        val silhouette = if (isFolder) Path().apply {
+            moveTo(3f*x, 25f*y); lineTo(3f*x, 8f*y)
+            quadraticBezierTo(3f*x, 6f*y, 5.5f*x, 6f*y)
+            lineTo(12f*x, 6f*y); lineTo(15.5f*x, 9f*y)
+            lineTo(26f*x, 9f*y); quadraticBezierTo(29f*x, 9f*y, 29f*x, 12f*y)
+            lineTo(29f*x, 25f*y); close()
+        } else Path().apply {
+            moveTo(7f*x, 3f*y); lineTo(23f*x, 3f*y)
+            lineTo(29f*x, 9f*y); lineTo(29f*x, 26f*y)
+            quadraticBezierTo(29f*x, 28f*y, 27f*x, 28f*y)
+            lineTo(9f*x, 28f*y)
+            quadraticBezierTo(7f*x, 28f*y, 7f*x, 26f*y); close()
+        }
+        val detail = if (isFolder) null else Path().apply {
+            moveTo(23f*x, 3f*y); lineTo(23f*x, 9f*y)
+            lineTo(29f*x, 9f*y); close()
             for (i in 0..2) {
-                val lineY = (14f + i*4f)*y
-                drawLine(line.copy(alpha = 0.82f), Offset(11f*x, lineY),
-                    Offset((if (i == 2) 21f else 25f)*x, lineY), 0.92f*x)
+                val rowY = (14f + i*4f)*y
+                addRect(Rect(11f*x, rowY, (if (i == 2) 21f else 25f)*x, rowY + y))
             }
         }
-    }
+        onDrawBehind {
+            if (isFolder) {
+                drawPath(path = silhouette, color = rear)
+                drawRoundRect(color = foot, topLeft = Offset(2f*x, 13f*y),
+                    size = Size(28f*x, 16f*y), cornerRadius = CornerRadius(3f*x, 3f*y))
+                drawRoundRect(color = front, topLeft = Offset(2f*x, 12f*y),
+                    size = Size(28f*x, 14f*y), cornerRadius = CornerRadius(3f*x, 3f*y))
+            } else {
+                drawPath(path = silhouette, color = sheet)
+                drawPath(path = detail!!, color = line)
+                drawRoundRect(color = sheetFoot, topLeft = Offset(9f*x, 26f*y),
+                    size = Size(18f*x, y), cornerRadius = CornerRadius(x, y))
+            }
+        }
+    })
 }
 @Composable
 private fun KnowledgeBreadcrumbs(index: KnowledgeHierarchy, id: String?, onBrowse: (String?) -> Unit) {
@@ -799,21 +812,13 @@ private fun KnowledgeHierarchyRow(node: KnowledgeHierarchyNode, index: Knowledge
     modifier: Modifier = Modifier, enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null, onOpen: () -> Unit) {
     val archive = knowledgeArchivePalette()
-    val pressSource = remember { MutableInteractionSource() }
-    val pressed by pressSource.collectIsPressedAsState()
-    val rowScale by animateFloatAsState(
-        targetValue = if (enabled && pressed) 0.992f else 1f,
-        animationSpec = tween(100, easing = FastOutSlowInEasing),
-        label = "knowledge-row-press"
-    )
-    Surface(modifier = modifier.fillMaxWidth().graphicsLayer {
-            scaleX = rowScale; scaleY = rowScale
-        }, shape = RoundedCornerShape(13.dp),
+    // The entire directory already has a navigation layer. Ordinary rows
+    // need ripple feedback, not a second animated RenderNode per item.
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp),
         color = if (node.isFolder) archive.folder else archive.paper,
         border = BorderStroke(1.dp, archive.edge),
-        tonalElevation = 0.dp, shadowElevation = 2.dp) {
+        tonalElevation = 0.dp, shadowElevation = 0.dp) {
     ListItem(modifier = Modifier.fillMaxWidth().clickable(
-            interactionSource = pressSource, indication = LocalIndication.current,
             enabled = enabled && index.issues[node.id] != KnowledgeHierarchyIssue.IDENTITY_CONFLICT,
             onClick = onOpen),
         headlineContent = { Text(node.title.ifBlank { "无标题" }, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
@@ -844,7 +849,7 @@ private fun KnowledgeHierarchyInlineRow(
     val pressed by pressSource.collectIsPressedAsState()
     val rowScale by animateFloatAsState(
         targetValue = if (enabled && pressed) 0.988f else 1f,
-        animationSpec = tween(100, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh),
         label = "knowledge-inline-press"
     )
     val descendantCount = index.children(node.id).size
@@ -985,7 +990,7 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
     var expanded by rememberSaveable(workspace, parentId) { mutableStateOf(true) }
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(160, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "knowledge-children-chevron"
     )
     val callbacksAlive = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicBoolean(true) }
@@ -1095,10 +1100,8 @@ internal fun KnowledgeHierarchyPanel(index: KnowledgeHierarchy, parentId: String
         } else {
             AnimatedVisibility(
                 visible = expanded && children.isNotEmpty(),
-                enter = expandVertically(animationSpec = tween(190, easing = FastOutSlowInEasing)) +
-                    fadeIn(animationSpec = tween(130)),
-                exit = shrinkVertically(animationSpec = tween(155, easing = FastOutSlowInEasing)) +
-                    fadeOut(animationSpec = tween(100))
+                enter = expandVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)),
+                exit = shrinkVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium))
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { childRows() }
             }
@@ -1114,10 +1117,77 @@ private data class KnowledgeDirectoryDragVisual(
     val heightPx: Int
 )
 
+private class KnowledgeDirectoryMotion(initialOffset: Float) {
+    private val translation = Animatable(initialOffset)
+
+    // Translation alone does not require a separate offscreen framebuffer.
+    // Keep the bounded archive card in a retained RenderNode; let Compose
+    // allocate an intermediate target only when compositing actually requires it.
+    val layer: Modifier = Modifier.graphicsLayer {
+        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Auto
+        translationX = size.width * translation.value
+    }
+
+    suspend fun settle(active: Boolean) {
+        if (!active) translation.snapTo(0f)
+        else if (translation.value != 0f) {
+            // Wait for the new list to complete its first layout before moving the cached card.
+            withFrameNanos { }
+            translation.animateTo(0f, spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium,
+                visibilityThreshold = 0.001f
+            ))
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
     message: String, currentScope: () -> KnowledgeDirectoryOrderScope?,
+    onBack: () -> Unit, onBrowse: (String?) -> Unit,
+    onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
+    val workspace = LocalNoteMediaWorkspaceKey.current
+    val active = LocalDocumentTransitionActive.current
+    // One live directory only. Keep the scroll viewport, rows and drag
+    // coordinate system stationary. Animate only the incoming archive card
+    // in its own draw layer, not the full-screen directory render node.
+    // The animated fraction is never read by composition or measurement.
+    // Navigation history is only sampled when the parent key changes. It is not
+    // observable UI state; writing it after composition must not invalidate the
+    // whole directory during the first animated frames.
+    val previousParent = remember(workspace) { java.util.concurrent.atomic.AtomicReference<String?>(parentId) }
+    val initialOffset = remember(workspace, parentId) {
+        if (!active || previousParent.get() == parentId) 0f
+        else {
+            val fromDepth = previousParent.get()?.let { index.breadcrumbs(it).size } ?: 0
+            val toDepth = parentId?.let { index.breadcrumbs(it).size } ?: 0
+            if (toDepth < fromDepth) -0.08f else 0.08f
+        }
+    }
+    SideEffect { previousParent.set(parentId) }
+    key(workspace, parentId) {
+        val motion = remember(initialOffset) { KnowledgeDirectoryMotion(initialOffset) }
+        LaunchedEffect(motion, active) { motion.settle(active) }
+        Box(Modifier.fillMaxSize().clipToBounds().knowledgeNavigationSurface()) {
+            CompositionLocalProvider(LocalDocumentTransitionActive provides active) {
+                Box(if (active) Modifier.fillMaxSize() else Modifier.fillMaxSize().clearAndSetSemantics {}) {
+                    KnowledgeHierarchyBrowserFrame(index, parentId, busy, message, currentScope,
+                        motionLayer = motion.layer,
+                        onBack = onBack, onBrowse = onBrowse, onOpen = onOpen, onRequest = onRequest)
+                    if (!active) DocumentEditorInputBarrier()
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun KnowledgeHierarchyBrowserFrame(index: KnowledgeHierarchy, parentId: String?, busy: Boolean,
+    message: String, currentScope: () -> KnowledgeDirectoryOrderScope?,
+    motionLayer: Modifier,
     onBack: () -> Unit, onBrowse: (String?) -> Unit,
     onOpen: (KnowledgeHierarchyNode) -> Unit, onRequest: (KnowledgeHierarchyRequest) -> Unit) {
     val workspace = LocalNoteMediaWorkspaceKey.current
@@ -1126,17 +1196,6 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val workerScope = rememberCoroutineScope()
-    val destinationDepth = parentId?.let { index.breadcrumbs(it).size } ?: 0
-    var previousDepth by remember(workspace) { mutableIntStateOf(destinationDepth) }
-    val browserDirection = remember(workspace, parentId) {
-        if (destinationDepth < previousDepth) -1f else 1f
-    }
-    val entry = remember(workspace, parentId) { Animatable(0f) }
-    val entryDistancePx = with(density) { 14.dp.toPx() }
-    LaunchedEffect(workspace, parentId) {
-        previousDepth = destinationDepth
-        entry.animateTo(1f, animationSpec = tween(210, easing = FastOutSlowInEasing))
-    }
     val listState = key(workspace, parentId) { rememberLazyListState() }
     val directoryScope = remember(index, workspace, parentId, active, busy) {
         knowledgeDirectoryOrderScope(index, workspace, parentId, active && !busy)
@@ -1157,9 +1216,12 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     var dragging by remember(workspace, parentId) { mutableStateOf<KnowledgeDirectoryDragVisual?>(null) }
     var autoScrollJob by remember(workspace, parentId) { mutableStateOf<Job?>(null) }
     var autoScrollGeneration by remember(workspace, parentId) { mutableIntStateOf(0) }
-    var viewport by remember(workspace, parentId) { mutableStateOf<LayoutCoordinates?>(null) }
+    // Layout coordinates are event-time geometry, not a compositional input.
+    // Avoid a snapshot write from layout while the translated layer animates.
+    val viewport = remember(workspace, parentId) { java.util.concurrent.atomic.AtomicReference<LayoutCoordinates?>(null) }
     val handleBounds = remember(workspace, parentId) { mutableMapOf<String, Rect>() }
-    val normalIds = knowledgeDirectoryOrderedIds(directoryScope, savedIds)
+    val normalIds = remember(directoryScope, savedIds) { knowledgeDirectoryOrderedIds(directoryScope, savedIds) }
+    val draggableIds = remember(directoryScope) { directoryScope.items.filter { it.canDrag }.mapTo(hashSetOf()) { it.id } }
     val displayedIds = pendingIds ?: previewIds ?: normalIds
     val latestDisplayedIds by rememberUpdatedState(displayedIds)
     val edgePx = with(density) { 64.dp.toPx() }
@@ -1349,7 +1411,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
     val canSort = active && !busy && !saving && loaded && !loading && directoryScope.canReorder && displayedIds.size > 1
     val navigationEnabled = active && !busy && !saving && dragging == null
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp)
-        .clipToBounds().onGloballyPositioned { viewport = it }
+        .onGloballyPositioned { viewport.set(it) }
         .pointerInput(workspace, parentId, callbacksAlive) {
             // The viewport owns the pointer: recycling an offscreen dragged row cannot end the gesture.
             awaitEachGesture {
@@ -1378,11 +1440,7 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                 }
             }
         }) {
-        LazyColumn(Modifier.fillMaxSize().graphicsLayer {
-            val progress = entry.value
-            alpha = 0.94f + 0.06f * progress
-            translationX = browserDirection * entryDistancePx * (1f - progress)
-        }, state = listState, userScrollEnabled = dragging == null && !saving,
+        LazyColumn(Modifier.fillMaxSize(), state = listState, userScrollEnabled = active && dragging == null && !saving,
             contentPadding = PaddingValues(bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item(key = 0L) {
                 val archive = knowledgeArchivePalette()
@@ -1395,17 +1453,28 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                     }
                     Text("知识目录", style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.SemiBold, color = archive.ink))
-                    if (busy || saving || loading) CircularProgressIndicator(Modifier.size(22.dp))
+                    // Reserve the same measured width before and after order
+                    // loading so completion does not move the header title.
+                    Box(Modifier.width(64.dp).heightIn(min = 22.dp),
+                        contentAlignment = Alignment.CenterEnd) {
+                        if (busy || saving) {
+                            CircularProgressIndicator(Modifier.size(22.dp))
+                        } else if (loading) {
+                            Text("读取排序", style = MaterialTheme.typography.labelSmall,
+                                color = archive.ink.copy(alpha = 0.72f), maxLines = 1)
+                        }
+                    }
                 }
                 if (parentId != null) KnowledgeBreadcrumbs(index, parentId) {
                     navigation { onBrowse(it) }
                 }
                 Spacer(Modifier.height(8.dp))
                 Surface(
+                    modifier = motionLayer,
                     shape = RoundedCornerShape(18.dp),
                     color = archive.paper,
                     border = BorderStroke(1.dp, archive.edge),
-                    tonalElevation = 0.dp, shadowElevation = 3.dp
+                    tonalElevation = 0.dp, shadowElevation = 0.dp
                 ) {
                     Column(Modifier.fillMaxWidth().padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1435,14 +1504,14 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                     if (!loaded && !loading) TextButton(onClick = { orderMessage = ""; reload++ }) { Text("重试") }
                 }
             }
-            items(displayedIds, key = { it }) { id ->
+            itemsIndexed(displayedIds, key = { _, id -> id }) { position, id ->
                 val child = index.nodes[id]
                 if (child != null) {
                     val placeholder = dragging?.session?.draggedId == id
-                    val draggable = canSort && directoryScope.items.any { it.id == id && it.canDrag }
-                    val position = displayedIds.indexOf(id)
-                    DisposableEffect(id, handleBounds) { onDispose { handleBounds.remove(id) } }
-                    var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(tween(190, easing = FastOutSlowInEasing)) else Modifier
+                    val handleSlot = directoryScope.canReorder && displayedIds.size > 1 && id in draggableIds
+                    val draggable = canSort && handleSlot
+                    DisposableEffect(id, handleBounds, draggable) { onDispose { handleBounds.remove(id) } }
+                    var rowModifier = if (dragging != null || pendingIds != null) Modifier.animateItemPlacement(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) else Modifier
                     if (placeholder) rowModifier = rowModifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics { }
                     else if (draggable) rowModifier = rowModifier.semantics {
                         customActions = buildList {
@@ -1453,15 +1522,25 @@ internal fun KnowledgeHierarchyBrowser(index: KnowledgeHierarchy, parentId: Stri
                     KnowledgeHierarchyRow(child, index, modifier = rowModifier, enabled = navigationEnabled,
                         trailing = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (draggable) Box(Modifier.size(48.dp).semantics {
-                                    contentDescription = "$KNOWLEDGE_DIRECTORY_DRAG_LABEL，${child.title.ifBlank { "无标题" }}"
-                                    stateDescription = "第 ${position + 1} 项，共 ${displayedIds.size} 项"
-                                }.onGloballyPositioned { handle ->
-                                    val surface = viewport
-                                    if (surface?.isAttached == true && handle.isAttached) {
-                                        handleBounds[id] = surface.localBoundingBoxOf(handle, clipBounds = false)
+                                // Allocate identical row width during the
+                                // auxiliary order read. No inactive handle
+                                // receives a pointer target or sort semantics.
+                                if (handleSlot) {
+                                    val interaction = if (draggable) Modifier.semantics {
+                                        contentDescription = "$KNOWLEDGE_DIRECTORY_DRAG_LABEL，${child.title.ifBlank { "无标题" }}"
+                                        stateDescription = "第 ${position + 1} 项，共 ${displayedIds.size} 项"
+                                    }.onGloballyPositioned { handle ->
+                                        val surface = viewport.get()
+                                        if (surface?.isAttached == true && handle.isAttached) {
+                                            handleBounds[id] = surface.localBoundingBoxOf(handle, clipBounds = false)
+                                        }
+                                    } else Modifier.clearAndSetSemantics {}
+                                    Box(Modifier.size(48.dp).then(interaction),
+                                        contentAlignment = Alignment.Center) {
+                                        Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                            alpha = if (draggable) 1f else 0.38f))
                                     }
-                                }, contentAlignment = Alignment.Center) { Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                }
                                 KnowledgeLegalExclusionAction(workspace, child.id, child.title, index, compact = true)
                                 Text("›")
                             }
@@ -1598,7 +1677,9 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
                     CircularProgressIndicator(Modifier.size(22.dp))
                     Text(if (stage == "waiting") "等待前序保存完成…" else "正在写入本地数据…")
                 }
-                if (waitingSeconds >= 8) Text("保存仍在进行。完成可靠提交前不会退出此窗口。",
+                if (waitingSeconds >= 8) Text(
+                    if (stage == "waiting") "前序任务仍在保存；若本次尚未开始，将自动结束等待并保留输入。"
+                    else "正在可靠写入，完成前不会重复提交。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -1611,25 +1692,47 @@ internal fun KnowledgeHierarchyActionDialog(request: KnowledgeHierarchyRequest, 
 
 // All exclusion UI is Android-only. The underlying encrypted policy never
 // changes knowledge data, shared synchronization state, or other risk modules.
+private data class KnowledgeLegalExclusionPolicy(
+    val rootExcluded: Boolean,
+    val ids: Set<String>
+)
+
 private object KnowledgeLegalExclusionRevisions {
     val values = androidx.compose.runtime.mutableStateMapOf<String, Int>()
-    // One disk/Keystore read per workspace revision, not one per visible row.
-    private val cache = HashMap<String, Pair<Int, Result<org.json.JSONObject>>>()
+    // Immutable parsed result is shared by all rows. The main thread only
+    // performs a nonblocking cache lookup; IO and Keystore stay off Main.
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, Result<KnowledgeLegalExclusionPolicy>>>()
 
-    @Synchronized
-    fun load(
+    fun cached(workspaceKey: String, revision: Int): Result<KnowledgeLegalExclusionPolicy>? =
+        cache[workspaceKey]?.takeIf { it.first == revision }?.second
+
+    suspend fun load(
         context: android.content.Context,
         workspaceKey: String,
         revision: Int
-    ): Result<org.json.JSONObject> {
-        val previous = cache[workspaceKey]
-        if (previous != null && previous.first == revision) return previous.second
+    ): Result<KnowledgeLegalExclusionPolicy> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        loadOnWorker(context, workspaceKey, revision)
+    }
+
+    @Synchronized
+    private fun loadOnWorker(
+        context: android.content.Context,
+        workspaceKey: String,
+        revision: Int
+    ): Result<KnowledgeLegalExclusionPolicy> {
+        cached(workspaceKey, revision)?.let { return it }
         val current = runCatching {
-            org.json.JSONObject(
+            val policy = org.json.JSONObject(
                 com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.snapshot(context, workspaceKey)
             )
+            val ids = buildSet {
+                val all = policy.optJSONArray("nodeIds")
+                if (all != null) for (i in 0 until all.length()) add(all.optString(i))
+            }
+            KnowledgeLegalExclusionPolicy(policy.optBoolean("rootExcluded"), ids)
         }
-        cache[workspaceKey] = revision to current
+        // A delayed old-revision reader cannot evict the newer result.
+        if ((cache[workspaceKey]?.first ?: revision) <= revision) cache[workspaceKey] = revision to current
         return current
     }
 }
@@ -1646,23 +1749,24 @@ private fun KnowledgeLegalExclusionAction(
     val context = LocalContext.current.applicationContext
     val archive = knowledgeArchivePalette()
     val revision = KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0
-    val loaded = remember(workspaceKey, revision) {
-        KnowledgeLegalExclusionRevisions.load(context, workspaceKey, revision)
+    // Key the result to the revision so a stale policy is never actionable
+    // while a new workspace/revision is being loaded.
+    var loaded by remember(workspaceKey, revision) {
+        mutableStateOf(KnowledgeLegalExclusionRevisions.cached(workspaceKey, revision))
     }
-    val policy = loaded.getOrNull()
-    val ids = remember(policy) {
-        buildSet {
-            val all = policy?.optJSONArray("nodeIds")
-            if (all != null) for (i in 0 until all.length()) add(all.optString(i))
-        }
+    LaunchedEffect(context, workspaceKey, revision) {
+        if (loaded == null) loaded = KnowledgeLegalExclusionRevisions.load(context, workspaceKey, revision)
     }
-    val direct = if (nodeId == null) policy?.optBoolean("rootExcluded") == true else nodeId in ids
-    val inherited = nodeId != null && (
-        policy?.optBoolean("rootExcluded") == true ||
-        index.ancestors(nodeId).any { ancestor -> ancestor.id in ids }
-    )
-    var menuOpen by remember(workspaceKey, nodeId) { mutableStateOf(false) }
-    var confirmation by remember(workspaceKey, nodeId) { mutableStateOf(false) }
+    val policy = loaded?.getOrNull()
+    val ids = policy?.ids.orEmpty()
+    val direct = if (nodeId == null) policy?.rootExcluded == true else nodeId in ids
+    val inherited = remember(index, nodeId, policy) {
+        nodeId != null && policy != null && (
+            policy.rootExcluded || index.ancestors(nodeId).any { ancestor -> ancestor.id in ids }
+        )
+    }
+    var menuOpen by remember(workspaceKey, nodeId, revision) { mutableStateOf(false) }
+    var confirmation by remember(workspaceKey, nodeId, revision) { mutableStateOf(false) }
     var failure by remember(workspaceKey, nodeId) { mutableStateOf<String?>(null) }
     val nextExcluded = !direct
     val caption = when {
@@ -1670,11 +1774,11 @@ private fun KnowledgeLegalExclusionAction(
         direct -> "恢复参与法律分析"
         else -> "排除法律风险分析"
     }
-    val enabled = loaded.isSuccess && !inherited
+    val enabled = loaded?.isSuccess == true && !inherited
 
     if (compact) {
         Box {
-            TextButton(enabled = loaded.isSuccess, onClick = { menuOpen = true },
+            TextButton(enabled = loaded?.isSuccess == true, onClick = { menuOpen = true },
                 colors = ButtonDefaults.textButtonColors(contentColor = archive.ink),
                 modifier = Modifier.heightIn(min = 48.dp).semantics {
                     contentDescription = settingsLabel ?: "法律风险分析设置"
@@ -1693,13 +1797,13 @@ private fun KnowledgeLegalExclusionAction(
             Text(if (nodeId == null && !direct) "排除整个知识模块" else caption)
         }
     }
-    if (loaded.isFailure) {
+    if (loaded?.isFailure == true) {
         Text("排除规则不可读取，法律分析已阻止发送。", color = MaterialTheme.colorScheme.error)
     }
     if (failure != null) {
         Text(failure.orEmpty(), color = MaterialTheme.colorScheme.error)
     }
-    if (confirmation) {
+    if (confirmation && enabled) {
         AlertDialog(
             onDismissRequest = { confirmation = false },
             title = { Text(if (nextExcluded) "确认排除法律分析？" else "恢复参与法律分析？") },
@@ -1711,7 +1815,13 @@ private fun KnowledgeLegalExclusionAction(
                     "恢复后，这个范围将重新参与未来的法律风险分析；仍受其他上级排除规则约束。"
             ) },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = enabled, onClick = {
+                    // A queued click from a retired revision must not mutate the
+                    // new policy. The underlying store keeps its original checks.
+                    if ((KnowledgeLegalExclusionRevisions.values[workspaceKey] ?: 0) != revision) {
+                        confirmation = false
+                        return@TextButton
+                    }
                     val result = runCatching {
                         com.ofairyo.gridtimer.data.LegalKnowledgeExclusionStore.update(
                             context, workspaceKey, nodeId, nextExcluded

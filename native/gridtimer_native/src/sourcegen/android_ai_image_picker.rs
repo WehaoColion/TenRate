@@ -1,3 +1,4 @@
+// v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
 //! Rust-owned Android AI image picker, preview and bounded content-URI reader.
 //! Android framework glue is generated from this Rust template. Image format
 //! verification and request serialization stay in the Rust native library.
@@ -17,6 +18,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -99,23 +104,44 @@ private fun KnowledgeAiThumbnail(uri: Uri) {
 internal fun KnowledgeAiImagePicker(
     selected: List<Uri>,
     enabled: Boolean,
-    onChange: (List<Uri>) -> Unit
+    onChange: (List<Uri>) -> Unit,
+    compact: Boolean = false,
+    trailingAction: @Composable (() -> Unit)? = null
 ) {
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) onChange((selected + uris).distinct().take(MAX_AI_IMAGES))
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(enabled = enabled && selected.size < MAX_AI_IMAGES,
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (compact) TextButton(enabled = enabled && selected.size < MAX_AI_IMAGES,
+                onClick = { launcher.launch("image/*") }) {
+                Text(if (selected.isEmpty()) "＋ 图片" else "＋ 图片 ${selected.size}/$MAX_AI_IMAGES")
+            } else OutlinedButton(enabled = enabled && selected.size < MAX_AI_IMAGES,
                 onClick = { launcher.launch("image/*") }) {
                 Text("添加图片 ${selected.size}/$MAX_AI_IMAGES")
             }
             if (selected.isNotEmpty()) {
                 TextButton(enabled = enabled, onClick = { onChange(emptyList()) }) { Text("清空图片") }
             }
+            if (trailingAction != null) {
+                Spacer(Modifier.weight(1f))
+                trailingAction()
+            }
         }
-        selected.forEachIndexed { index, uri ->
+        if (compact && selected.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                selected.forEachIndexed { index, uri ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        KnowledgeAiThumbnail(uri)
+                        TextButton(enabled = enabled, onClick = {
+                            onChange(selected.filterIndexed { at, _ -> at != index })
+                        }) { Text("移除 ${index + 1}") }
+                    }
+                }
+            }
+        } else selected.forEachIndexed { index, uri ->
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 KnowledgeAiThumbnail(uri)

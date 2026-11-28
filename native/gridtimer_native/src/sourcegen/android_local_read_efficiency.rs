@@ -1,3 +1,13 @@
+// v3.0.2.62 - Repository-owned storage maintenance stages and outcomes.
+// v3.0.2.60 - Reclaim expired regenerable note share cache without touching user files.
+// v3.0.2.59 - Keep verified history packing alive after workspace switches and transient failures.
+// v3.0.2.49 - Explicit physical database reclamation without deleting recovery rows.
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
+// v3.0.2.31 - Bound maintenance duty cycle and sample routine diagnostic logs.
+// v3.0.2.30 - Skip proofless background writer and record lock duration.
+// v3.0.2.26 - Prevent unbounded automatic retained-snapshot GC scans.
+// v3.0.2.25 - Gate history maintenance on foreground idle.
+// v3.0.2.15 - Idle history worker continues to pick up newly deferred rows.
 // v2.23.2.54 - Accept upstream workspace-indexed raw snapshot scans without rewriting them twice.
 // v2.23.2.48 - Accelerate safe post-start maintenance and reduce indexed scan round trips.
 // v2.23.2.47 - Avoid unrelated media IO and unbounded maintenance before ready.
@@ -25,6 +35,9 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                     .find("    fun verifiedAttachmentFile(")
                     .ok_or("missing media verifier")?;
             source.replace_range(start..end, MEDIA_HYDRATION);
+            replace(&mut source,
+                "    fun shareDirectory(context: Context): File {\n        return File(context.cacheDir, NOTE_SHARE_DIR).apply { mkdirs() }\n    }",
+                SHARE_CACHE_POLICY)?;
             source.push_str(MEDIA_POLICY);
         }
         REPOSITORY => {
@@ -49,10 +62,20 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 replace(&mut load, expression, &format!("measureLocalStartup(\"{name}\") {{ {expression} }}"))?;
                 source.replace_range(start..end, &load);
             }
+            // Optional attachment GC previously invoked three full quarantine
+            // scans (untrusted evidence, workspace discovery, retained roots).
+            // Reject expensive automatic scans before touching those APIs.
+            replace(&mut source,
+                "    private suspend fun pruneNoteMedia(appData: AppData) {\n        runCatching {",
+                "    private suspend fun pruneNoteMedia(appData: AppData) {\n        runCatching {\n            if (!withContext(Dispatchers.IO) { stateDatabase.automaticMediaScanWithinBudget() }) {\n                logDiagnosticEvent(category = \"notes.media.prune\", message = \"Deferred automatic attachment cleanup: retained snapshot scan exceeds budget; all files retained.\")\n                return@runCatching\n            }")?;
             source.push_str(STARTUP_TIMING);
             source.push_str(MAINTENANCE_POLICY);
         }
         DATABASE => {
+            replace(&mut source,
+                "    fun hasUntrustedQuarantineEvidence(): Boolean {",
+                &format!("{}    fun hasUntrustedQuarantineEvidence(): Boolean {{",
+                    MEDIA_SCAN_BUDGET.replace("__MEDIA_BUDGET_QUERY__", MEDIA_BUDGET_QUERY)))?;
             replace(&mut source,
                 "        if (freshTransaction) runCatching { compactHistory(workspaceKey) }.onFailure {\n            android.util.Log.w(\"StartupLatency\", \"historyCompact incomplete; retaining original rows\", it)\n        }\n",
                 "        // Packing old rows is maintenance, not a prerequisite for reading them.\n")?;
@@ -95,14 +118,14 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
                 replace(&mut compact, line, "")?;
             }
             source.replace_range(start..end, &compact);
-            // Both APIs follow the existing workspace/time/id index, rather than
-            // traversing payload pages belonging to other accounts.
-            // Newer Android startup templates select the existing workspace index
-            // directly. Older templates still need the indexed rewrite below.
-            // Never silently accept an unrecognized scan or drop the workspace filter.
+            // Native verification order is independent of recovery candidate priority.
+            // API 35+ walks the existing v5 encoding queue in row-id order;
+            // older templates retain the workspace/time index. Never lose the
+            // workspace filter or silently revert to an unrelated table scan.
             if source.contains("FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder") {
-                if !source.contains("INDEXED BY snapshot_history_workspace_time") {
-                    return Err("indexed snapshot scan must retain its workspace index".into());
+                if !source.contains("INDEXED BY history_encoding_queue") ||
+                    !source.contains("storage_encoding ASC, id ASC") {
+                    return Err("native history verification must use the workspace encoding queue in ascending row-id order".into());
                 }
             } else {
                 replace(&mut source, "            \"FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid\"",
@@ -121,6 +144,66 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
     }
     Ok(source)
 }
+
+// This is an admission budget, never a proof that deletion is safe. Only
+// the existing complete retained-root and quarantine checks can authorize it.
+// Read-only, bounded probes do not take the snapshot writer monitor.
+const MEDIA_BUDGET_QUERY: &str = "SELECT COUNT(*), COALESCE(SUM(length(CAST(app_data_json AS BLOB))), 0) FROM (SELECT app_data_json FROM $table LIMIT ?)";
+const MEDIA_SCAN_BUDGET: &str = r####"    fun automaticMediaScanWithinBudget(): Boolean {
+        val database = readableDatabase
+        var remainingRows = 128L
+        var remainingBytes = 16L * 1024 * 1024
+        for (table in listOf(CURRENT_TABLE, HISTORY_TABLE, QUARANTINE_TABLE)) {
+            // Probe count first: a large table is rejected without reading any
+            // payload pages or calling quarantineDigestMismatches.
+            val limit = (remainingRows + 1L).toString()
+            val count = database.rawQuery(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM $table LIMIT ?)", arrayOf(limit)
+            ).use { cursor -> check(cursor.moveToFirst()); cursor.getLong(0) }
+            if (count > remainingRows) return false
+            val measured = database.rawQuery(
+                "__MEDIA_BUDGET_QUERY__", arrayOf(limit)
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getLong(0) to cursor.getLong(1)
+            }
+            if (measured.first != count || measured.second < 0L ||
+                measured.second > remainingBytes) return false
+            remainingRows -= measured.first
+            remainingBytes -= measured.second
+        }
+        return true
+    }
+
+"####;
+
+// Restrict expiration to regenerable note share copies. Never traverse
+// subdirectories, capture/import staging, permanent exports or media roots.
+const SHARE_CACHE_POLICY: &str = r####"    fun shareDirectory(context: Context): File {
+        val root = File(context.cacheDir, NOTE_SHARE_DIR).apply { mkdirs() }
+        reclaimExpiredShareCache(context)
+        return root
+    }
+
+    fun reclaimExpiredShareCache(context: Context): Long {
+        val cache = context.cacheDir.canonicalFile
+        val root = File(cache, NOTE_SHARE_DIR)
+        if (!root.isDirectory || root.canonicalFile != root || root.parentFile != cache) return 0L
+        val cutoff = System.currentTimeMillis() - 7L * 24L * 60L * 60L * 1_000L
+        val name = Regex("note_share_[0-9]+\\.(png|html)")
+        var reclaimed = 0L
+        for (entry in root.listFiles().orEmpty()) {
+            // Unknown times, links, directories and recent outputs are retained.
+            if (!name.matches(entry.name) || !entry.isFile ||
+                entry.canonicalFile != entry || entry.parentFile != root) continue
+            val modified = entry.lastModified()
+            if (modified <= 0L || modified >= cutoff) continue
+            val bytes = entry.length()
+            if (entry.delete()) reclaimed += bytes
+        }
+        if (reclaimed > 0L) android.util.Log.i("StorageReclaim", "expiredNoteShareBytes=$reclaimed")
+        return reclaimed
+    }"####;
 
 const MEDIA_HYDRATION: &str = r####"    fun resolvedAttachmentHashes(
         context: Context,
@@ -169,18 +252,39 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
         // yields, uses tryLock, and packs at most one row. Restart resumes via the
         // persisted encoding queue; no current/history row is discarded.
         delay(2_000L)
-        val workspaceKey = activeWorkspaceKey
+        // Cache copies are not part of the SQLite writer transaction.
+        withContext(Dispatchers.IO) {
+            runCatching { NoteMediaStore.reclaimExpiredShareCache(appContext) }
+                .onFailure { Log.w("StorageReclaim", "Expired note share cache cleanup deferred", it) }
+        }
+        var cursorWorkspace = activeWorkspaceKey
         var afterId = 0L
+        var completedBatches = 0L
+        var nextIdleDelay = 1_000L
         while (true) {
-            if (!writeMutex.tryLock()) {
+            if (!noteMaintenanceMayStart(5_000L) || !writeMutex.tryLock()) {
                 delay(1_000L)
                 continue
             }
+            val maintenanceStarted = android.os.SystemClock.elapsedRealtime()
+            var admitted = false
+            var failed = false
             val next = try {
-                if (activeWorkspaceKey != workspaceKey || futureSchemaVersion != null ||
-                    loadedFromRecoveryCandidate || persistenceWriteBlockedReason != null) break
-                withContext(Dispatchers.IO) {
-                    val cached = verifiedWritePreflight
+                // Read the owner while holding the repository writer lock.
+                // A workspace switch must reset the queue cursor, not permanently
+                // terminate maintenance for all subsequent accounts.
+                val workspaceKey = activeWorkspaceKey
+                if (cursorWorkspace != workspaceKey) {
+                    cursorWorkspace = workspaceKey
+                    afterId = 0L
+                }
+                if (!noteMaintenanceMayStart(5_000L) || futureSchemaVersion != null ||
+                    loadedFromRecoveryCandidate || persistenceWriteBlockedReason != null) null
+                else withContext(Dispatchers.IO) {
+                    val cached = verifiedWritePreflight?.takeIf { it.first == workspaceKey }
+                        ?: return@withContext null
+                    // No valid workspace proof means no background writer.
+                    admitted = true
                     verifiedWritePreflight = null
                     val files = workspaceFiles(workspaceKey)
                     val result = compactVerifiedHistoryBatch(
@@ -199,22 +303,42 @@ const MAINTENANCE_JOB: &str = r####"    private val historyCompactionJob = scope
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                Log.w("StartupLatency", "Deferred history packing stopped; original rows retained", failure)
+                // A transient writer/read failure must not disable packing until process death.
+                // Retry only after a new workspace proof is available; keep the failed row.
+                failed = true
+                Log.w("StartupLatency", "Deferred history packing failed; original rows retained, retry deferred", failure)
                 null
             } finally {
                 writeMutex.unlock()
+                if (admitted) {
+                    val heldMs = android.os.SystemClock.elapsedRealtime() - maintenanceStarted
+                    completedBatches++
+                    // Keep a low duty cycle even on slow storage. Never shorten
+                    // the idle interval after an expensive writer transaction.
+                    nextIdleDelay = historyCompactionIdleDelay(heldMs)
+                    if (heldMs >= 50L || completedBatches == 1L || completedBatches % 64L == 0L) {
+                        Log.i("NoteSaveLatency", "maintenance=history_compaction heldMs=$heldMs batches=$completedBatches nextIdleMs=$nextIdleDelay")
+                    }
+                }
             }
-            if (next == null) break
+            if (next == null) {
+                // Keep the monotonic cursor: new foreground snapshots may add
+                // authenticated raw rows later. Do not reprocess failed old rows.
+                delay(if (failed) 60_000L else 15_000L)
+                continue
+            }
             afterId = next
-            // Each transaction still packs only one authenticated row; shorter
-            // paced idle gaps drain old histories sooner for subsequent launches.
-            // Foreground writes always take precedence via writeMutex.tryLock().
-            delay(250L)
+            // Preserve bounded one-row work, but do not continually contend
+            // for storage during an otherwise quiet editing session.
+            delay(nextIdleDelay)
         }
     }
 "####;
 
 pub const MAINTENANCE_POLICY: &str = r####"
+
+internal fun historyCompactionIdleDelay(heldMs: Long): Long =
+    (heldMs.coerceIn(0L, 3_000L) * 8L).coerceAtLeast(1_000L)
 
 internal data class HistoryMaintenanceResult<S>(val nextRow: Long?, val stamp: S?)
 
@@ -224,13 +348,16 @@ internal fun <S : Any> compactVerifiedHistoryBatch(
     stamp: () -> S,
     mirrorsUnchanged: (S, S) -> Boolean,
     compact: () -> Long?
-): HistoryMaintenanceResult<S> = transaction {
-    val before = stamp()
-    if (expected != before) HistoryMaintenanceResult(null, null)
-    else {
-        val next = compact()
-        val after = stamp()
-        HistoryMaintenanceResult(next, after.takeIf { mirrorsUnchanged(before, it) })
+): HistoryMaintenanceResult<S> {
+    if (expected == null) return HistoryMaintenanceResult(null, null)
+    return transaction {
+        val before = stamp()
+        if (expected != before) HistoryMaintenanceResult(null, null)
+        else {
+            val next = compact()
+            val after = stamp()
+            HistoryMaintenanceResult(next, after.takeIf { mirrorsUnchanged(before, it) })
+        }
     }
 }
 "####;
@@ -339,6 +466,13 @@ class MissingMediaHashesTest {
 
     private data class Stamp(val db: Int, val mirror: Int)
 
+    @Test fun slowStorageReducesOptionalWriterDutyCycle() {
+        assertEquals(1_000L, historyCompactionIdleDelay(0))
+        assertEquals(1_000L, historyCompactionIdleDelay(15))
+        assertEquals(4_000L, historyCompactionIdleDelay(500))
+        assertEquals(24_000L, historyCompactionIdleDelay(Long.MAX_VALUE))
+    }
+
     @Test fun maintenanceReusesProofOnlyAfterItsTransactionCommits() {
         var inTransaction = false
         var committed = false
@@ -357,7 +491,13 @@ class MissingMediaHashesTest {
     }
 
     @Test fun staleProofChangedMirrorAndCommitFailureCannotPublishMaintenanceProof() {
-        for (expected in listOf(null, Stamp(0, 1), Stamp(1, 0))) {
+        val missing = compactVerifiedHistoryBatch<Stamp>(null, { error("No proof: writer must not open") },
+            { error("No proof: stamp must not be read") }, { _, _ -> true }) {
+            error("No proof: history must not be modified")
+        }
+        assertNull(missing.stamp)
+        assertNull(missing.nextRow)
+        for (expected in listOf(Stamp(0, 1), Stamp(1, 0))) {
             val result = compactVerifiedHistoryBatch(expected, { it() }, { Stamp(1, 1) }, { _, _ -> true }) {
                 error("Unverified workspace must not be compacted")
             }
@@ -396,7 +536,8 @@ mod tests {
     #[test]
     fn composed_database_uses_forced_workspace_index_and_keeps_verification() {
         let source = rendered_database();
-        assert!(source.contains("INDEXED BY snapshot_history_workspace_time"));
+        assert!(source.contains("INDEXED BY history_encoding_queue"));
+        assert!(source.contains("storage_encoding ASC, id ASC"));
         assert!(source.contains("FROM $indexedTable WHERE workspace_key = ? ORDER BY $rowOrder"));
         assert!(!source.contains("FROM $table NOT INDEXED WHERE workspace_key = ? ORDER BY rowid"));
         assert!(source.contains("verifyNativeSnapshotRows(workspaceKey)"));
@@ -533,6 +674,9 @@ mod tests {
             .unwrap()
             .contents;
         let source = render(MEDIA, base).unwrap();
+        // The share-cache policy is deliberately outside media hydration.
+        let base_without_old_share = base.replace("    fun shareDirectory(context: Context): File {\n        return File(context.cacheDir, NOTE_SHARE_DIR).apply { mkdirs() }\n    }", SHARE_CACHE_POLICY);
+        let base = base_without_old_share.as_str();
         assert_eq!(
             base.split("    fun resolvedAttachmentHashes(").next(),
             source.split("    fun resolvedAttachmentHashes(").next()
@@ -551,6 +695,28 @@ mod tests {
     }
 
     #[test]
+    fn attachment_cleanup_budget_reads_at_most_the_admitted_snapshot_rows() {
+        use rusqlite::{params, Connection};
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE snapshot_history(app_data_json TEXT NOT NULL);
+            WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < 500)
+            INSERT INTO snapshot_history SELECT '1234' FROM seq;").unwrap();
+        let sql = MEDIA_BUDGET_QUERY.replace("$table", "snapshot_history");
+        let read = |limit: i64| -> (i64, i64) {
+            db.query_row(&sql, params![limit], |row| Ok((row.get(0)?, row.get(1)?))).unwrap()
+        };
+        assert_eq!(read(129), (129, 516));
+        assert_eq!(read(1), (1, 4));
+        assert_eq!(read(1000), (500, 2000));
+        db.execute_batch("DELETE FROM snapshot_history;
+            INSERT INTO snapshot_history VALUES ('abc'), ('abcd');").unwrap();
+        assert_eq!(read(129), (2, 7));
+        // Byte accounting must detect a large row even with a small count.
+        db.execute("INSERT INTO snapshot_history VALUES (printf('%*s', 16777216, ''))", []).unwrap();
+        assert_eq!(read(129), (3, 16777223));
+    }
+
+    #[test]
     fn maintenance_is_bounded_and_does_not_issue_proof_before_commit() {
         assert!(MAINTENANCE_JOB.contains("initializationJob.join()"));
         assert!(MAINTENANCE_JOB.contains("writeMutex.tryLock()"));
@@ -566,7 +732,164 @@ mod tests {
         assert!(INDEXED_BATCHES.contains("(created_at_epoch_millis, id) < (?, ?)"));
         assert!(!INDEXED_BATCHES.contains("NOT INDEXED"));
         assert!(INDEXED_BATCHES.contains("val batchSize = if (sizedWindow) 64 else 1"));
-        assert!(MAINTENANCE_JOB.contains("delay(250L)"));
+        assert!(MAINTENANCE_JOB.contains("delay(nextIdleDelay)"));
         assert!(MAINTENANCE_JOB.contains("stateDatabase.compactHistoryBatch(workspaceKey, afterId)"));
+        // Historical defect: switching workspace or one transient exception
+        // permanently exited the only packing worker. Never let the cursor
+        // from one account be reused for another account.
+        assert!(MAINTENANCE_JOB.contains("if (cursorWorkspace != workspaceKey) {\n                    cursorWorkspace = workspaceKey\n                    afterId = 0L"));
+        assert!(!MAINTENANCE_JOB.contains(") break"));
+        assert!(MAINTENANCE_JOB.contains("delay(if (failed) 60_000L else 15_000L)"));
+    }
+}
+
+
+// Final emission: explicit physical maintenance, never in autosave or startup.
+pub fn finalize_storage(path: &str, source: &str) -> Result<String, String> {
+    let mut output = source.to_owned();
+    match path {
+        DATABASE => {
+            replace(&mut output, "    fun writeSnapshot(", &format!("{STORAGE_DATABASE}    fun writeSnapshot("))?;
+        }
+        REPOSITORY => {
+            replace(&mut output, "    private suspend fun persistToWorkspace(", &format!("{STORAGE_REPOSITORY}    private suspend fun persistToWorkspace("))?;
+            output.push_str(STORAGE_STATE);
+        }
+        "com/ofairyo/gridtimer/ui/TimerViewModel.kt" => {
+            replace(&mut output, "    private val repository = GridTimerApplication.timerRepository(application)",
+                "    private val repository = GridTimerApplication.timerRepository(application)\n    internal val storageMaintenanceState = repository.storageMaintenanceState\n    internal fun startStorageMaintenance() = repository.startStorageMaintenance()")?;
+        }
+        "com/ofairyo/gridtimer/ui/GridTimerScreen.kt" => {
+            replace(&mut output, "                                onLogout = viewModel::logoutSyncAccount,",
+                "                                onLogout = viewModel::logoutSyncAccount,\n                                storageMaintenance = viewModel.storageMaintenanceState.collectAsState().value,\n                                onReclaimStorage = viewModel::startStorageMaintenance,")?;
+        }
+        _ => {}
+    }
+    Ok(output)
+}
+
+const STORAGE_DATABASE: &str = r####"    // Only physical allocation changes. No logical recovery row is removed.
+    internal fun reclaimUnusedStorage(onStage: (StorageMaintenancePhase) -> Unit): StorageMaintenanceResult = tracedSnapshotMonitor("storageReclaim") {
+        val database = writableDatabase
+        check(!database.inTransaction())
+        fun scalar(pragma: String): Long = database.rawQuery("PRAGMA $pragma", null).use {
+            check(it.moveToFirst()); it.getLong(0)
+        }
+        fun bytesOnDisk(): Long = databaseFile.length() + java.io.File(databaseFile.path + "-wal").length()
+        fun checkpoint() {
+            database.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use {
+                check(it.moveToFirst() && it.getInt(0) == 0) { "SQLite checkpoint is busy." }
+            }
+        }
+        val before = bytesOnDisk()
+        onStage(StorageMaintenancePhase.CHECKPOINT)
+        checkpoint()
+        onStage(StorageMaintenancePhase.MEASURING)
+        val freeBytes = scalar("freelist_count") * scalar("page_size")
+        if (freeBytes >= 8L * 1024L * 1024L) {
+            val available = android.os.StatFs(requireNotNull(databaseFile.parentFile).path).availableBytes
+            val dbBytes = databaseFile.length()
+            if (dbBytes > (available - 64L * 1024L * 1024L).coerceAtLeast(0L) / 2L) {
+                throw StorageMaintenanceInsufficientSpace()
+            }
+            onStage(StorageMaintenancePhase.VACUUM)
+            database.execSQL("VACUUM")
+            onStage(StorageMaintenancePhase.FINAL_CHECKPOINT)
+            checkpoint()
+        }
+        onStage(StorageMaintenancePhase.FINAL_MEASURE)
+        val after = bytesOnDisk()
+        android.util.Log.i("StorageReclaim", "beforeBytes=$before afterBytes=$after freePageBytes=$freeBytes")
+        StorageMaintenanceResult(before, after, freeBytes)
+    }
+
+"####;
+
+const STORAGE_REPOSITORY: &str = r####"    private val mutableStorageMaintenance = MutableStateFlow(StorageMaintenanceState())
+    internal val storageMaintenanceState = mutableStorageMaintenance.asStateFlow()
+
+    @Synchronized
+    internal fun startStorageMaintenance() {
+        if (mutableStorageMaintenance.value.phase.running) return
+        mutableStorageMaintenance.value = StorageMaintenanceState(StorageMaintenancePhase.WAITING)
+        scope.launch {
+            var acquired = false
+            var terminal = StorageMaintenanceState(StorageMaintenancePhase.FAILED)
+            try {
+                initializationJob.join()
+                acquired = writeMutex.tryLock()
+                if (!acquired) {
+                    terminal = StorageMaintenanceState(StorageMaintenancePhase.BUSY)
+                } else if (futureSchemaVersion != null || persistenceWriteBlockedReason != null ||
+                    loadedFromRecoveryCandidate) {
+                    terminal = StorageMaintenanceState(StorageMaintenancePhase.BLOCKED)
+                } else {
+                    val result = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                        verifiedWritePreflight = null
+                        stateDatabase.reclaimUnusedStorage { phase ->
+                            mutableStorageMaintenance.value = StorageMaintenanceState(phase)
+                        }
+                    }
+                    terminal = StorageMaintenanceState(
+                        if (result.afterBytes < result.beforeBytes) StorageMaintenancePhase.DONE
+                        else StorageMaintenancePhase.NO_GAIN, result)
+                }
+            } catch (failure: StorageMaintenanceInsufficientSpace) {
+                terminal = StorageMaintenanceState(StorageMaintenancePhase.INSUFFICIENT_SPACE)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.w("StorageReclaim", "Storage maintenance deferred", failure)
+            } finally {
+                if (acquired) writeMutex.unlock()
+                mutableStorageMaintenance.value = terminal
+            }
+        }
+    }
+
+"####;
+
+const STORAGE_STATE: &str = r####"
+
+internal enum class StorageMaintenancePhase(val running: Boolean) {
+    IDLE(false), WAITING(true), CHECKPOINT(true), MEASURING(true),
+    VACUUM(true), FINAL_CHECKPOINT(true), FINAL_MEASURE(true),
+    DONE(false), NO_GAIN(false), BUSY(false), BLOCKED(false),
+    INSUFFICIENT_SPACE(false), FAILED(false)
+}
+
+internal data class StorageMaintenanceResult(
+    val beforeBytes: Long,
+    val afterBytes: Long,
+    val freePageBytes: Long
+)
+
+internal data class StorageMaintenanceState(
+    val phase: StorageMaintenancePhase = StorageMaintenancePhase.IDLE,
+    val result: StorageMaintenanceResult? = null
+)
+
+internal class StorageMaintenanceInsufficientSpace : IllegalStateException("Insufficient free space for safe SQLite compaction.")
+"####;
+
+#[cfg(test)]
+mod physical_storage_regression {
+    use super::*;
+
+    #[test]
+    fn vacuum_reclaims_free_pages_without_changing_recovery_rows() {
+        let path = std::env::temp_dir().join(format!("tenrate-storage-{}-{}.db", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE snapshot_history(id INTEGER PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE current_snapshot(id TEXT PRIMARY KEY, payload TEXT NOT NULL); INSERT INTO current_snapshot VALUES('guest','current'); INSERT INTO snapshot_history VALUES(7,'retained'); CREATE TABLE fixture(payload BLOB); INSERT INTO fixture VALUES(zeroblob(16777216)); DROP TABLE fixture;").unwrap();
+        let before = std::fs::metadata(&path).unwrap().len();
+        db.execute_batch("VACUUM").unwrap();
+        let after = std::fs::metadata(&path).unwrap().len();
+        assert!(before > after + 8 * 1024 * 1024, "physical space was not reclaimed");
+        assert_eq!(db.query_row("SELECT payload FROM snapshot_history WHERE id=7", [], |r| r.get::<_, String>(0)).unwrap(), "retained");
+        assert_eq!(db.query_row("SELECT payload FROM current_snapshot WHERE id='guest'", [], |r| r.get::<_, String>(0)).unwrap(), "current");
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+        assert!(STORAGE_DATABASE.contains("database.execSQL(\"VACUUM\")"));
     }
 }

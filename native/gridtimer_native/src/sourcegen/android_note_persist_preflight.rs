@@ -1,3 +1,8 @@
+// v3.0.2.44 - Split mandatory local schema protection from optional historical header acceleration.
+// v3.0.2.43 - Device-bounded SQLite migration hints; retain mandatory index and integrity gates.
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
+// v3.0.2.34 - Consolidate historical safety guards without changing authentication.
+// v3.0.2.27 - Trace each schema upgrade guard index.
 // v3.0.2.14 - Keep full history recovery out of the local write transaction.
 // v3.0.2.6 - Flush save diagnostics after SQLite unlock and resume legacy authentication.
 // v3.0.2.5 - Make preflight guards index-seeking and expose outer transaction wait.
@@ -79,30 +84,18 @@ pub fn render(path: &str, base: &str) -> Result<String, String> {
             // Full production generation has the v5 history codec already installed.
             if source.contains("const val DATABASE_VERSION = 5") {
             // Migrate existing v5 history storage in place, retaining all payloads.
-            replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 7")?;
+            replace(&mut source, "const val DATABASE_VERSION = 5", "const val DATABASE_VERSION = 9")?;
             replace(&mut source, "        createHistoryEncodingSchema(database)\n    }\n\n    override fun onUpgrade",
                 "        createHistoryEncodingSchema(database)\n        createHistoryGuardIndexes(database)\n    }\n\n    override fun onUpgrade")?;
             replace(&mut source, "        if (oldVersion < 5) createHistoryEncodingSchema(database)",
-                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 7) {\n            if (oldVersion == 6) database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_envelope_guard\")\n            createHistoryGuardIndexes(database)\n        }")?;
+                "        if (oldVersion < 5) createHistoryEncodingSchema(database)\n        if (oldVersion < 9) {\n            createHistoryGuardIndexes(database)\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_schema_guard\")\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_digest_guard\")\n            database.execSQL(\"DROP INDEX IF EXISTS snapshot_history_envelope_guard\")\n        }")?;
             replace(&mut source, "    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {",
-                &format!("{HISTORY_GUARD_INDEXES}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{"))?;
-            // An exported database stamped with v7 must contain the same guards;
-            // otherwise restoring it would skip onUpgrade and fail INDEXED BY.
+                &format!("{}\n    private fun createHistoryEncodingSchema(database: SQLiteDatabase) {{", HISTORY_GUARD_INDEXES.replace("__HISTORY_GUARD_FLAGS__", HISTORY_GUARD_FLAGS).replace("__HISTORY_SCHEMA_COLUMNS__", HISTORY_SCHEMA_COLUMNS)))?;
+            // The attached export and the active database use one index definition.
+            // Otherwise a restored v8 database could skip onUpgrade and fail INDEXED BY.
             replace(&mut source,
                 "                database.execSQL(\"PRAGMA app_state_backup.user_version=$DATABASE_VERSION\")",
-                r####"                database.execSQL(
-                    "CREATE INDEX app_state_backup.snapshot_history_schema_guard " +
-                        "ON snapshot_history(workspace_key, schema_version)"
-                )
-                database.execSQL(
-                    "CREATE INDEX app_state_backup.snapshot_history_digest_guard " +
-                        "ON snapshot_history(workspace_key) WHERE sha256 IS NULL OR sha256 = ''"
-                )
-                database.execSQL(
-                    "CREATE INDEX app_state_backup.snapshot_history_envelope_guard " +
-                        "ON snapshot_history(workspace_key) WHERE envelope_sha256 IS NULL OR " +
-                        "(envelope_sha256 = '' AND storage_encoding != 1)"
-                )
+                r####"                database.execSQL(historySchemaGuardIndexSql("app_state_backup."))
                 database.execSQL("PRAGMA app_state_backup.user_version=$DATABASE_VERSION")"####)?;
             // Saves may bypass a legacy row's body, but must NEVER prune
             // unauthenticated history before an explicit recovery/verification.
@@ -161,85 +154,111 @@ const FLUSH_DIAGNOSTICS: &str = r####"                }
             stageStarted = System.nanoTime()
 "####;
 
-const HISTORY_GUARD_INDEXES: &str = r####"    // Compact probes for unsafe headers and legacy payloads still awaiting validation.
+// One compact key instead of three full scans of large inline JSON rows.
+// Keep the expression identical in index DDL and all seek predicates.
+const HISTORY_GUARD_FLAGS: &str = "(CASE WHEN sha256 IS NULL OR sha256 = '' THEN 1 ELSE 0 END + CASE WHEN envelope_sha256 IS NULL OR (envelope_sha256 = '' AND storage_encoding != 1) THEN 2 ELSE 0 END)";
+
+const HISTORY_SCHEMA_COLUMNS: &str = "workspace_key, schema_version";
+
+const HISTORY_GUARD_INDEXES: &str = r####"    // Bit 0: missing digest. Bit 1: unverified legacy envelope.
+    // Each row occupies one compact index key, never stores the JSON payload.
+    private val historyGuardFlags: String
+        get() = "__HISTORY_GUARD_FLAGS__"
+
+    private fun historyGuardIndexSql(schemaPrefix: String = ""): String =
+        "CREATE INDEX IF NOT EXISTS ${schemaPrefix}snapshot_history_header_guard " +
+            "ON $HISTORY_TABLE(workspace_key, $historyGuardFlags, schema_version)"
+
+    // Schema lives before the large JSON field in the legacy record.
+    // Local-write protection needs only this covering index; do not read
+    // overflow payload pages just to build a second digest/envelope index.
+    private fun historySchemaGuardIndexSql(schemaPrefix: String = ""): String =
+        "CREATE INDEX IF NOT EXISTS ${schemaPrefix}snapshot_history_schema_v9 " +
+            "ON $HISTORY_TABLE(__HISTORY_SCHEMA_COLUMNS__)"
+
+    private fun hasHistoryHeaderGuard(database: SQLiteDatabase): Boolean =
+        database.rawQuery(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='snapshot_history_header_guard'",
+            null
+        ).use { it.moveToFirst() }
+
     private fun createHistoryGuardIndexes(database: SQLiteDatabase) {
-        database.execSQL(
-            "CREATE INDEX IF NOT EXISTS snapshot_history_schema_guard " +
-                "ON $HISTORY_TABLE(workspace_key, schema_version)"
-        )
-        database.execSQL(
-            "CREATE INDEX IF NOT EXISTS snapshot_history_digest_guard " +
-                "ON $HISTORY_TABLE(workspace_key) WHERE " +
-                "sha256 IS NULL OR sha256 = ''"
-        )
-        database.execSQL(
-            "CREATE INDEX IF NOT EXISTS snapshot_history_envelope_guard " +
-                "ON $HISTORY_TABLE(workspace_key) WHERE " +
-                "envelope_sha256 IS NULL OR (envelope_sha256 = '' AND storage_encoding != 1)"
-        )
+        val started = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.i("StartupLatency", "historyGuard phase=header begin")
+        // Every v9 database gets the cheap schema guard. Existing full guards
+        // remain intact; a fresh empty history can create one without a scan.
+        // Upgrading a nonempty legacy database must not build it synchronously.
+        database.execSQL(historySchemaGuardIndexSql())
+        val empty = database.rawQuery("SELECT 1 FROM $HISTORY_TABLE LIMIT 1", null)
+            .use { !it.moveToFirst() }
+        if (empty && !hasHistoryHeaderGuard(database)) database.execSQL(historyGuardIndexSql())
+        android.util.Log.i("StartupLatency",
+            "historyGuard fullIndex=${hasHistoryHeaderGuard(database)} schemaIndex=true")
+        android.util.Log.i("StartupLatency", "historyGuard phase=header elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}")
     }
+
 
 "####;
 
-const DATABASE_PREFLIGHT: &str = r####"    // Two index seeks instead of repeated per-row reads next to history JSON.
-    // Unknown schema/digest triggers full verification; legacy envelopes
-    // are preserved unpruned and checked during startup or explicit recovery.
+const DATABASE_PREFLIGHT: &str = r####"    // The flag domain is exactly 0..3. IN permits an indexed seek for
+    // each value, including null/future schema even when the digest is absent.
     private fun historyRequiresFullSaveVerification(workspaceKey: String): Boolean {
+        // Absence of an optional index is not evidence that history is safe.
+        // Force the established full verifier for any nonempty workspace.
+        if (!hasHistoryHeaderGuard(writableDatabase)) return hasHistoryForLocalWrite(workspaceKey)
         val unknownSchema = writableDatabase.rawQuery(
-            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
-                "WHERE workspace_key = ? AND schema_version IS NULL LIMIT 1",
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
+                "WHERE workspace_key = ? AND $historyGuardFlags IN (0,1,2,3) AND schema_version IS NULL LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
         if (unknownSchema) return true
         val futureSchema = writableDatabase.rawQuery(
-            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
-                "WHERE workspace_key = ? AND schema_version > ? LIMIT 1",
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
+                "WHERE workspace_key = ? AND $historyGuardFlags IN (0,1,2,3) AND schema_version > ? LIMIT 1",
             arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
         ).use { it.moveToFirst() }
         if (futureSchema) return true
         return writableDatabase.rawQuery(
-            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_digest_guard " +
-                "WHERE workspace_key = ? AND (sha256 IS NULL OR sha256 = '') LIMIT 1",
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
+                "WHERE workspace_key = ? AND $historyGuardFlags IN (1,3) LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
     }
 
-    // A local write cannot replace historical evidence. Keep damaged history for
-    // recovery, while refusing a future header even when its digest is unusable.
+    // Never overwrite a future or unknown schema even if its digest is unusable.
     fun blockingHistorySchemaForLocalWrite(workspaceKey: String): Int? {
         val database = writableDatabase
         check(database.inTransaction())
         val unknownSchema = database.rawQuery(
-            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_v9 " +
                 "WHERE workspace_key = ? AND schema_version IS NULL LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
         if (unknownSchema) throw LocalSnapshotRecoveryException("A history snapshot has an unknown schema.")
         return database.rawQuery(
-            "SELECT schema_version FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard " +
-                "WHERE workspace_key = ? AND schema_version > ? ORDER BY schema_version DESC LIMIT 1",
+            "SELECT MAX(schema_version) FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_v9 " +
+                "WHERE workspace_key = ? AND schema_version > ?",
             arrayOf(workspaceKey, APP_DATA_SCHEMA_VERSION.toString())
         ).use { cursor ->
-            if (cursor.moveToFirst()) cursor.getLong(0).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
         }
     }
 
     fun hasHistoryForLocalWrite(workspaceKey: String): Boolean = writableDatabase.rawQuery(
-        "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_guard WHERE workspace_key = ? LIMIT 1",
+        "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_schema_v9 WHERE workspace_key = ? LIMIT 1",
         arrayOf(workspaceKey)
     ).use { it.moveToFirst() }
 
-    // The existing codec writes storage_encoding=1 only after validating the
-    // original digest and both schema declarations, packing and reading back
-    // the payload. Legacy rows retain their empty envelopes and remain recovery
-    // evidence. Export resets the packing queue, so imports revalidate them.
-    private fun historyHasUncheckedLegacyRows(workspaceKey: String): Boolean =
-        writableDatabase.rawQuery(
-            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_envelope_guard " +
-                "WHERE workspace_key = ? AND (envelope_sha256 IS NULL OR " +
-                "(envelope_sha256 = '' AND storage_encoding != 1)) LIMIT 1",
+    // Legacy rows remain recovery evidence. The codec changes the flag only
+    // after authenticating, packing and reading back the original content.
+    private fun historyHasUncheckedLegacyRows(workspaceKey: String): Boolean {
+        if (!hasHistoryHeaderGuard(writableDatabase)) return hasHistoryForLocalWrite(workspaceKey)
+        return writableDatabase.rawQuery(
+            "SELECT 1 FROM $HISTORY_TABLE INDEXED BY snapshot_history_header_guard " +
+                "WHERE workspace_key = ? AND $historyGuardFlags IN (2,3) LIMIT 1",
             arrayOf(workspaceKey)
         ).use { it.moveToFirst() }
+    }
 
     fun <T> withVerifiedSavePreflight(
         workspaceKey: String,
@@ -612,39 +631,30 @@ mod generated_preflight_diagnostics_tests {
                 envelope_sha256 TEXT,
                 storage_encoding INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX snapshot_history_schema_guard
-                ON snapshot_history(workspace_key, schema_version);
-            CREATE INDEX snapshot_history_digest_guard
-                ON snapshot_history(workspace_key)
-                WHERE sha256 IS NULL OR sha256 = '';
-            CREATE INDEX snapshot_history_envelope_guard
-                ON snapshot_history(workspace_key)
-                WHERE envelope_sha256 IS NULL OR (envelope_sha256 = '' AND storage_encoding != 1);
         "#).unwrap();
+        db.execute_batch(&format!(
+            "CREATE INDEX snapshot_history_header_guard ON snapshot_history(workspace_key, {HISTORY_GUARD_FLAGS}, schema_version);"
+        )).unwrap();
         for i in 0..7200 {
             db.execute("INSERT INTO snapshot_history VALUES (?1, 15, ?2, 'digest', 'envelope', 0)",
                 rusqlite::params![if i % 113 == 0 { "other" } else { "guest" }, "note-content"]).unwrap();
         }
-        let schema_null = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
-            WHERE workspace_key = ?1 AND schema_version IS NULL LIMIT 1";
-        let schema_future = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_guard
-            WHERE workspace_key = ?1 AND schema_version > ?2 LIMIT 1";
-        let highest_future = "SELECT schema_version FROM snapshot_history INDEXED BY snapshot_history_schema_guard
-            WHERE workspace_key = ?1 AND schema_version > ?2 ORDER BY schema_version DESC LIMIT 1";
-        let digest = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_digest_guard
-            WHERE workspace_key = ?1 AND (sha256 IS NULL OR sha256 = '') LIMIT 1";
-        let envelope = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_envelope_guard
-            WHERE workspace_key = ?1 AND (envelope_sha256 IS NULL OR
-                (envelope_sha256 = '' AND storage_encoding != 1)) LIMIT 1";
+        let seek = |projection: &str, suffix: &str| format!(
+            "SELECT {projection} FROM snapshot_history INDEXED BY snapshot_history_header_guard WHERE workspace_key = ?1 AND {HISTORY_GUARD_FLAGS} {suffix}");
+        let schema_null = seek("1", "IN (0,1,2,3) AND schema_version IS NULL LIMIT 1");
+        let schema_future = seek("1", "IN (0,1,2,3) AND schema_version > ?2 LIMIT 1");
+        let highest_future = seek("MAX(schema_version)", "IN (0,1,2,3) AND schema_version > ?2");
+        let digest = seek("1", "IN (1,3) LIMIT 1");
+        let envelope = seek("1", "IN (2,3) LIMIT 1");
         let unsafe_schema = |workspace: &str| -> bool {
-            db.prepare(schema_null).unwrap().exists([workspace]).unwrap() ||
-                db.prepare(schema_future).unwrap().exists(rusqlite::params![workspace, 15]).unwrap()
+            db.prepare(&schema_null).unwrap().exists([workspace]).unwrap() ||
+                db.prepare(&schema_future).unwrap().exists(rusqlite::params![workspace, 15]).unwrap()
         };
         let unsafe_digest = |workspace: &str| -> bool {
-            db.prepare(digest).unwrap().exists([workspace]).unwrap()
+            db.prepare(&digest).unwrap().exists([workspace]).unwrap()
         };
         let unsafe_envelope = |workspace: &str| -> bool {
-            db.prepare(envelope).unwrap().exists([workspace]).unwrap()
+            db.prepare(&envelope).unwrap().exists([workspace]).unwrap()
         };
         assert!(!unsafe_schema("guest"));
         assert!(!unsafe_digest("guest"));
@@ -657,19 +667,18 @@ mod generated_preflight_diagnostics_tests {
         };
         let version: &dyn rusqlite::ToSql = &15_i64;
         let workspace: &dyn rusqlite::ToSql = &"guest";
-        let null_plan = plan(schema_null, vec![workspace]);
-        let schema_plan = plan(schema_future, vec![workspace, version]);
-        let highest_plan = plan(highest_future, vec![workspace, version]);
-        let digest_plan = plan(digest, vec![workspace]);
-        let envelope_plan = plan(envelope, vec![workspace]);
-        assert!(schema_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{schema_plan}");
+        let null_plan = plan(&schema_null, vec![workspace]);
+        let schema_plan = plan(&schema_future, vec![workspace, version]);
+        let highest_plan = plan(&highest_future, vec![workspace, version]);
+        let digest_plan = plan(&digest, vec![workspace]);
+        let envelope_plan = plan(&envelope, vec![workspace]);
+        for query_plan in [&schema_plan, &highest_plan, &null_plan, &digest_plan, &envelope_plan] {
+            assert!(query_plan.contains("INDEX snapshot_history_header_guard"), "{query_plan}");
+            assert!(query_plan.contains("workspace_key=? AND <expr>=?"), "{query_plan}");
+            assert!(!query_plan.contains("TEMP B-TREE"), "{query_plan}");
+        }
         assert!(schema_plan.contains("schema_version>?"), "{schema_plan}");
-        assert!(highest_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{highest_plan}");
-        assert!(!highest_plan.contains("TEMP B-TREE"), "{highest_plan}");
-        assert!(null_plan.contains("COVERING INDEX snapshot_history_schema_guard"), "{null_plan}");
         assert!(null_plan.contains("schema_version=?"), "{null_plan}");
-        assert!(digest_plan.contains("INDEX snapshot_history_digest_guard"), "{digest_plan}");
-        assert!(envelope_plan.contains("INDEX snapshot_history_envelope_guard"), "{envelope_plan}");
         db.execute("INSERT INTO snapshot_history VALUES ('other', 16, 'x', 'digest', 'envelope', 0)", []).unwrap();
         assert!(!unsafe_schema("guest"));
         db.execute("INSERT INTO snapshot_history VALUES ('guest', 16, 'x', 'digest', 'envelope', 0)", []).unwrap();
@@ -687,10 +696,34 @@ mod generated_preflight_diagnostics_tests {
         assert!(unsafe_digest("guest"));
         db.execute("INSERT INTO snapshot_history VALUES ('guest', 17, 'x', '', '', 0)", []).unwrap();
         db.execute("INSERT INTO snapshot_history VALUES ('other', 18, 'x', '', '', 0)", []).unwrap();
-        let guarded_version: i64 = db.query_row(highest_future, rusqlite::params!["guest", 15], |row| row.get(0)).unwrap();
+        let guarded_version: i64 = db.query_row(&highest_future, rusqlite::params!["guest", 15], |row| row.get(0)).unwrap();
         assert_eq!(guarded_version, 17);
     }
 
+
+    #[test]
+    fn legacy_schema_guard_blocks_unknown_and_future_rows_without_digest_index() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE snapshot_history(workspace_key TEXT NOT NULL, schema_version INTEGER, app_data_json TEXT, sha256 TEXT, envelope_sha256 TEXT);").unwrap();
+        db.execute_batch(&format!("CREATE INDEX snapshot_history_schema_v9 ON snapshot_history({HISTORY_SCHEMA_COLUMNS});")).unwrap();
+        let highest = "SELECT MAX(schema_version) FROM snapshot_history INDEXED BY snapshot_history_schema_v9 WHERE workspace_key = ?1 AND schema_version > ?2";
+        let unknown = "SELECT 1 FROM snapshot_history INDEXED BY snapshot_history_schema_v9 WHERE workspace_key = ?1 AND schema_version IS NULL LIMIT 1";
+        db.execute_batch("INSERT INTO snapshot_history VALUES ('guest',15,'large legacy payload','',''),('other',99,'future','','');").unwrap();
+        let future = || db.query_row(highest, rusqlite::params!["guest",15], |r| r.get::<_, Option<i64>>(0)).unwrap();
+        assert_eq!(future(), None);
+        assert!(!db.prepare(unknown).unwrap().exists(["guest"]).unwrap());
+        db.execute_batch("INSERT INTO snapshot_history VALUES ('guest',17,'future','',''),('guest',NULL,'unknown','','');").unwrap();
+        assert_eq!(future(), Some(17));
+        assert!(db.prepare(unknown).unwrap().exists(["guest"]).unwrap());
+        // A future row with no digest is still a blocking schema, not an
+        // unverified record that can be ignored during the local write.
+        let plan: String = db.query_row(&format!("EXPLAIN QUERY PLAN {highest}"), rusqlite::params!["guest",15], |r| r.get(3)).unwrap();
+        assert!(plan.contains("COVERING INDEX snapshot_history_schema_v9"), "{plan}");
+        // Dropping the mandatory index must fail closed instead of scanning
+        // or granting a current-only write proof.
+        db.execute_batch("DROP INDEX snapshot_history_schema_v9").unwrap();
+        assert!(db.prepare(highest).is_err());
+    }
 
     #[test]
     fn slow_native_verification_records_only_bounded_metrics() {
@@ -698,15 +731,12 @@ mod generated_preflight_diagnostics_tests {
         assert!(DATABASE_PREFLIGHT.contains("verifyNativeSnapshotRows(workspaceKey)"));
         assert!(DATABASE_PREFLIGHT.contains("verifyNativeSnapshotRows(workspaceKey, currentOnly = true)"));
         assert!(DATABASE_PREFLIGHT.contains("historyRequiresFullSaveVerification(workspaceKey)"));
-        assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_schema_guard"));
-        assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_digest_guard"));
-        assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_envelope_guard"));
-        assert!(HISTORY_GUARD_INDEXES.contains("CREATE INDEX IF NOT EXISTS snapshot_history_digest_guard"));
-        assert!(DATABASE_PREFLIGHT.contains("envelope_sha256 IS NULL OR "));
-        assert!(DATABASE_PREFLIGHT.contains("envelope_sha256 = '' AND storage_encoding != 1"));
+        assert!(DATABASE_PREFLIGHT.contains("INDEXED BY snapshot_history_header_guard"));
+        assert!(HISTORY_GUARD_INDEXES.contains("CREATE INDEX IF NOT EXISTS ${schemaPrefix}snapshot_history_header_guard"));
+        assert!(HISTORY_GUARD_FLAGS.contains("envelope_sha256 = '' AND storage_encoding != 1"));
+        assert!(HISTORY_GUARD_FLAGS.contains("sha256 IS NULL OR sha256 = ''"));
         assert!(DATABASE_PREFLIGHT.contains("schema_version IS NULL LIMIT 1"));
         assert!(DATABASE_PREFLIGHT.contains("schema_version > ? LIMIT 1"));
-        assert!(DATABASE_PREFLIGHT.contains("sha256 IS NULL OR sha256 = ''"));
         assert!(DATABASE_PREFLIGHT.contains("onTransactionWait(waitMs)"));
         assert!(SCHEMA_PREFLIGHT.contains("notes.local_save.preflight"));
         assert!(REPOSITORY_CACHE_DIAGNOSTIC.contains("scope=cached"));

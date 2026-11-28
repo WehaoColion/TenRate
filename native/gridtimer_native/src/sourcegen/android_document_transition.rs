@@ -1,3 +1,4 @@
+// v3.0.2.15 - Continuous opaque spring navigation; preserve editor access boundaries.
 // v2.13.5.11 - Directional knowledge document transitions with protected-editor continuity.
 // v2.23.2.28 - Preserve knowledge editor identity during a bounded exit fade.
 // Android presentation and its access policy are authored in this Rust emitter.
@@ -164,8 +165,8 @@ const TRANSITION_START: &str = r####"        } else androidx.compose.runtime.key
                     recordDeleted = repositoryRecord?.isDeleted() == true
                 )
                 val interactiveFrame = currentFrame && (frame == null || frameAccess.mayInteract())
-                Box(modifier = if (interactiveFrame) Modifier.fillMaxSize() else
-                    Modifier.fillMaxSize().clearAndSetSemantics {}) {
+                Box(modifier = (if (interactiveFrame) Modifier.fillMaxSize() else
+                    Modifier.fillMaxSize().clearAndSetSemantics {}).knowledgeNavigationSurface()) {
             if (frame == null) {"####;
 
 const TRANSITION_END: &str = r####"                )
@@ -184,28 +185,9 @@ const TRANSITION_END: &str = r####"                )
                     targetState = transitionTarget,
                     modifier = Modifier.fillMaxSize(),
                     transitionSpec = {
-                        // Direction follows the reading path without reconstructing either editor frame.
-                        if (targetState == null) {
-                            (fadeIn(animationSpec = tween(175)) +
-                                slideInHorizontally(initialOffsetX = { -it / 34 },
-                                    animationSpec = tween(220, easing = FastOutSlowInEasing))
-                            ).togetherWith(
-                                fadeOut(animationSpec = tween(140)) +
-                                    slideOutHorizontally(targetOffsetX = { it / 32 },
-                                        animationSpec = tween(180, easing = FastOutSlowInEasing))
-                            ).using(null)
-                        } else {
-                            (fadeIn(animationSpec = tween(185)) +
-                                slideInHorizontally(initialOffsetX = { it / 30 },
-                                    animationSpec = tween(230, easing = FastOutSlowInEasing))
-                            ).togetherWith(
-                                fadeOut(animationSpec = tween(135)) +
-                                    slideOutHorizontally(targetOffsetX = { -it / 36 },
-                                        animationSpec = tween(170, easing = FastOutSlowInEasing))
-                            ).using(null)
-                        }
+                        knowledgeNavigationTransform(backward = targetState == null)
                     },
-                    contentKey = { (it != null) to it?.note?.id },
+                    contentKey = { it?.entryKey },
                     label = "knowledge-document-transition"
                 ) { frame -> renderFrame(frame) }
             }
@@ -216,8 +198,18 @@ const TRANSITION_END: &str = r####"                )
 
 pub const CONTENTS: &str = r####"package com.ofairyo.gridtimer.ui
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
@@ -228,6 +220,28 @@ import com.ofairyo.gridtimer.data.NoteEntry
 internal data class KnowledgeDocumentTransitionTarget(val note: NoteEntry, val entryKey: String)
 
 internal val LocalDocumentTransitionActive = compositionLocalOf { true }
+
+@Composable
+internal fun Modifier.knowledgeNavigationSurface(): Modifier = background(MaterialTheme.colorScheme.background)
+
+// One opaque foreground surface moves; the underlying surface only parallax-scrolls.
+// No opacity crossfade or independent timers. Springs preserve velocity on interruption.
+internal fun <S> AnimatedContentTransitionScope<S>.knowledgeNavigationTransform(
+    backward: Boolean
+): ContentTransform {
+    val motion = spring<IntOffset>(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessMedium,
+        visibilityThreshold = IntOffset(1, 1)
+    )
+    val incoming = slideInHorizontally(animationSpec = motion,
+        initialOffsetX = { if (backward) -it / 5 else it })
+    val outgoing = slideOutHorizontally(animationSpec = motion,
+        targetOffsetX = { if (backward) it else -it / 5 })
+    return (incoming togetherWith outgoing).apply {
+        targetContentZIndex = if (backward) -1f else 1f
+    }.using(null)
+}
 
 internal fun knowledgeDocumentFrameIsCurrent(
     frameNoteId: String?, frameEntryKey: String?, selectedNoteId: String?,

@@ -33,6 +33,9 @@ pub mod android_canvas;
 #[cfg(target_os = "android")]
 mod android_legal_session;
 pub mod android_snapshot_codec;
+pub mod android_history_chunks;
+#[cfg(not(target_os = "android"))]
+pub mod android_history_sqlite;
 pub mod android_snapshot_verifier;
 pub mod app_data;
 #[cfg(not(target_os = "android"))]
@@ -6206,7 +6209,7 @@ fn note_html_css(accent: &str) -> String {
 }
 
 fn render_rich_text_body(content: &str, markdown_enabled: bool) -> String {
-    if content.trim().is_empty() {
+    if content.is_empty() || (markdown_enabled && content.trim().is_empty()) {
         return String::new();
     }
     if markdown_enabled {
@@ -6279,16 +6282,34 @@ fn plain_text_to_html(text: &str) -> String {
 }
 
 fn plain_text_to_rich_html(text: &str) -> String {
-    text.lines()
+    // split, unlike lines(), retains the final empty paragraph authored by Enter.
+    // Keep the exact whitespace; escaping remains mandatory for user text.
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
         .map(|line| {
-            if line.trim().is_empty() {
+            if line.is_empty() {
                 "<p><br/></p>".to_owned()
             } else {
-                format!("<p>{}</p>", escape_html(line.trim()))
+                format!("<p>{}</p>", escape_html(line))
             }
         })
         .collect::<Vec<String>>()
         .join("")
+}
+
+#[cfg(test)]
+mod sticky_rich_text_line_contract {
+    use super::render_rich_text_body;
+
+    #[test]
+    fn text_to_rich_body_retains_authored_line_boundaries() {
+        assert_eq!(render_rich_text_body("甲\r\n乙\n\n丙\n\n\n丁\n", false),
+            "<p>甲</p><p>乙</p><p><br/></p><p>丙</p><p><br/></p><p><br/></p><p>丁</p><p><br/></p>");
+        assert_eq!(render_rich_text_body("\n\n\n", false), "<p><br/></p>".repeat(4));
+        assert_eq!(render_rich_text_body(" <x>& \r尾", false), "<p> &lt;x&gt;&amp; </p><p>尾</p>");
+        assert_eq!(render_rich_text_body("", false), "");
+    }
 }
 
 fn note_accent_color(seed: &str) -> &'static str {

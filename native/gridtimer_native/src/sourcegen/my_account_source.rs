@@ -1,3 +1,5 @@
+// v3.0.2.62 - Show actual storage maintenance stages and exact recovered bytes.
+// v3.0.2.49 - Explicit storage maintenance and actual before/after physical size.
 // v2.23.2.20 - Keep update history visible when versions do not match.
 // v2.23.2.5 - Explain direct AI questions and knowledge sources without coupling account sync.
 // v2.23.2.3 - Show saved connection state and direct AI feature entry points.
@@ -37,6 +39,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -75,6 +78,8 @@ import com.ofairyo.gridtimer.core.NativeOptimizerBridge
 import com.ofairyo.gridtimer.data.AppData
 import com.ofairyo.gridtimer.data.SyncAccountSession
 import com.ofairyo.gridtimer.data.ThemeMode
+import com.ofairyo.gridtimer.data.StorageMaintenancePhase
+import com.ofairyo.gridtimer.data.StorageMaintenanceState
 import com.ofairyo.gridtimer.i18n.localizedUiText
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -102,6 +107,8 @@ internal fun MyAccountScreen(
     onUploadLocalData: () -> Unit,
     onDownloadAccountData: () -> Unit,
     onLogout: () -> Unit,
+    storageMaintenance: StorageMaintenanceState,
+    onReclaimStorage: () -> Unit,
     onThemeModeSelected: (ThemeMode) -> Unit,
     bottomContentPadding: Dp,
     initialAiExpanded: Boolean = false,
@@ -500,6 +507,66 @@ internal fun MyAccountScreen(
                         )
                     }
                 }
+            }
+        }
+
+        item {
+            CompactSettingsCard {
+                var confirming by remember { mutableStateOf(false) }
+                val phase = storageMaintenance.phase
+                val running = phase.running
+                val chinese = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]?.language == "zh"
+                val heading = if (chinese) "存储整理" else "Storage maintenance"
+                Text(heading, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                Text(if (chinese) "回收数据库空闲空间，不删除正文、版本或附件。" else "Reclaim unused database space without deleting documents, versions or attachments.", style = MaterialTheme.typography.bodySmall)
+                TextButton(enabled = !running, onClick = { confirming = true }) {
+                    Text(if (running) (if (chinese) "正在整理存储…" else "Reclaiming space…") else (if (chinese) "回收空闲空间" else "Reclaim unused space"))
+                }
+                if (running) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(
+                        when (phase) {
+                            StorageMaintenancePhase.WAITING -> if (chinese) "正在准备，检查保存状态" else "Preparing and checking save state"
+                            StorageMaintenancePhase.CHECKPOINT -> if (chinese) "正在合并数据库日志" else "Checkpointing database log"
+                            StorageMaintenancePhase.MEASURING -> if (chinese) "正在测量可回收空闲页" else "Measuring reclaimable pages"
+                            StorageMaintenancePhase.VACUUM -> if (chinese) "正在重写数据库，大数据库可能耗时较长" else "Rewriting database; large files may take longer"
+                            StorageMaintenancePhase.FINAL_CHECKPOINT -> if (chinese) "正在完成数据库检查点" else "Final database checkpoint"
+                            StorageMaintenancePhase.FINAL_MEASURE -> if (chinese) "正在复测实际占用" else "Measuring final disk usage"
+                            else -> if (chinese) "正在整理" else "Maintenance in progress"
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(if (chinese) "按实际执行阶段显示；SQLite 不提供准确剩余时间。" else "Shows actual stages; SQLite does not report an exact remaining time.", style = MaterialTheme.typography.bodySmall)
+                }
+                val terminalMessage = when (phase) {
+                    StorageMaintenancePhase.DONE -> if (chinese) "整理完成" else "Maintenance complete"
+                    StorageMaintenancePhase.NO_GAIN -> if (chinese) "整理完成，未回收物理空间。有效历史快照不属于空闲页。" else "Complete, no physical space reclaimed. Retained history is not free space."
+                    StorageMaintenancePhase.BUSY -> if (chinese) "数据库正在保存，请稍后重试。" else "Database is busy saving. Try again later."
+                    StorageMaintenancePhase.BLOCKED -> if (chinese) "当前处于恢复或写入保护状态，暂不能整理。" else "Maintenance is blocked by recovery or write protection."
+                    StorageMaintenancePhase.INSUFFICIENT_SPACE -> if (chinese) "剩余空间不足，未执行数据库重写。" else "Not enough free space to rewrite the database safely."
+                    StorageMaintenancePhase.FAILED -> if (chinese) "整理未完成，请查看诊断日志。" else "Maintenance did not complete. Check diagnostics."
+                    else -> null
+                }
+                terminalMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium,
+                    color = if (phase == StorageMaintenancePhase.DONE || phase == StorageMaintenancePhase.NO_GAIN) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error) }
+                storageMaintenance.result?.let { result ->
+                    val context = LocalContext.current
+                    Text((if (chinese) "整理前" else "Before") + " " + android.text.format.Formatter.formatFileSize(context, result.beforeBytes))
+                    Text((if (chinese) "整理后" else "After") + " " + android.text.format.Formatter.formatFileSize(context, result.afterBytes))
+                    Text((if (chinese) "实际回收" else "Reclaimed") + " " + (result.beforeBytes - result.afterBytes).coerceAtLeast(0L) + (if (chinese) " 字节" else " bytes"))
+                }
+                if (confirming) AlertDialog(
+                    onDismissRequest = { confirming = false },
+                    title = { Text(heading) },
+                    text = { Text(if (chinese) "整理期间请勿编辑或退出应用。大数据库需要额外空间，可能耗时较长。" else "Do not edit or close the app during maintenance. Large databases need extra free space and may take longer.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirming = false
+                            onReclaimStorage()
+                        }) { Text(if (chinese) "开始整理" else "Start maintenance") }
+                    },
+                    dismissButton = { TextButton(onClick = { confirming = false }) { Text(myPageText(MyPageText.CANCEL)) } }
+                )
             }
         }
 

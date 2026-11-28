@@ -1,3 +1,21 @@
+// v3.0.2.33 - Canonical Android release identity and checked update history.
+// v3.0.2.32 - Synchronize Android version.
+// v3.0.2.31 - Synchronize Android version.
+// v3.0.2.30 - Synchronize Android version.
+// v3.0.2.29 - Synchronize Android version.
+// v3.0.2.28 - Synchronize Android version.
+// v3.0.2.27 - Synchronize Android version.
+// v3.0.2.26 - Synchronize Android version.
+// v3.0.2.25 - Synchronize Android version.
+// v3.0.2.24 - Startup verification candidate.
+// v3.0.2.23 - History migration candidate.
+// v3.0.2.22 - Sticky input integrity candidate.
+// v3.0.2.21 - Directory layout candidate.
+// v3.0.2.20 - Android directory rendering candidate.
+// v3.0.2.19 - Android update history alignment.
+// v3.0.2.18 - 500000-row signed Android pressure candidate.
+// v3.0.2.17 - Match signed Android build identity; preserve independent Windows identity.
+// v3.0.2.15 - Android continuous knowledge motion.
 // v3.0.2.14 - Remove history recovery scans from Android local saves.
 // v3.0.2.13 - Reuse exact autosave receipts and measure durable exits.
 // v3.0.2.11 - Restore Android knowledge headings in shared images.
@@ -162,8 +180,9 @@
 
 pub const WINDOWS_APP_VERSION: &str = "1.1.0.12";
 pub const SYNC_SUPERVISOR_MUTEX_NAME: &str = r"Local\GridTimerSyncSupervisor-v1";
-pub const ANDROID_APP_VERSION: &str = "3.0.2.14";
-pub const ANDROID_VERSION_CODE: i32 = 30016;
+#[path = "android_release_identity.rs"]
+pub mod android_release_identity;
+pub use self::android_release_identity::{ANDROID_APP_VERSION, ANDROID_VERSION_CODE};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductIdentity {

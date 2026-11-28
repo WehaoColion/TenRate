@@ -1,3 +1,51 @@
+// v3.0.2.65 - Bind document save receipt to live captured content.
+// v3.0.2.64 - Android native chunk plan and translation-only render layer.
+// v3.0.2.63 - Require 100000-row exact history recovery.
+// v3.0.2.62 - Real storage maintenance progress and outcomes.
+// v3.0.2.61 - Transactional SQLite history migration contract.
+// v3.0.2.60 - Lossless history chunk codec foundation and expired share cache cleanup.
+// v3.0.2.59 - Resume verified history packing and measure fixed-length storage growth.
+// v3.0.2.58 - Split the IME probe roles to unblock strict signed builds.
+// v3.0.2.57 - Isolate knowledge motion and harden cross-version evidence probes.
+// v3.0.2.56 - Enforce compile-time IME-safe markers in document typing acceptance.
+// v3.0.2.55 - Isolate and compile Android emulator probes before signing.
+// v3.0.2.54 - Correct nested editor exit input in the save stress probe.
+// v3.0.2.53 - Accept the Japanese navigation label shown by the signed emulator.
+// v3.0.2.52 - Fix locale probe regression test compilation under warnings-as-errors.
+// v3.0.2.51 - Scope simulator evidence to motion and locale-visible controls.
+// v3.0.2.50 - Bind release identity to the checked-out commit and synchronized index.
+// v3.0.2.49 - Lossless history storage and physical reclaim.
+// v3.0.2.48 - Expand Android multilingual coverage.
+// v3.0.2.47 - Bound navigation layer to archive card.
+// v3.0.2.46 - Disambiguate actual document exit from observation delays.
+// v3.0.2.45 - Require fresh Android accessibility evidence.
+// v3.0.2.44 - Split local schema safety from optional historical acceleration.
+// v3.0.2.43 - Bound and measure SQLite migration resource hints.
+// v3.0.2.42 - Reduce archive glyph draw passes; preserve emulator gates.
+// v3.0.2.41 - Avoid redundant directory index work and expose frame bottlenecks.
+// v3.0.2.40 - Ensure compact AI composer focus extension is imported by the Rust generator.
+// v3.0.2.39 - Compact AI conversation layout, independent history and real emulator gate.
+// v3.0.2.38 - Compose component-local hook and production source-generation regression.
+// v3.0.2.37 - Current editor state owns composition, exact selection evidence, same-instant timer comparison.
+// v3.0.2.36 - Bounded index migration cache and forward history verification.
+// v3.0.2.35 - Preserve the baseline and add million-row stress with exact receipts.
+// v3.0.2.34 - Consolidate historical safety guards without changing authentication.
+// v3.0.2.33 - Canonical Android release identity and checked update history.
+// v3.0.2.32 - Record directory rendering changes.
+// v3.0.2.31 - Record candidate maintenance and diagnostic changes.
+// v3.0.2.30 - Record candidate maintenance priority changes.
+// v3.0.2.29 - Record probe-only correction.
+// v3.0.2.28 - Record real-device contention evidence.
+// v3.0.2.27 - Record candidate diagnostics.
+// v3.0.2.26 - Record automatic cleanup admission budget.
+// v3.0.2.25 - Record candidate scope.
+// v3.0.2.24 - Record startup verification diagnostics.
+// v3.0.2.23 - Record bounded history migration reads.
+// v3.0.2.22 - Record sticky input and share navigation verification.
+// v3.0.2.21 - Record stable directory row layout.
+// v3.0.2.20 - Record reduced directory loading animation.
+// v3.0.2.19 - Record every intervening Android candidate without implying acceptance.
+// v3.0.2.15 - Record continuous knowledge motion.
 // v3.0.2.14 - Record the bounded local save preflight.
 // v3.0.2.13 - Record exact autosave receipt reuse and exit measurement.
 // v3.0.2.11 - Record Markdown heading preservation in knowledge share images.
@@ -92,7 +140,13 @@
 // v2.23.1.1 - Add only this release's report sync details to Android history.
 // v2.23.1 - Generate the Android update history data from Rust-owned source.
 pub const PATH: &str = "com/ofairyo/gridtimer/ui/AndroidUpdateHistoryData.kt";
-pub const LATEST_VERSION: &str = "3.0.2.14";
+pub const LATEST_VERSION: &str = gridtimer_native::product_identity::ANDROID_APP_VERSION;
+
+pub fn checked_contents() -> Result<&'static str, String> {
+    gridtimer_native::product_identity::android_release_identity::ANDROID_RELEASE
+        .require_history_head(CONTENTS)?;
+    Ok(CONTENTS)
+}
 
 // Append a new AndroidUpdateEntry before the existing entries for each future release.
 // This in-app history starts at 2.23.1; earlier releases are intentionally absent.
@@ -122,6 +176,600 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.65",
+        updatedAt = "",
+        summary = "防止旧保存回执覆盖新输入并加强正文验收",
+        sections = listOf(AndroidUpdateSection("知识保存", listOf(
+            "正文和标题变更在输入事件内使旧保存回执失效；自动保存回执再次比较实际编辑内容，避免旧回执显示已保存。",
+            "真实模拟器正文验收改用完整正文相等校验，记录退出时无障碍读取和SQLite读回各自耗时；仍保留8秒门槛。"
+        )))
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.64",
+        updatedAt = "",
+        summary = "接通Android历史分块原生编码接口并降低目录绘制开销",
+        sections = listOf(
+            AndroidUpdateSection("存储维护", listOf(
+                "Rust原生接口校验旧历史行摘要及封签后输出有界分块计划；拒绝损坏、跨工作区封签、未来版本及未封签输入。暂未替换生产历史行。"
+            )),
+            AndroidUpdateSection("知识动效", listOf(
+                "平移资料卡采用保留绘制层，取消强制离屏渲染；保留弹簧动画、单一资料卡移动及真实帧预算，待模拟器验证。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.63",
+        updatedAt = "",
+        summary = "历史迁移恢复增加十万条极限验收",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "保留2500条回归，新增独立十万条已封签历史的逐条迁移、物理回收、重开及逐字节恢复校验，禁止抽样或降负载。",
+            "宿主SQLite极限验收尚待实测，不代表Android生产迁移完成。"
+        )))
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.62",
+        updatedAt = "",
+        summary = "存储整理增加真实阶段进度条并修复SQLite构建阻塞",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "显示准备、日志检查点、测量空闲页、数据库重写、最终检查点及复测；切换页面不丢状态，不伪造百分比，区分零回收与失败。",
+            "迁移契约使用当前SQLite依赖支持的整数与语句接口；旧库去重仍未接入生产数据库。"
+        )))
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.61",
+        updatedAt = "",
+        summary = "新增真实SQLite历史迁移与物理回收契约测试",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "按工作区隔离分块，旧行独立校验与回读成功后才在同一事务发布；失败回滚，重复迁移不重复写入。",
+            "2500条完整旧历史逐条迁移、物理回收、重启逐条验证；当前为桌面SQLite契约，尚未接入Android生产数据库。"
+        )))
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.60",
+        updatedAt = "",
+        summary = "新增无损历史分块编码基础及过期分享缓存清理",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "只回收超过七天、可重新生成的知识页分享PNG/HTML缓存；不触及正文、附件、拍摄暂存或永久导出。",
+            "新增内容寻址分块编码、逐块与全文SHA-256校验、2500轮固定正文历史回放测试；尚未接入SQLite生产迁移，不宣称旧库已缩小。"
+        )))
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.59",
+        updatedAt = "",
+        summary = "修复后台历史压缩任务提前退出并加入独立存储增长验收",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "切换工作区后重新定位压缩队列；暂时无法取得安全校验或发生异常时延后重试，不丢弃历史。",
+            "API35/36 独立执行固定长度正文2500轮编辑保存并采集磁盘分项、SQLite页和真实保存回执。尚待实机证据，未宣称膨胀已修复。"
+        )))
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.58",
+        updatedAt = "",
+        summary = "修复签名构建前的独立模拟器探针编译阻塞",
+        sections = listOf(AndroidUpdateSection("验收基础设施", listOf(
+            "保存探针仅引用运行时分块数字输入类型；正文与长图探针仅引用编译期固定数字标记，两者共用纯数字校验。",
+            "保留严格警告检查和历史负载、保存时限、真实模拟器门禁；本版仍需重新签名构建和完整验收。"
+        )))
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.57",
+        updatedAt = "",
+        summary = "修复知识目录动效绘制与模拟器验收误判",
+        sections = listOf(
+            AndroidUpdateSection("知识目录渲染", listOf(
+                "导航动画由 KnowledgeDirectoryMotion 持有，离屏合成仅作用于资料卡，目录列表和触控坐标保持静止。",
+                "移除重复视口裁剪；知识场景底部导航取消阴影、环境背景与脉冲重绘，保留原有弹簧参数。"
+            )),
+            AndroidUpdateSection("验收可靠性", listOf(
+                "分享长图按连续一级标题、二级标题和正文序列识别，兼容前置段落换行，不再使用固定图像行号。",
+                "便签长文本按10位数字块节奏输入，并逐行校验实际输入；不自动补字，不放宽保存时限。",
+                "保留API35/36、50万/100万历史负载、SQLite竞争、强制退出和重启恢复验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.56",
+        updatedAt = "",
+        summary = "修复文档输入法自动纠错误判",
+        sections = listOf(
+            AndroidUpdateSection("文档输入验收", listOf(
+                "正文标题、段落、连续输入和退出保存标记统一使用编译期约束的数字文本，避免输入法自动插入空格或改写大小写。",
+                "文档输入探针与分享导出探针共用同一组正文标记，继续核验 Enter、区块位置、SQLite 保存回执及重启后的正文完整性。",
+                "新增 Rust 回归测试重放历史 CamelCase 和自然短语纠错，不放宽保存时限、历史负载或模拟器验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.55",
+        updatedAt = "",
+        summary = "隔离并提前编译安卓模拟器验收探针",
+        sections = listOf(
+            AndroidUpdateSection("验收稳定性", listOf(
+                "AI对话探针与多语言导航探针使用各自独立的Rust文本辅助模块，避免不同二进制共享未使用函数。",
+                "签名前逐个以warnings-as-errors模式编译动效、AI、多语言、保存和正文输入探针。",
+                "正文标题输入采用带空格的自然短语，避免API 36输入法自动纠正CamelCase后造成标题仍可见却被误判丢失。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.54",
+        updatedAt = "",
+        summary = "修复子页退出保存压力测试的系统返回操作",
+        sections = listOf(
+            AndroidUpdateSection("保存验收", listOf(
+                "第一次系统返回只收起输入法，探针随后发送第二次系统返回以真实退出子页编辑器。",
+                "不再依赖界面中不存在的工具栏返回按钮，退出后继续验证父目录、正文内容和持久化回执。",
+                "将系统返回状态转换固化为签名前 Rust 回归测试，防止再次把未触发退出误报为保存超时。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.53",
+        updatedAt = "",
+        summary = "修复日文知识导航标签模拟器验收误判",
+        sections = listOf(
+            AndroidUpdateSection("多语言验收", listOf(
+                "日文模拟器实际显示知識，与目录词条ナレッジ表达同一导航入口。",
+                "探针同时接受目录标准词条和已由真实无障碍树证明的日文等价标签，并保留实际匹配值。",
+                "通过签名前 Rust 回归测试回放 API 35 与 API 36 的历史失败，不放宽其他语言的精确匹配。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.52",
+        updatedAt = "",
+        summary = "修复中英文输入区验收回归测试编译问题",
+        sections = listOf(
+            AndroidUpdateSection("模拟器验收", listOf(
+                "保留输入框与图片入口的中英文识别规则。",
+                "将英文占位符标签纳入 Rust 历史失败回放，确保警告即错误的签名前检查通过。",
+                "本版仅修复验收契约编译问题，不改变应用正文保存和队列逻辑。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.51",
+        updatedAt = "",
+        summary = "修复知识动效与 AI 输入区模拟器验收误判",
+        sections = listOf(
+            AndroidUpdateSection("模拟器验收", listOf(
+                "知识动效探针只验证目录进入、返回、重新进入、录屏和独立帧耗时，不再把法律风险排除设置作为动效前置条件。",
+                "AI 输入区验收同时识别中文和英语提示，按模拟器实际显示的输入框与图片入口判断可见性。",
+                "将历史误判固化为签名前 Rust 回归测试，避免无关设置变化或语言差异阻断核心验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.50",
+        updatedAt = "",
+        summary = "统一安卓候选版本来源与发布记录校验",
+        sections = listOf(
+            AndroidUpdateSection("构建来源", listOf(
+                "Android版本号只读取当前构建提交中的app/build.gradle，分支名、PR标题和合并状态不参与版本选择。",
+                "候选APK文件名、Gradle版本身份、不可覆盖的候选标签和完整构建提交SHA必须一致。",
+                "发布索引首项必须与当前版本同步，缺少对应更新说明时在签名前拒绝构建。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.49",
+        updatedAt = "",
+        summary = "降低历史快照写入占用并提供无损存储整理",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "2 Mi字符以内的历史快照在事务内直接写入认证压缩表示或原始数据，避免先分配完整原始历史记录。",
+                "我的页面新增存储整理，回收SQLite空闲页并检查点WAL，显示实际整理前后数据库占用，不删除正文、版本、附件或隔离数据。",
+                "整理须明确操作、有足够磁盘空间且不与前序写入冲突；尚待模拟器验证，非中文新增文案暂以英语显示。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.48",
+        updatedAt = "",
+        summary = "补齐多语言系统界面翻译及最终生成入口",
+        sections = listOf(
+            AndroidUpdateSection("多语言", listOf(
+                "最终界面生成统一接入翻译适配器，补齐十种非中文语言的目录、问答、工作台和保存提示核心词条。",
+                "已知界面词条缺少本语种时回退英语，保留既有译文和用户正文，不对存储内容进行替换。",
+                "增加十种非中文语言的实际模拟器切换与目录文案验收；动态文案及全界面覆盖仍待进一步审查。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.47",
+        updatedAt = "",
+        summary = "缩小知识目录导航动画的渲染范围",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "导航时仅移动档案卡片，保持列表、滚动区域和拖拽坐标稳定，保留进退方向与弹簧动效。",
+                "继续使用同一实时目录、工作区和返回权限保护，不修改帧率验收标准。",
+                "百万条恢复在上版双系统低于600秒，极限退出与字符完整性问题仍未解决；本版待实际模拟器验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.46",
+        updatedAt = "",
+        summary = "细分百万条连续编辑后退出保存的实际耗时",
+        sections = listOf(
+            AndroidUpdateSection("知识保存", listOf(
+                "记录退出请求、持久化回执和导航发出三个阶段，不改变原有保存队列、工作区保护和持久化条件。",
+                "极限测试识别真实可见的文本或描述返回按钮，禁止点击目录或隐藏的过渡节点，并保留独立的应用回执日志。",
+                "百万条历史恢复已在前两版实测低于600秒，退出保存8秒和动效标准仍未通过；本版尚待真实模拟器复验。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.45",
+        updatedAt = "",
+        summary = "统一模拟器实时界面证据，阻断旧界面误判",
+        sections = listOf(
+            AndroidUpdateSection("验收可靠性", listOf(
+                "问答、正文编辑、知识导航、保存与便签探针共用Rust实时层级读取器；先删除旧文件，只读取成功生成的完整XML。",
+                "增加历史读取失败回放，不重复发送点击或键盘事件，不降低现有验收阈值。",
+                "本轮仅修复验收证据链，不宣称标题丢失、问答入口或动效问题已解决，继承V9数据库迁移优化。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.44",
+        updatedAt = "",
+        summary = "重构历史索引迁移，保留完整校验与本地保存保护",
+        sections = listOf(
+            AndroidUpdateSection("启动恢复", listOf(
+                "数据库升级到v9；旧库建立只覆盖工作区和数据版本的轻量索引，不同步构建需要读取大量正文溢出页的完整头部索引。",
+                "旧库缺少完整索引时，非空历史仍走完整校验；本地写入必须检查未知和未来版本，已有完整索引不删除。",
+                "保留全部历史、原签名、50万和百万条压测、600秒恢复及8秒保存时限；旧库后续冷启动仍可能较慢，实际收益待模拟器验证。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.43",
+        updatedAt = "",
+        summary = "优化百万条历史索引迁移的资源策略",
+        sections = listOf(
+            AndroidUpdateSection("启动恢复", listOf(
+                "针对百万条历史索引创建耗时接近600秒的问题，按设备内存预算调整临时缓存，并尝试系统支持的文件映射及排序线程提示。",
+                "记录SQLite实际采用的参数，迁移结束恢复原设置，不支持的提示保留原路径；强制索引创建和历史完整性校验保持不变。",
+                "原签名、50万及百万条压力测试、600秒恢复和8秒保存门槛不变。本版优化效果仍需模拟器验证。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.42",
+        updatedAt = "",
+        summary = "减少知识目录图标绘制指令，保留导航动效验收标准",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "根据3.0.2.41模拟器绘制指令过慢的证据，文件夹与纸张图标改用少量实体色路径和圆角面，保留档案式色彩与形状。",
+                "减少每个图标的梯度着色和重复描边，不修改导航弹簧、卡顿阈值、数据安全或百万条压测规模。",
+                "本版尚待实际模拟器复验，启动索引迁移、极限退出保存和API 36标题编辑问题仍需定位。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.41",
+        updatedAt = "",
+        summary = "减少知识目录导航主线程重复计算，补充动效瓶颈证据",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "仅当实时数据与当前目录使用完全相同的快照时复用现有层级索引；实时数据变化时仍重新验证权限、目录和排序范围。",
+                "独立动效测试记录系统错过同步、主线程、输入、位图上传、绘制及帧截止时间计数，不改变原卡顿比例和P90时限。",
+                "保留原签名和双模拟器50万及百万条压力测试，本版尚待实际验证。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.40",
+        updatedAt = "",
+        summary = "修复AI问答输入框焦点监听生成依赖",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "Rust生成紧凑问答输入框时同步补齐焦点监听扩展导入，解决3.0.2.39签名构建的实际编译错误。",
+                "保留原有输入法焦点行为、对话布局、签名及双模拟器压力验收门槛。本版尚待编译与模拟器验证。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.39",
+        updatedAt = "",
+        summary = "重构普通AI问答阅读、输入、历史及整段保存布局",
+        sections = listOf(
+            AndroidUpdateSection("AI问答", listOf(
+                "紧凑顶栏保留历史、新对话和关闭，历史独立显示，不再与正文混排。",
+                "整段保存固定在对话顶部，输入与图片选择、发送合并，隐去重复保存按钮及常驻长说明。",
+                "保留实际发送范围预览、模型设置、图片隐私提示、原有授权与本地持久化边界。",
+                "加入API 35和36签名APK实际界面验收。本版尚待模拟器验证。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.38",
+        updatedAt = "",
+        summary = "修复正文组件生成边界，并将实际生成流程纳入构建前验收",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "正文输入提交回调仅依赖正文组件内部稳定的焦点参数，不再要求拖拽及图片插入之前的旧签名。",
+                "生产Android源码生成与Rust构建前回归共用同一入口，实际生成正文、便签及数据库代码后再允许进入签名构建。",
+                "保留逐字验证、原签名、五十万和百万条压力规模及原有保存、恢复和动效验收门槛。本版尚待实际模拟器验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.37",
+        updatedAt = "",
+        summary = "统一正文输入提交与光标证据，稳定输入法及跨平台验收",
+        sections = listOf(
+            AndroidUpdateSection("正文与验收", listOf(
+                "正文原文编辑关闭输入法自动纠错；焦点离开时由编辑状态所有者提交最新组合输入，不再回放组件上一帧的旧值。",
+                "真实光标位置成为追加输入的前置证据，不以盲发方向键代替已到末尾的证明，保留所有原文与SQLite检查。",
+                "Windows连续计时回归按同一投影时刻比较计时值，不扩大原容差；只读模拟器取证增加有限重试。",
+                "保留五十万及百万条双档、八秒保存、600秒恢复及动效门槛。本版尚待完整验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.36",
+        updatedAt = "",
+        summary = "改善百万历史迁移与完整认证的读取局部性",
+        sections = listOf(
+            AndroidUpdateSection("本地存储", listOf(
+                "完整历史认证按已有工作区与编码队列索引的递增记录顺序读取，减少大库倒序回表造成的随机读取；不改变历史恢复优先级。",
+                "建立历史安全索引时临时使用有界SQLite页缓存，结束后恢复连接原有设置。输出缓存配置和分阶段耗时诊断。",
+                "五十万及百万条双档、全部实际正文认证、工作区隔离、八秒保存及600秒恢复限制保持不变。本版实际性能待验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.35",
+        updatedAt = "",
+        summary = "新增百万条历史极限压力档与精确输入失败分类",
+        sections = listOf(
+            AndroidUpdateSection("存储与输入验收", listOf(
+                "保留五十万条基线，并在API 35及36独立执行百万条真实SQLite历史档，每条仍包含至少16KiB附加数据。",
+                "极限档连续48轮正文编辑、90次突发输入和48次便签版本创建，保持八秒保存和原文及重启校验。",
+                "恢复前台后使用真实方向键把光标移至正文末尾；保留原文，记录输入顺序不符与持久化超时的不同证据。",
+                "百万条恢复仍使用原有600秒限制；本版尚未完成模拟器验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.34",
+        updatedAt = "",
+        summary = "合并历史快照安全索引，减少旧数据库迁移扫描",
+        sections = listOf(
+            AndroidUpdateSection("本地存储", listOf(
+                "以一个紧凑表达式索引维护缺摘要、未封装及数据版本状态，旧数据库由三次大表索引扫描改为一次。",
+                "迁移、备份导出和前台安全查询共用索引定义，保留完整历史认证、原始历史及工作区隔离。",
+                "继续执行五十万条压力测试、八秒正文保存及双系统模拟器验收；本版尚未完成验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.33",
+        updatedAt = "",
+        summary = "统一安卓版本、候选发布及模拟器验收契约",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "安卓构建配置作为唯一版本标识来源，Rust、应用内更新记录及真机验收读取同一版本和版本代码。",
+                "所有签名构建执行双系统版本保存验收和动效验收，候选包按提交发布，不覆盖历史资产。",
+                "目录返回验收使用真实可见节点与编辑器排除条件，保留五十万条、八秒、完整SQLite回执及动效门槛。本版待模拟器验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.32",
+        updatedAt = "",
+        summary = "减少知识目录首帧读取与条目图层开销",
+        sections = listOf(
+            AndroidUpdateSection("知识动效", listOf(
+                "法律排除规则按工作区与修订号后台读取及解析，未取得当前规则时禁用对应操作。",
+                "目录条目保留原生点击反馈，移除冗余的独立缩放图层；目录位移动效等待首帧提交后启动。",
+                "保留目录排序、工作区隔离及完整模拟器帧耗时门槛。本版本仍待验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.31",
+        updatedAt = "",
+        summary = "降低后台历史维护调度频率并修复验收日志采集",
+        sections = listOf(
+            AndroidUpdateSection("存储与验收", listOf(
+                "单行历史压缩之间至少间隔一秒，慢事务自动延长间隔；保留全部认证和原始历史数据。",
+                "只读日志采集限定相关标签并允许有限重试，保留失败状态及原始诊断证据。",
+                "标题回车失败增加界面证据；保留50万条历史、8秒保存门槛及独立动效验收。启动恢复仍待优化。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.30",
+        updatedAt = "",
+        summary = "避免活跃交互与后台快照维护争抢保存资源",
+        sections = listOf(
+            AndroidUpdateSection("存储性能", listOf(
+                "后台恢复镜像及历史压缩同时考虑用户交互和最近提交完成时间，避免在连续操作时抢占写锁。",
+                "无有效预检凭据时不启动历史压缩事务；记录后台维护实际持锁耗时。",
+                "保留50万条压力规模、8秒真实保存回执及完整历史校验。本版本仍待模拟器验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.29",
+        updatedAt = "",
+        summary = "纠正前后台保存验收光标位置并保留失败输入证据",
+        sections = listOf(
+            AndroidUpdateSection("存储验收", listOf(
+                "恢复编辑焦点后使用文档末尾组合键，不再使用只能到达当前行末尾的按键。",
+                "失败时记录预期正文与真实可编辑正文，保留8秒及完整顺序、SQLite回执和重启检查。",
+                "便签输入丢字和真机数据库锁阻塞仍未确认解决；本轮只修正验收工具。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.28",
+        updatedAt = "",
+        summary = "覆盖未追踪的数据库监视器持有者",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "真机3.0.2.25仍记录399.536秒监视器等待，SQLite事务入口等待为零。",
+                "为历史摘要隔离、当前快照匹配、隐私清理、旧快照封装、备份和历史压缩记录同一监视器的持有者及耗时。",
+                "不改变监视器保护范围和事务顺序，慢操作诊断在外层监视器释放后记录；不记录正文、账户标识或路径。实际阻塞原因和新版本表现待验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.27",
+        updatedAt = "",
+        summary = "扩展 Android 16 存储验收并细分数据库升级耗时",
+        sections = listOf(
+            AndroidUpdateSection("存储验收", listOf(
+                "新增 API 36 模拟器的完整五十万条历史负载验收，保留 API 35 测试与原有完整性门槛。",
+                "分别记录三项历史守卫索引创建时间，用于定位冷启动数据库打开阶段的长延迟。",
+                "本轮未减少验证或改变历史保留规则；新测试结果待确认。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.26",
+        updatedAt = "",
+        summary = "阻止自动附件回收触发无界历史核验",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "普通自动附件回收先检查有界历史扫描预算，避免同步后为清理附件长期占用数据库监视器。",
+                "超出预算或读取失败时保留全部附件和历史；不跳过核验后继续删除。启动恢复及隐私清除原有验证不变。",
+                "大型工作区附件回收需要后续增量机制，真机长等待及全部性能门槛仍待验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.25",
+        updatedAt = "",
+        summary = "针对真机本地保存锁等待改进并发调度",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "普通账户合并在写锁外准备，提交前核对工作区及原始状态；冲突重新计算，绝不覆盖较新的编辑。",
+                "近期知识或便签写入及后台期间暂停非必要历史压缩和延迟镜像刷新，保留全部持久化和隐私保护检查。",
+                "增加数据库锁持有阶段诊断及连续编辑中切换后台再恢复的真实模拟器验收。真机长等待仍需回归确认。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.24",
+        updatedAt = "",
+        summary = "恢复历史维护生成链并细化启动核验",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "撤回与后续生成器冲突的批量压缩候选，保留启动后单条维护和前台写入优先。",
+                "记录数据库打开、历史元数据探查、真实扫描进度与回退原因，定位五十万条恢复耗时。",
+                "不改变完整校验、事务边界、数据保留及八秒保存验收标准。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.23",
+        updatedAt = "",
+        summary = "优化大量历史快照的启动迁移",
+        sections = listOf(
+            AndroidUpdateSection("本机存储", listOf(
+                "历史压缩由逐条查询改为事务内有界批量读取及批量读回核对，减少游标重复创建。",
+                "保留每条记录的摘要、封套验证、原始数据保护及写入后的精确校验；不缩减历史记录。",
+                "五十万条历史快照冷启动与保存性能仍须实际模拟器验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.22",
+        updatedAt = "",
+        summary = "区分便签输入完整性与版本保存验收",
+        sections = listOf(
+            AndroidUpdateSection("模拟器验收", listOf(
+                "五十万条负载下，先核对原始输入的逐字节完整性，再计时验证版本保存。",
+                "发现缺字立即保留证据并判定失败，不自动补写、不放宽八秒时限。",
+                "分享后重新进入便签时区分系统分享界面和桌面，继续验证富文本往返。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.21",
+        updatedAt = "",
+        summary = "稳定知识目录转场期间的行布局",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "目录排序读取期间保留拖动手柄所需的空间，读取完成后再启用排序操作。",
+                "保留当前目录、权限、加载完成状态及排序写入检查；稳定标题区布局。",
+                "动效与五十万条历史快照压力测试仍须实际验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.20",
+        updatedAt = "",
+        summary = "减少目录切换中的重复动画",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "读取本机目录排序时显示静态状态，避免加载指示器和目录转场同时持续绘制。",
+                "仍保留保存中的进度指示、目录排序安全检查及原有转场。",
+                "继续执行五十万条历史快照及真实动效验收，结果尚待确认。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.19",
+        updatedAt = "",
+        summary = "同步更新记录与安卓版本标识",
+        sections = listOf(
+            AndroidUpdateSection("构建与验收", listOf(
+                "补齐此前候选版本的应用内更新记录，保留正式签名和版本一致性检查。",
+                "继续执行五十万条历史快照、便签原文与分享图片以及知识动效验收；本候选尚未完成全部验收。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.18",
+        updatedAt = "2026-11-26 02:01",
+        summary = "提升历史快照压力测试规模（候选）",
+        sections = listOf(
+            AndroidUpdateSection("存储验收", listOf(
+                "模拟器内分批生成五十万条真实 SQLite 历史快照，保留每条额外数据填充和摘要核验。",
+                "前台保存时限保持八秒，继续核对进程重启后的资料完整性。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.17",
+        updatedAt = "2026-11-26 01:58",
+        summary = "减少知识目录动画期间的重复状态更新（候选）",
+        sections = listOf(
+            AndroidUpdateSection("知识目录", listOf(
+                "导航记录和布局坐标不再触发不必要的界面重组。",
+                "同步 Rust 产品标识及安卓打包版本，动效改善幅度待实测。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.16",
+        updatedAt = "2026-11-26 01:48",
+        summary = "完善便签版本回执验收（候选）",
+        sections = listOf(
+            AndroidUpdateSection("便签验收", listOf(
+                "计时前显示实际版本栏，分别核对界面回执和 SQLite 正文回执。",
+                "保持八秒时限及逐字节正文核验，未将候选标记为已通过。"
+            ))
+        )
+    ),
+    AndroidUpdateEntry(
+        version = "3.0.2.15",
+        updatedAt = "2026-11-24 19:41",
+        summary = "改善知识模块转场与交互的连续性",
+        sections = listOf(
+            AndroidUpdateSection("知识动效", listOf(
+                "知识目录和文档采用同一方向性弹簧转场，移除整页叠加淡入淡出，返回沿原方向退出。",
+                "目录展开、按压和拖动归位采用无过冲弹簧；直接拖动和画布手势保持即时响应。",
+                "保留加密页面访问限制、本地保存、目录排序和原有同步格式。"
+            ))
+        )
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.14",
         updatedAt = "2026-11-24 17:35",

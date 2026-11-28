@@ -1,3 +1,4 @@
+// v3.0.2.25 - Trace database transaction ownership and wait stages.
 // v2.22.49.2 - Keep history rows visible during same-workspace filter refreshes.
 // All Android implementation remains authored in Rust source templates.
 
@@ -153,7 +154,11 @@ const DATABASE_WRITE_GUARD: &str = r####"    data class SnapshotWriteStamp(
         return SnapshotWriteStamp(database, scalar("PRAGMA data_version"), scalar("SELECT total_changes()"))
     }
 
-    // Keep the original database monitor; measure contention before entry.
+    // Keep the original database monitor and SQLite transaction order.
+    // Record only stage/thread/call-site names, never workspace or note content.
+    private val snapshotDiagnosticContext = context.applicationContext
+    @Volatile private var snapshotWriteOwner: String? = null
+
     fun <T> withSnapshotWriteTransaction(action: () -> T): T =
         withSnapshotWriteTransactionTracked({}, {}, action)
 
@@ -163,7 +168,34 @@ const DATABASE_WRITE_GUARD: &str = r####"    data class SnapshotWriteStamp(
         action: () -> T
     ): T {
         val queuedAt = System.nanoTime()
-        return withSnapshotWriteTransactionLocked(queuedAt, onMonitorWait, onSqliteBeginWait, action)
+        val thread = Thread.currentThread()
+        val caller = thread.stackTrace.firstOrNull {
+            it.className.contains("TimerRepository")
+        }?.let { it.className.substringAfterLast('.') + "." + it.methodName } ?: "unknown"
+        val ownerAtQueue = snapshotWriteOwner
+        var monitorMillis = 0L
+        var beginMillis = 0L
+        try {
+            return withSnapshotWriteTransactionLocked(queuedAt, { millis ->
+                monitorMillis = millis
+                onMonitorWait(millis)
+            }, { millis ->
+                beginMillis = millis
+                onSqliteBeginWait(millis)
+            }, action)
+        } finally {
+            val totalMillis = (System.nanoTime() - queuedAt).coerceAtLeast(0L) / 1_000_000L
+            // Do not call the durable log store while owning a nested monitor.
+            if (totalMillis >= 1_000L && !Thread.holdsLock(this)) {
+                runCatching {
+                    com.ofairyo.gridtimer.diagnostics.DiagnosticLogStore.record(
+                        context = snapshotDiagnosticContext,
+                        category = "notes.local_save.lock_trace",
+                        message = "caller=$caller thread=${thread.name} queuedOwner=${ownerAtQueue ?: "untracked"} monitorMs=$monitorMillis beginMs=$beginMillis totalMs=$totalMillis"
+                    )
+                }
+            }
+        }
     }
 
     @Synchronized
@@ -180,9 +212,14 @@ const DATABASE_WRITE_GUARD: &str = r####"    data class SnapshotWriteStamp(
                 android.util.Log.w("NoteSaveLatency", "monitor wait diagnostic unavailable", it)
             }
         }
+        val previousOwner = snapshotWriteOwner
+        val owner = Thread.currentThread().name
+        snapshotWriteOwner = "$owner:begin"
+        try {
         val beginAt = System.nanoTime()
         val database = writableDatabase
         database.beginTransactionNonExclusive()
+        snapshotWriteOwner = "$owner:transaction"
         val beginWaitMs = (System.nanoTime() - beginAt).coerceAtLeast(0L) / 1_000_000L
         if (beginWaitMs >= 1_000L) {
             android.util.Log.w("NoteSaveLatency", "database_begin_wait ms=$beginWaitMs")
@@ -195,7 +232,11 @@ const DATABASE_WRITE_GUARD: &str = r####"    data class SnapshotWriteStamp(
             database.setTransactionSuccessful()
             return result
         } finally {
+            snapshotWriteOwner = "$owner:commit"
             database.endTransaction()
+        }
+        } finally {
+            snapshotWriteOwner = previousOwner
         }
     }
 
