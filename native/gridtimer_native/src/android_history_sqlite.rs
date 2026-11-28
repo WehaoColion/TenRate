@@ -1,3 +1,4 @@
+// v3.0.2.63 - Verify every one of 100,000 migrated history rows after physical reclaim and reopen.
 //! Host-side executable SQLite migration contract for Android history chunks.
 //! Not an Android schema upgrade: the Android SQLite adapter must implement
 //! this transaction and all backup, privacy and recovery readers before use.
@@ -206,8 +207,7 @@ mod tests {
         assert!(read_history(&db,"b",2,SUPPORTED).is_err());
     }
 
-    #[test]
-    fn physical_sqlite_reclaim_retains_all_2500_verified_history_rows() {
+    fn physical_reclaim(rows: i64) {
         let path=std::env::temp_dir().join(format!("tenrate-chunks-{}-{}.db",std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let mut db=Connection::open(&path).unwrap();
@@ -217,27 +217,58 @@ mod tests {
             seed_state=seed_state.wrapping_mul(1664525).wrapping_add(1013904223);
             char::from_u32(0x4e00+((seed_state>>8)%2000)).unwrap()
         }).collect();
-        {
+        // Bounded seeding transactions; each subsequent migration remains
+        // a separate durable transaction, using the same full 10,000-character body.
+        for first in (1..=rows).step_by(1000) {
+            let last=(first+999).min(rows);
             let tx=db.transaction().unwrap();
-            for i in 1..=2500 { seed(&tx,"guest",i,&raw(i,&body)); }
+            for i in first..=last { seed(&tx,"guest",i,&raw(i,&body)); }
             tx.commit().unwrap();
+            if last % 10000 == 0 || last == rows {
+                println!("seeded_history_rows={last}/{rows}");
+            }
         }
         db.execute_batch("VACUUM").unwrap();
         let before=std::fs::metadata(&path).unwrap().len();
-        for i in 1..=2500 { migrate_history(&mut db,"guest",i,SUPPORTED).unwrap(); }
+        for i in 1..=rows {
+            migrate_history(&mut db,"guest",i,SUPPORTED).unwrap();
+            if i % 10000 == 0 || i == rows {
+                println!("migrated_history_rows={i}/{rows}");
+            }
+        }
         let count:i64=db.query_row("SELECT count(*) FROM snapshot_history",[],|r|r.get(0)).unwrap();
-        assert_eq!(count,2500);
+        assert_eq!(count,rows);
+        let migrated:i64=db.query_row("SELECT count(*) FROM snapshot_history WHERE workspace_key='guest' AND app_data_json=?1",[MARKER],|r|r.get(0)).unwrap();
+        assert_eq!(migrated,rows);
         db.execute_batch("VACUUM").unwrap();
         let after=std::fs::metadata(&path).unwrap().len();
         println!("sqlite_physical_before={before} sqlite_physical_after={after} retained_history={count}");
         assert!(after < before/2,"physical space not reclaimed");
         drop(db);
         let db=Connection::open(&path).unwrap();
-        for i in 1..=2500 {
-            assert_eq!(read_history(&db,"guest",i,SUPPORTED).unwrap(),raw(i,&body));
+        for i in 1..=rows {
+            assert_eq!(read_history(&db,"guest",i,SUPPORTED).unwrap(),raw(i,&body),"history id {i}");
+            if i % 10000 == 0 || i == rows {
+                println!("restored_history_rows={i}/{rows}");
+            }
         }
+        assert_eq!(db.query_row("SELECT count(*) FROM snapshot_history",[],|r|r.get::<_,i64>(0)).unwrap(),rows);
         assert_eq!(db.query_row("PRAGMA quick_check",[],|r|r.get::<_,String>(0)).unwrap(),"ok");
         drop(db);
         std::fs::remove_file(path).unwrap();
+        println!("verified_history_rows={rows}");
+    }
+
+    #[test]
+    fn physical_sqlite_reclaim_retains_all_2500_verified_history_rows() {
+        physical_reclaim(2500);
+    }
+
+    // Dedicated required CI job, so the regular release build still runs
+    // the fast 2500-row regression without duplicating the extreme workload.
+    #[test]
+    #[ignore = "mandatory dedicated 100000-row GitHub job"]
+    fn physical_sqlite_reclaim_retains_all_100000_verified_history_rows() {
+        physical_reclaim(100_000);
     }
 }

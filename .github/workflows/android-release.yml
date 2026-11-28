@@ -36,6 +36,49 @@ jobs:
           rustc +stable --edition=2021 -D warnings tools/android_repository_contract.rs -o android_repository_contract
           ./android_repository_contract
 
+  history-reclaim-extreme:
+    name: Rust SQLite physical reclaim and exact 100000-row history recovery
+    needs: repository-contract
+    runs-on: windows-2022
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+          cargo fetch --locked --manifest-path native/gridtimer_native/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile extreme migration test
+        shell: pwsh
+        run: |
+          cargo test --locked --offline --release --manifest-path native/gridtimer_native/Cargo.toml --lib android_history_sqlite::tests::physical_sqlite_reclaim_retains_all_100000_verified_history_rows --no-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Migrate and independently restore all 100000 histories
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP 'tenrate-history-reclaim'
+          New-Item -ItemType Directory -Force $fixtureRoot | Out-Null
+          $env:TEMP = $fixtureRoot
+          $env:TMP = $fixtureRoot
+          $free = (Get-Item $fixtureRoot).PSDrive.Free
+          if ($free -lt 12GB) { throw "Insufficient disk for the full 100000-row SQLite fixture and VACUUM; refusing to shrink workload." }
+          cargo test --locked --offline --release --manifest-path native/gridtimer_native/Cargo.toml --lib android_history_sqlite::tests::physical_sqlite_reclaim_retains_all_100000_verified_history_rows -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath history_reclaim_extreme.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Select-String -Path history_reclaim_extreme.txt -SimpleMatch 'verified_history_rows=100000')) { throw 'Missing complete recovery receipt' }
+          if (!(Select-String -Path history_reclaim_extreme.txt -SimpleMatch 'test result: ok. 1 passed')) { throw 'Extreme test did not execute successfully' }
+      - name: Upload extreme migration receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-reclaim-100000-${{ github.sha }}
+          path: history_reclaim_extreme.txt
+          if-no-files-found: warn
+          retention-days: 21
+
   release:
     needs: repository-contract
     runs-on: windows-2022

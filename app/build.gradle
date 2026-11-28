@@ -1,3 +1,4 @@
+// v3.0.2.63 - Extend physical history migration recovery acceptance to 100000 rows.
 // v3.0.2.62 - Show storage maintenance progress and fix SQLite build compatibility.
 // v3.0.2.61 - Prove transactional history migration and physical SQLite reclamation.
 // v3.0.2.60 - Introduce lossless history chunk codec and expire regenerable share cache.
@@ -255,8 +256,8 @@ android {
         applicationId 'com.ofairyo.gridtimer'
         minSdk 26
         targetSdk 34
-        versionCode 30064
-        versionName '3.0.2.62'
+        versionCode 30065
+        versionName '3.0.2.63'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         manifestPlaceholders.xiaomiAppId = ''
         manifestPlaceholders.xiaomiBuildTypeDebug = 'true'

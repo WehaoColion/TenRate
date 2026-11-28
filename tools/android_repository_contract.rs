@@ -15,6 +15,7 @@ mod android_stress_profile;
 use android_stress_profile::{BASELINE, EXTREME, HISTORY_PADDING_BYTES, SAVE_BUDGET_MS, RECOVERY_BUDGET_SECONDS};
 
 const WORKFLOW: &str = include_str!("../.github/workflows/android-release.yml");
+const HISTORY_MIGRATION_SOURCE: &str = include_str!("../native/gridtimer_native/src/android_history_sqlite.rs");
 const HISTORY: &str = include_str!("../native/gridtimer_native/src/sourcegen/android_update_history_source.rs");
 const RELEASE_INDEX: &str = include_str!("../documents/releases/README.md");
 const CANDIDATE_PUBLISHER: &str = include_str!("android_candidate_publish.rs");
@@ -182,7 +183,22 @@ fn require_knowledge_render_profile(source: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn require_history_reclaim_gate(yaml: &str, source: &str) -> Result<(), String> {
+    require_core_job(yaml, "history-reclaim-extreme", false)?;
+    let lines = job_lines(yaml, "history-reclaim-extreme")?;
+    let job = lines.join("\n");
+    if !job.contains("physical_sqlite_reclaim_retains_all_100000_verified_history_rows -- --ignored --exact --nocapture")
+        || !job.contains("verified_history_rows=100000")
+        || !job.contains("test result: ok. 1 passed")
+        || !source.contains("physical_reclaim(100_000);")
+        || !source.contains("physical_reclaim(2500);") {
+        return Err("Restore the independent 100000-row physical migration and full readback gate; keep the 2500-row regression".into());
+    }
+    Ok(())
+}
+
 fn check_repository() -> Result<(), String> {
+    require_history_reclaim_gate(WORKFLOW, HISTORY_MIGRATION_SOURCE)?;
     ANDROID_RELEASE.require_history_head(HISTORY)?;
     require_release_index_head(RELEASE_INDEX, ANDROID_APP_VERSION)?;
     require_candidate_publisher_identity(CANDIDATE_PUBLISHER)?;
@@ -397,6 +413,14 @@ mod tests {
 
     #[test]
     fn current_repository_contract() { check_repository().unwrap(); }
+
+    #[test]
+    fn reduced_history_reclaim_workload_is_rejected() {
+        let old = HISTORY_MIGRATION_SOURCE.replace("physical_reclaim(100_000);", "physical_reclaim(2500);");
+        assert!(require_history_reclaim_gate(WORKFLOW, &old).is_err());
+        let skipped = WORKFLOW.replace("  history-reclaim-extreme:", "  omitted-history-reclaim:");
+        assert!(require_history_reclaim_gate(&skipped, HISTORY_MIGRATION_SOURCE).is_err());
+    }
 
     #[test]
     fn historical_single_workload_is_rejected() {

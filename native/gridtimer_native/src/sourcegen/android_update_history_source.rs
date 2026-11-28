@@ -1,3 +1,4 @@
+// v3.0.2.63 - Require 100000-row exact history recovery.
 // v3.0.2.62 - Real storage maintenance progress and outcomes.
 // v3.0.2.61 - Transactional SQLite history migration contract.
 // v3.0.2.60 - Lossless history chunk codec foundation and expired share cache cleanup.
@@ -173,6 +174,15 @@ internal fun AndroidUpdateEntry.toClipboardText(): String = buildString {
 }
 
 internal val androidUpdateHistory: List<AndroidUpdateEntry> = listOf(
+    AndroidUpdateEntry(
+        version = "3.0.2.63",
+        updatedAt = "",
+        summary = "历史迁移恢复增加十万条极限验收",
+        sections = listOf(AndroidUpdateSection("存储维护", listOf(
+            "保留2500条回归，新增独立十万条已封签历史的逐条迁移、物理回收、重开及逐字节恢复校验，禁止抽样或降负载。",
+            "宿主SQLite极限验收尚待实测，不代表Android生产迁移完成。"
+        )))
+    ),
     AndroidUpdateEntry(
         version = "3.0.2.62",
         updatedAt = "",
